@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -206,85 +207,113 @@ def train():
     )
 
     # 5. Training Loop
+    # Ensure models directory exists
+    os.makedirs(CONFIG['models_path'], exist_ok=True)
+
     print("\nStep 5: Starting Training...")
     print("=" * 80)
 
     best_val_loss = float('inf')
     best_val_auc = 0.0
     patience_counter = 0
+    epoch = 0  # Initialize for graceful interrupt handling
 
-    for epoch in range(CONFIG['epochs']):
-        model.train()
-        total_loss = 0
-        start_time = time.time()
+    try:
+        for epoch in range(CONFIG['epochs']):
+            model.train()
+            total_loss = 0
+            start_time = time.time()
 
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{CONFIG['epochs']}")
-        for batch_idx, (X_batch, y_batch) in enumerate(pbar):
-            X_batch = X_batch.to(CONFIG['device'])
-            y_batch = y_batch.to(CONFIG['device']).unsqueeze(1)
+            pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{CONFIG['epochs']}")
+            for batch_idx, (X_batch, y_batch) in enumerate(pbar):
+                X_batch = X_batch.to(CONFIG['device'])
+                y_batch = y_batch.to(CONFIG['device']).unsqueeze(1)
 
-            optimizer.zero_grad()
+                optimizer.zero_grad()
 
-            logits = model(X_batch)
-            loss = criterion(logits, y_batch)
+                logits = model(X_batch)
+                loss = criterion(logits, y_batch)
 
-            loss.backward()
+                loss.backward()
 
-            # Gradient clipping
-            if CONFIG['grad_clip'] > 0:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), CONFIG['grad_clip'])
+                # Gradient clipping
+                if CONFIG['grad_clip'] > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), CONFIG['grad_clip'])
 
-            optimizer.step()
-            scheduler.step()
+                optimizer.step()
+                scheduler.step()
 
-            total_loss += loss.item()
+                total_loss += loss.item()
 
-            # Update progress bar
-            pbar.set_postfix({
-                'loss': f"{loss.item():.4f}",
-                'lr': f"{scheduler.get_lr():.2e}"
-            })
+                # Update progress bar
+                pbar.set_postfix({
+                    'loss': f"{loss.item():.4f}",
+                    'lr': f"{scheduler.get_lr():.2e}"
+                })
 
-        # Epoch statistics
-        avg_train_loss = total_loss / len(train_loader)
-        epoch_time = time.time() - start_time
+            # Epoch statistics
+            avg_train_loss = total_loss / len(train_loader)
+            epoch_time = time.time() - start_time
 
-        # Validation
-        val_loss, val_auc, val_logloss = evaluate(model, val_loader, criterion, CONFIG['device'])
+            # Validation
+            val_loss, val_auc, val_logloss = evaluate(model, val_loader, criterion, CONFIG['device'])
 
-        print(f"\n{'='*80}")
-        print(f"Epoch {epoch+1}/{CONFIG['epochs']} Summary:")
-        print(f"  Train Loss: {avg_train_loss:.5f}")
-        print(f"  Val Loss:   {val_loss:.5f}")
-        print(f"  Val AUC:    {val_auc:.5f}")
-        print(f"  Val LogLoss: {val_logloss:.5f}")
-        print(f"  LR:         {scheduler.get_lr():.2e}")
-        print(f"  Time:       {epoch_time:.0f}s")
-        print(f"{'='*80}\n")
+            print(f"\n{'='*80}")
+            print(f"Epoch {epoch+1}/{CONFIG['epochs']} Summary:")
+            print(f"  Train Loss: {avg_train_loss:.5f}")
+            print(f"  Val Loss:   {val_loss:.5f}")
+            print(f"  Val AUC:    {val_auc:.5f}")
+            print(f"  Val LogLoss: {val_logloss:.5f}")
+            print(f"  LR:         {scheduler.get_lr():.2e}")
+            print(f"  Time:       {epoch_time:.0f}s")
+            print(f"{'='*80}\n")
 
-        # Early stopping check
-        if val_loss < best_val_loss:
-            best_val_loss = val_loss
-            best_val_auc = val_auc
-            patience_counter = 0
+            # Early stopping check
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                best_val_auc = val_auc
+                patience_counter = 0
 
-            # Save best model
-            torch.save({
-                'epoch': epoch,
-                'model_state_dict': model.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_loss': val_loss,
-                'val_auc': val_auc,
-                'val_logloss': val_logloss,
-            }, "best_model.pth")
-            print(f"✓ New best model saved! (Val AUC: {val_auc:.5f})")
-        else:
-            patience_counter += 1
-            print(f"No improvement for {patience_counter} epoch(s)")
+                # Save best model
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'optimizer_state_dict': optimizer.state_dict(),
+                    'val_loss': val_loss,
+                    'val_auc': val_auc,
+                    'val_logloss': val_logloss,
+                }, os.path.join(CONFIG['models_path'], "best_model.pth"))
+                print(f"✓ New best model saved! (Val AUC: {val_auc:.5f})")
+            else:
+                patience_counter += 1
+                print(f"No improvement for {patience_counter} epoch(s)")
 
-            if patience_counter >= CONFIG['early_stopping_patience']:
-                print(f"\nEarly stopping triggered after {epoch+1} epochs")
-                break
+                if patience_counter >= CONFIG['early_stopping_patience']:
+                    print(f"\nEarly stopping triggered after {epoch+1} epochs")
+                    break
+
+    except KeyboardInterrupt:
+        print("\n" + "=" * 80)
+        print("TRAINING INTERRUPTED BY USER (Ctrl+C)")
+        print("=" * 80)
+        print("Saving interrupted checkpoint...")
+        
+        # Save interrupted checkpoint with full state for resuming
+        torch.save({
+            'epoch': epoch,
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_step': scheduler.current_step,
+            'best_val_loss': best_val_loss,
+            'best_val_auc': best_val_auc,
+            'interrupted': True,
+        }, os.path.join(CONFIG['models_path'], "interrupted_checkpoint.pth"))
+        
+        print(f"✓ Interrupted checkpoint saved to: {CONFIG['models_path']}/interrupted_checkpoint.pth")
+        print(f"  Epoch: {epoch + 1}")
+        print(f"  Best Val AUC so far: {best_val_auc:.5f}")
+        print("=" * 80)
+        return
 
     # 6. Final Results
     print("\n" + "=" * 80)
@@ -292,12 +321,12 @@ def train():
     print("=" * 80)
     print(f"Best Validation Loss: {best_val_loss:.5f}")
     print(f"Best Validation AUC:  {best_val_auc:.5f}")
-    print(f"\nBest model saved to: best_model.pth")
-    print(f"Latest model saved to: model.pth")
+    print(f"\nBest model saved to: {CONFIG['models_path']}/best_model.pth")
+    print(f"Latest model saved to: {CONFIG['models_path']}/model.pth")
     print("=" * 80)
 
     # Save final model
-    torch.save(model.state_dict(), "model.pth")
+    torch.save(model.state_dict(), os.path.join(CONFIG['models_path'], "model.pth"))
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ CONFIG = {
     "seed": 42,
     "batch_size": 2048,  # Increased for faster training
     "embedding_dim": 64,
-    "lr": 5e-4,  # Lower initial LR for better convergence
+    "lr": 5e-3,  # Lower initial LR for better convergence
     "epochs": 15,  # Increased from 2 (critical!)
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "min_freq": 10,
@@ -19,7 +19,7 @@ CONFIG = {
     "mlp_hidden_dims": [512, 256, 128],  # Deeper network
     "mlp_dropout": 0.2,  # Reduced dropout
     "processed_path": "./data",
-    "validation_split": 0.1,  # NEW: Hold out 10% for validation
+    "validation_split": 0.01,  # NEW: Hold out 10% for validation
     "early_stopping_patience": 3,  # NEW: Early stopping
     "lr_warmup_steps": 1000,  # NEW: LR warmup
     "grad_clip": 1.0,  # NEW: Gradient clipping
@@ -27,6 +27,7 @@ CONFIG = {
     "use_batch_norm": True,  # NEW: Batch normalization
     "focal_loss_gamma": 2.0,  # NEW: Focal loss for imbalance
     "label_smoothing": 0.0,  # NEW: Optional label smoothing
+    "models_path": "./models",  # Directory for saving model checkpoints
 }
 
 def seed_everything(seed=42):

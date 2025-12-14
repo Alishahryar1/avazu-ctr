@@ -3,3 +3,4 @@ data
 *.pth
 __pycache__
 papers
+models
