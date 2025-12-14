@@ -247,7 +247,6 @@ def train():
 
     # Setup live plot for training loss
     plt.style.use('dark_background')
-    plt.ion()  # Enable interactive mode
     fig, ax = plt.subplots(figsize=(10, 6))
     train_loss_x = []  # epoch + batch/total_batches
     train_loss_y = []  # loss values
