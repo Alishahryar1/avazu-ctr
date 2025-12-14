@@ -10,7 +10,6 @@ class FeatureGatingLayer(nn.Module):
     def __init__(self, input_dim):
         super().__init__()
         self.gate_linear = nn.Linear(input_dim, input_dim)
-        # self.norm = nn.LayerNorm(input_dim) # Helps stability
 
     def forward(self, x):
         # x shape: [Batch, Num_Features * Embed_Dim]
