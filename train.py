@@ -175,7 +175,8 @@ def train():
         mlp_hidden_dims=CONFIG['mlp_hidden_dims'],
         mlp_dropout=CONFIG['mlp_dropout'],
         use_batch_norm=CONFIG['use_batch_norm'],
-        mlp_activation=CONFIG['mlp_activation']
+        mlp_activation=CONFIG['mlp_activation'],
+        gating_activation=CONFIG['gating_activation']
     )
     model.to(CONFIG['device'])
 

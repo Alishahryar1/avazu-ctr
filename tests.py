@@ -31,7 +31,8 @@ class TestModelStructure(unittest.TestCase):
             dcn_num_layers=CONFIG['dcn_num_layers'],
             mlp_hidden_dims=CONFIG['mlp_hidden_dims'],
             mlp_dropout=CONFIG['mlp_dropout'],
-            mlp_activation=CONFIG['mlp_activation']
+            mlp_activation=CONFIG['mlp_activation'],
+            gating_activation=CONFIG['gating_activation']
         )
     
     def test_dcn_layers(self):

@@ -1,21 +1,35 @@
 import torch
 import torch.nn as nn
 
+def get_gating_activation(name: str) -> nn.Module:
+    """Get activation function for feature gating layer by name."""
+    activations = {
+        "sigmoid": nn.Sigmoid(),
+        "tanh": nn.Tanh(),
+        "relu": nn.ReLU(),
+        "softmax": nn.Softmax(dim=-1),
+    }
+    if name not in activations:
+        raise ValueError(f"Unknown gating activation: {name}. Choose from {list(activations.keys())}")
+    return activations[name]
+
+
 class FeatureGatingLayer(nn.Module):
     """
     The 'Fast' implementation of the Gated Attention paper.
     Instead of O(N^2) Self-Attention, we use O(N) Element-wise Gating.
     It learns to suppress noise (sparsity) and adds non-linearity.
     """
-    def __init__(self, input_dim):
+    def __init__(self, input_dim, gating_activation: str = "sigmoid"):
         super().__init__()
         self.gate_linear = nn.Linear(input_dim, input_dim)
+        self.activation = get_gating_activation(gating_activation)
 
     def forward(self, x):
         # x shape: [Batch, Num_Features * Embed_Dim]
         
-        # Calculate Gate Score (Sigmoid forces 0-1 range)
-        gate_score = torch.sigmoid(self.gate_linear(x))
+        # Calculate Gate Score
+        gate_score = self.activation(self.gate_linear(x))
         
         # Apply Gate
         return x * gate_score
@@ -66,7 +80,7 @@ def get_activation(name: str) -> nn.Module:
 
 
 class GatedDCNModel(nn.Module):
-    def __init__(self, vocab_sizes, embedding_dim, feature_names, dcn_num_layers=2, mlp_hidden_dims=[256, 128], mlp_dropout=0.2, use_batch_norm=True, mlp_activation="relu"):
+    def __init__(self, vocab_sizes, embedding_dim, feature_names, dcn_num_layers=2, mlp_hidden_dims=[256, 128], mlp_dropout=0.2, use_batch_norm=True, mlp_activation="relu", gating_activation="sigmoid"):
         super().__init__()
         self.feature_names = feature_names
         self.use_batch_norm = use_batch_norm
@@ -86,10 +100,11 @@ class GatedDCNModel(nn.Module):
             self.embed_bn = nn.BatchNorm1d(total_dim)
 
         # 2. Feature Gating (Replaces SENet)
-        self.gating = FeatureGatingLayer(total_dim)
+        self.gating = FeatureGatingLayer(total_dim, gating_activation=gating_activation)
 
         # 3. DCNv2
         self.dcn = DCNv2(total_dim, num_layers=dcn_num_layers)
+
 
         # 4. Enhanced MLP with BatchNorm and configurable activation
         layers: list[nn.Module] = []

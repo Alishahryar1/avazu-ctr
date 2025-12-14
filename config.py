@@ -4,59 +4,83 @@ import torch
 from typing import TypedDict
 
 class ConfigType(TypedDict):
+    # General
     seed: int
+    device: str
+    
+    # Data Loading
     batch_size: int
+    num_workers: int
+    min_freq: int
+    validation_split: float
+    
+    # Model Architecture
     embedding_dim: int
+    dcn_num_layers: int
+    mlp_hidden_dims: list[int]
+    mlp_activation: str
+    gating_activation: str
+    use_batch_norm: bool
+    
+    # Training
     lr: float
     epochs: int
-    device: str
-    min_freq: int
-    num_workers: int
+    lr_warmup_steps: int
+    early_stopping_patience: int
+    
+    # Regularization
+    mlp_dropout: float
+    grad_clip: float
+    weight_decay: float
+    focal_loss_gamma: float
+    label_smoothing: float
+    
+    # Paths
     train_path: str
     test_path: str
     sub_path: str
-    dcn_num_layers: int
-    mlp_hidden_dims: list[int]
-    mlp_dropout: float
-    mlp_activation: str
     processed_path: str
-    validation_split: float
-    early_stopping_patience: int
-    lr_warmup_steps: int
-    grad_clip: float
-    weight_decay: float
-    use_batch_norm: bool
-    focal_loss_gamma: float
-    label_smoothing: float
     models_path: str
 
 # --- CONFIGURATION ---
 CONFIG: ConfigType = {
+    # === General ===
     "seed": 42,
-    "batch_size": 2048,  # Increased for faster training
-    "embedding_dim": 64,
-    "lr": 5e-3,  # Lower initial LR for better convergence
-    "epochs": 15,  # Increased from 2 (critical!)
     "device": "cuda" if torch.cuda.is_available() else "cpu",
-    "min_freq": 10,
+    
+    # === Data Loading ===
+    "batch_size": 2048,  # Increased for faster training
     "num_workers": 4,  # Increased for faster data loading
+    "min_freq": 10,
+    "validation_split": 0.01,  # Hold out 1% for validation
+    
+    # === Model Architecture ===
+    "embedding_dim": 64,
+    "dcn_num_layers": 4,  # Increased for more feature interactions
+    "mlp_hidden_dims": [512, 256, 128],  # Deeper network
+    "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
+    "gating_activation": "tanh",  # Options: sigmoid, tanh, relu, softmax
+    "use_batch_norm": True,
+    
+    # === Training ===
+    "lr": 5e-3,  # Lower initial LR for better convergence
+    "epochs": 15,
+    "lr_warmup_steps": 1000,
+    "early_stopping_patience": 3,
+    
+    # === Regularization ===
+    "mlp_dropout": 0.2,
+    "grad_clip": 1.0,
+    "weight_decay": 1e-5,  # L2 regularization
+    "focal_loss_gamma": 2.0,  # Focal loss for imbalance
+    "label_smoothing": 0.0,  # Optional label smoothing
+    
+    # === Paths ===
     "train_path": "./data/train.gz",
     "test_path": "./data/test.gz",
     "sub_path": "submission.csv",
-    "dcn_num_layers": 4,  # Increased for more feature interactions
-    "mlp_hidden_dims": [512, 256, 128],  # Deeper network
-    "mlp_dropout": 0.2,  # Reduced dropout
-    "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
     "processed_path": "./data",
-    "validation_split": 0.01,  # NEW: Hold out 10% for validation
-    "early_stopping_patience": 3,  # NEW: Early stopping
-    "lr_warmup_steps": 1000,  # NEW: LR warmup
-    "grad_clip": 1.0,  # NEW: Gradient clipping
-    "weight_decay": 1e-5,  # L2 regularization
-    "use_batch_norm": False,  # NEW: Batch normalization
-    "focal_loss_gamma": 2.0,  # NEW: Focal loss for imbalance
-    "label_smoothing": 0.0,  # NEW: Optional label smoothing
-    "models_path": "./models",  # Directory for saving model checkpoints
+    "models_path": "./models",
 }
 
 def seed_everything(seed=42):
