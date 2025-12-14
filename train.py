@@ -8,7 +8,7 @@ from tqdm import tqdm
 import time
 import gc
 import numpy as np
-import matplotlib.pyplot as plt
+from torch.utils.tensorboard import SummaryWriter
 
 from config import CONFIG, seed_everything
 from data_processor import load_processed_data
@@ -227,11 +227,13 @@ def train():
 
     # Learning rate scheduler (only for non-embedding params)
     total_steps = len(train_loader) * CONFIG['epochs']
+    warmup_steps = int(total_steps * CONFIG['lr_warmup_epoch_ratio'])
     scheduler = LRSchedulerWithWarmup(
         other_optimizer,
-        warmup_steps=CONFIG['lr_warmup_steps'],
+        warmup_steps=warmup_steps,
         total_steps=total_steps
     )
+    print(f"LR warmup steps: {warmup_steps} ({CONFIG['lr_warmup_epoch_ratio']*100:.0f}% of {total_steps} total steps)")
 
     # 5. Training Loop
     # Ensure models directory exists
@@ -245,21 +247,12 @@ def train():
     patience_counter = 0
     epoch = 0  # Initialize for graceful interrupt handling
 
-    # Setup live plot for training loss
-    fig, ax, line = None, None, None
-    train_loss_x, train_loss_y = [], []
-    if CONFIG['show_live_plot']:
-        plt.style.use('dark_background')
-        fig, ax = plt.subplots(figsize=(10, 6))
-        line, = ax.plot([], [], 'g-', linewidth=0.8, label='Train Loss')
-        ax.set_xlabel('Epoch')
-        ax.set_ylabel('Loss')
-        ax.set_title('Training Loss (Live)')
-        ax.legend()
-        ax.grid(True, alpha=0.3)
-        plt.tight_layout()
-        plt.show(block=False)
-        plt.pause(0.1)
+    # Setup TensorBoard writer
+    writer = None
+    if CONFIG['use_tensorboard']:
+        writer = SummaryWriter(log_dir=CONFIG['tensorboard_logdir'])
+        print(f"TensorBoard logging to: {CONFIG['tensorboard_logdir']}")
+        print("Run 'tensorboard --logdir=runs' to view training progress")
 
     try:
         for epoch in range(CONFIG['epochs']):
@@ -290,17 +283,11 @@ def train():
 
                 total_loss += loss.item()
 
-                # Update live plot
-                if CONFIG['show_live_plot']:
-                    num_batches = len(train_loader)
-                    x_pos = epoch + (batch_idx + 1) / num_batches
-                    train_loss_x.append(x_pos)
-                    train_loss_y.append(loss.item())
-                    line.set_data(train_loss_x, train_loss_y)
-                    ax.relim()
-                    ax.autoscale_view()
-                    fig.canvas.draw_idle()
-                    fig.canvas.flush_events()
+                # Log to TensorBoard
+                if writer is not None:
+                    global_step = epoch * len(train_loader) + batch_idx
+                    writer.add_scalar('Loss/train_batch', loss.item(), global_step)
+                    writer.add_scalar('LR/learning_rate', scheduler.get_lr(), global_step)
 
                 # Update progress bar
                 pbar.set_postfix({
@@ -314,6 +301,13 @@ def train():
 
             # Validation
             val_loss, val_auc, val_logloss = evaluate(model, val_loader, criterion, CONFIG['device'])
+
+            # Log epoch metrics to TensorBoard
+            if writer is not None:
+                writer.add_scalar('Loss/train_epoch', avg_train_loss, epoch)
+                writer.add_scalar('Loss/val', val_loss, epoch)
+                writer.add_scalar('Metrics/val_auc', val_auc, epoch)
+                writer.add_scalar('Metrics/val_logloss', val_logloss, epoch)
 
             print(f"\n{'='*80}")
             print(f"Epoch {epoch+1}/{CONFIG['epochs']} Summary:")
@@ -354,9 +348,8 @@ def train():
         print("\n" + "=" * 80)
         print("TRAINING INTERRUPTED BY USER (Ctrl+C)")
         print("=" * 80)
-        if CONFIG['show_live_plot']:
-            plt.ioff()
-            plt.close(fig)
+        if writer is not None:
+            writer.close()
         return
 
     # 6. Final Results
@@ -372,10 +365,10 @@ def train():
     # Save final model
     torch.save(model.state_dict(), os.path.join(CONFIG['models_path'], "model.pth"))
 
-    # Cleanup plot
-    if CONFIG['show_live_plot']:
-        plt.ioff()
-        plt.close(fig)
+    # Cleanup TensorBoard writer
+    if writer is not None:
+        writer.close()
+        print(f"TensorBoard logs saved to: {CONFIG['tensorboard_logdir']}")
 
 
 if __name__ == "__main__":

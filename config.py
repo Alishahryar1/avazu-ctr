@@ -27,9 +27,10 @@ class ConfigType(TypedDict):
     embedding_lr: float
     embedding_optimizer: str
     epochs: int
-    lr_warmup_steps: int
+    lr_warmup_epoch_ratio: float
     early_stopping_patience: int
-    show_live_plot: bool
+    use_tensorboard: bool
+    tensorboard_logdir: str
     
     # Regularization
     mlp_dropout: float
@@ -70,9 +71,10 @@ CONFIG: ConfigType = {
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
     "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
     "epochs": 15,
-    "lr_warmup_steps": 1000,
+    "lr_warmup_epoch_ratio": 0.8,
     "early_stopping_patience": 3,
-    "show_live_plot": False,
+    "use_tensorboard": True,
+    "tensorboard_logdir": "./runs",
     
     # === Regularization ===
     "mlp_dropout": 0.1,
