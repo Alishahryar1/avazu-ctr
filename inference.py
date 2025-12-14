@@ -47,7 +47,7 @@ def inference():
     # Try to load best model first, fall back to model.pth
     model_path = "best_model.pth"
     try:
-        checkpoint = torch.load(model_path, map_location=CONFIG['device'])
+        checkpoint = torch.load(model_path, map_location=CONFIG['device'], weights_only=False)
         model.load_state_dict(checkpoint['model_state_dict'])
         model.to(CONFIG['device'])
         print(f"Best model loaded successfully (epoch {checkpoint['epoch']+1})")
@@ -55,7 +55,7 @@ def inference():
     except FileNotFoundError:
         try:
             model_path = "model.pth"
-            model.load_state_dict(torch.load(model_path, map_location=CONFIG['device']))
+            model.load_state_dict(torch.load(model_path, map_location=CONFIG['device'], weights_only=False))
             model.to(CONFIG['device'])
             print("Model loaded from model.pth")
         except FileNotFoundError:
