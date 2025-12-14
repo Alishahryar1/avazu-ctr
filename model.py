@@ -3,8 +3,8 @@ import torch.nn as nn
 
 from config import ConfigType
 
-def get_gating_activation(name: str) -> nn.Module:
-    """Get activation function for feature gating layer by name."""
+def get_senet_activation(name: str) -> nn.Module:
+    """Get activation function for SENET excitation layer by name."""
     activations = {
         "sigmoid": nn.Sigmoid(),
         "tanh": nn.Tanh(),
@@ -12,29 +12,94 @@ def get_gating_activation(name: str) -> nn.Module:
         "softmax": nn.Softmax(dim=-1),
     }
     if name not in activations:
-        raise ValueError(f"Unknown gating activation: {name}. Choose from {list(activations.keys())}")
+        raise ValueError(f"Unknown SENET activation: {name}. Choose from {list(activations.keys())}")
     return activations[name]
 
 
-class FeatureGatingLayer(nn.Module):
+class SENetLayer(nn.Module):
     """
-    The 'Fast' implementation of the Gated Attention paper.
-    Instead of O(N^2) Self-Attention, we use O(N) Element-wise Gating.
-    It learns to suppress noise (sparsity) and adds non-linearity.
+    Squeeze-and-Excitation Network (SENET) from FiBiNET paper.
+    
+    Modified to support multiple squeeze functions (mean, max, etc.) that can be
+    used together. The squeeze outputs are concatenated before the excitation network.
+    
+    Reference: FiBiNET: Combining Feature Importance and Bilinear feature Interaction
+    for Click-Through Rate Prediction (RecSys 2019)
+    
+    Args:
+        num_fields: Number of feature fields
+        embedding_dim: Dimension of each field's embedding
+        squeeze_funcs: List of squeeze functions to use. Options: 'mean', 'max'
+        reduction_ratio: Reduction ratio for the excitation network bottleneck
+        excitation_activation: Activation function for the excitation output
     """
-    def __init__(self, input_dim, gating_activation: str = "sigmoid"):
+    def __init__(
+        self,
+        num_fields: int,
+        embedding_dim: int,
+        squeeze_funcs: list[str] = ["mean"],
+        reduction_ratio: int = 3,
+        excitation_activation: str = "sigmoid"
+    ):
         super().__init__()
-        self.gate_linear = nn.Linear(input_dim, input_dim)
-        self.activation = get_gating_activation(gating_activation)
-
+        self.num_fields = num_fields
+        self.embedding_dim = embedding_dim
+        self.squeeze_funcs = squeeze_funcs
+        
+        # Validate squeeze functions
+        valid_squeeze_funcs = {"mean", "max"}
+        for func in squeeze_funcs:
+            if func not in valid_squeeze_funcs:
+                raise ValueError(f"Unknown squeeze function: {func}. Choose from {valid_squeeze_funcs}")
+        
+        # Number of squeeze outputs determines input to excitation network
+        num_squeeze_outputs = len(squeeze_funcs)
+        squeeze_output_dim = num_fields * num_squeeze_outputs
+        
+        # Excitation network (2-layer MLP with bottleneck)
+        reduced_dim = max(1, num_fields // reduction_ratio)
+        self.excitation = nn.Sequential(
+            nn.Linear(squeeze_output_dim, reduced_dim, bias=False),
+            nn.ReLU(),
+            nn.Linear(reduced_dim, num_fields, bias=False),
+            get_senet_activation(excitation_activation)
+        )
+    
     def forward(self, x):
-        # x shape: [Batch, Num_Features * Embed_Dim]
+        # x shape: [Batch, Num_Fields * Embed_Dim]
+        batch_size = x.size(0)
         
-        # Calculate Gate Score
-        gate_score = self.activation(self.gate_linear(x))
+        # Reshape to [Batch, Num_Fields, Embed_Dim]
+        x_3d = x.view(batch_size, self.num_fields, self.embedding_dim)
         
-        # Apply Gate
-        return x * gate_score
+        # Squeeze: Pool each field's embedding to a scalar
+        squeeze_outputs = []
+        for func in self.squeeze_funcs:
+            if func == "mean":
+                # Mean pooling: [Batch, Num_Fields]
+                squeezed = x_3d.mean(dim=-1)
+            elif func == "max":
+                # Max pooling: [Batch, Num_Fields]
+                squeezed = x_3d.max(dim=-1).values
+            else:
+                # Should never reach here due to validation in __init__
+                raise ValueError(f"Unknown squeeze function: {func}")
+            squeeze_outputs.append(squeezed)
+        
+        # Concatenate squeeze outputs: [Batch, Num_Fields * Num_Squeeze_Funcs]
+        squeeze_concat = torch.cat(squeeze_outputs, dim=-1)
+        
+        # Excitation: Learn field importance weights [Batch, Num_Fields]
+        field_weights = self.excitation(squeeze_concat)
+        
+        # Expand weights to match embedding dimension: [Batch, Num_Fields, 1]
+        field_weights = field_weights.unsqueeze(-1)
+        
+        # Re-weight: Scale each field's embedding by its importance
+        x_reweighted = x_3d * field_weights
+        
+        # Flatten back to [Batch, Num_Fields * Embed_Dim]
+        return x_reweighted.view(batch_size, -1)
 
 class DCNv2(nn.Module):
     """
@@ -133,8 +198,10 @@ class GatedDCNModel(nn.Module):
         dcn_num_layers = config['dcn_num_layers']
         dcn_use_layernorm = config['dcn_use_layernorm']
         dcn_low_rank = config['dcn_low_rank']
-        use_gating = config['use_gating']
-        gating_activation = config['gating_activation']
+        use_senet = config['use_senet']
+        senet_squeeze_funcs = config['senet_squeeze_funcs']
+        senet_reduction_ratio = config['senet_reduction_ratio']
+        senet_activation = config['senet_activation']
         mlp_hidden_dims = config['mlp_hidden_dims']
         mlp_dropout = config['mlp_dropout']
         use_batch_norm = config['use_batch_norm']
@@ -142,7 +209,9 @@ class GatedDCNModel(nn.Module):
         
         self.use_batch_norm = use_batch_norm
         self.use_dcn = use_dcn
-        self.use_gating = use_gating
+        self.use_senet = use_senet
+        self.num_fields = len(feature_names)
+        self.embedding_dim = embedding_dim
 
         # 1. Embedding Layer with better initialization
         self.embeddings = nn.ModuleDict()
@@ -158,9 +227,15 @@ class GatedDCNModel(nn.Module):
         if use_batch_norm:
             self.embed_bn = nn.BatchNorm1d(total_dim)
 
-        # 2. Feature Gating (Replaces SENet) - Optional
-        if use_gating:
-            self.gating = FeatureGatingLayer(total_dim, gating_activation=gating_activation)
+        # 2. SENET (Squeeze-and-Excitation) - Optional
+        if use_senet:
+            self.senet = SENetLayer(
+                num_fields=self.num_fields,
+                embedding_dim=embedding_dim,
+                squeeze_funcs=senet_squeeze_funcs,
+                reduction_ratio=senet_reduction_ratio,
+                excitation_activation=senet_activation
+            )
 
         # 3. DCNv2 - Optional (supports low-rank decomposition)
         if use_dcn:
@@ -203,9 +278,9 @@ class GatedDCNModel(nn.Module):
         if self.use_batch_norm:
             dnn_input = self.embed_bn(dnn_input)
 
-        # Apply Gating (Sparsity & Reweighting) - Optional
-        if self.use_gating:
-            dnn_input = self.gating(dnn_input)
+        # Apply SENET (Feature Importance Reweighting) - Optional
+        if self.use_senet:
+            dnn_input = self.senet(dnn_input)
 
         # Apply Cross Network (Interactions) - Optional
         if self.use_dcn:

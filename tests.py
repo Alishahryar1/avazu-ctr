@@ -13,7 +13,7 @@ import sys
 import torch
 import torch.nn as nn
 from config import CONFIG, ConfigType
-from model import GatedDCNModel, DCNv2
+from model import GatedDCNModel, DCNv2, SENetLayer
 
 
 def make_test_config(**overrides) -> ConfigType:
@@ -35,8 +35,10 @@ def make_test_config(**overrides) -> ConfigType:
         'dcn_num_layers': 2,
         'dcn_use_layernorm': False,
         'dcn_low_rank': None,
-        'use_gating': True,
-        'gating_activation': 'sigmoid',
+        'use_senet': True,
+        'senet_squeeze_funcs': ['mean'],
+        'senet_reduction_ratio': 3,
+        'senet_activation': 'sigmoid',
         'mlp_hidden_dims': [32, 16],
         'mlp_activation': 'relu',
         'use_batch_norm': True,
@@ -281,9 +283,9 @@ class TestModelVariants(unittest.TestCase):
         out = model(x)
         self.assertEqual(out.shape, (4, 1))
     
-    def test_model_without_gating(self):
-        """Test model with gating disabled."""
-        config = make_test_config(use_gating=False)
+    def test_model_without_senet(self):
+        """Test model with SENET disabled."""
+        config = make_test_config(use_senet=False)
         model = GatedDCNModel({'f1': 100}, ['f1'], config)
         x = torch.randint(0, 100, (4, 1))
         out = model(x)
@@ -306,12 +308,68 @@ class TestModelVariants(unittest.TestCase):
         self.assertEqual(out.shape, (4, 1))
     
     def test_model_minimal(self):
-        """Test model with minimal config (no DCN, no gating)."""
-        config = make_test_config(use_dcn=False, use_gating=False, use_batch_norm=False)
+        """Test model with minimal config (no DCN, no SENET)."""
+        config = make_test_config(use_dcn=False, use_senet=False, use_batch_norm=False)
         model = GatedDCNModel({'f1': 100}, ['f1'], config)
         x = torch.randint(0, 100, (4, 1))
         out = model(x)
         self.assertEqual(out.shape, (4, 1))
+
+
+class TestSENetLayer(unittest.TestCase):
+    """Tests for SENetLayer (Squeeze-and-Excitation network)."""
+    
+    def test_senet_forward_single_squeeze(self):
+        """Test SENET forward pass with single squeeze function."""
+        num_fields = 5
+        embed_dim = 16
+        senet = SENetLayer(num_fields=num_fields, embedding_dim=embed_dim, squeeze_funcs=['mean'])
+        x = torch.randn(4, num_fields * embed_dim)
+        out = senet(x)
+        self.assertEqual(out.shape, x.shape)
+    
+    def test_senet_forward_multiple_squeeze(self):
+        """Test SENET forward pass with multiple squeeze functions (mean + max)."""
+        num_fields = 5
+        embed_dim = 16
+        senet = SENetLayer(num_fields=num_fields, embedding_dim=embed_dim, squeeze_funcs=['mean', 'max'])
+        x = torch.randn(4, num_fields * embed_dim)
+        out = senet(x)
+        self.assertEqual(out.shape, x.shape)
+    
+    def test_senet_numerical_stability(self):
+        """Verify no NaN/Inf in SENET output."""
+        senet = SENetLayer(num_fields=10, embedding_dim=32, squeeze_funcs=['mean', 'max'])
+        for _ in range(10):
+            x = torch.randn(32, 320)
+            out = senet(x)
+            self.assertFalse(torch.isnan(out).any(), "NaN in output")
+            self.assertFalse(torch.isinf(out).any(), "Inf in output")
+    
+    def test_senet_gradient_flow(self):
+        """Verify gradients flow through SENetLayer."""
+        senet = SENetLayer(num_fields=5, embedding_dim=16, squeeze_funcs=['mean', 'max'])
+        x = torch.randn(4, 80, requires_grad=True)
+        out = senet(x)
+        loss = out.sum()
+        loss.backward()
+        
+        for name, param in senet.named_parameters():
+            self.assertIsNotNone(param.grad, f"No gradient for {name}")
+            self.assertFalse(torch.isnan(param.grad).any(), f"NaN gradient for {name}")
+    
+    def test_senet_invalid_squeeze_func(self):
+        """Verify SENET raises error for invalid squeeze function."""
+        with self.assertRaises(ValueError):
+            SENetLayer(num_fields=5, embedding_dim=16, squeeze_funcs=['invalid'])
+    
+    def test_senet_activations(self):
+        """Test SENET with different activation functions."""
+        for activation in ['sigmoid', 'tanh', 'relu', 'softmax']:
+            senet = SENetLayer(num_fields=5, embedding_dim=16, excitation_activation=activation)
+            x = torch.randn(4, 80)
+            out = senet(x)
+            self.assertEqual(out.shape, x.shape, f"Failed for activation: {activation}")
 
 
 def list_tests():
