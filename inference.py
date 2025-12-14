@@ -35,36 +35,51 @@ def inference():
     # 3. Model Initialization and Loading
     print("Step 3: Loading Model...")
     model = GatedDCNModel(
-        vocab_sizes, 
-        CONFIG['embedding_dim'], 
+        vocab_sizes,
+        CONFIG['embedding_dim'],
         feature_names,
         dcn_num_layers=CONFIG['dcn_num_layers'],
         mlp_hidden_dims=CONFIG['mlp_hidden_dims'],
-        mlp_dropout=CONFIG['mlp_dropout']
+        mlp_dropout=CONFIG['mlp_dropout'],
+        use_batch_norm=CONFIG['use_batch_norm']
     )
+
+    # Try to load best model first, fall back to model.pth
+    model_path = "best_model.pth"
     try:
-        model.load_state_dict(torch.load("model.pth"))
+        checkpoint = torch.load(model_path, map_location=CONFIG['device'])
+        model.load_state_dict(checkpoint['model_state_dict'])
         model.to(CONFIG['device'])
-        print("Model state loaded successfully.")
+        print(f"Best model loaded successfully (epoch {checkpoint['epoch']+1})")
+        print(f"  Val AUC: {checkpoint['val_auc']:.5f}, Val LogLoss: {checkpoint['val_logloss']:.5f}")
     except FileNotFoundError:
-        print("Error: 'model.pth' not found. Please run train.py first.")
-        return
+        try:
+            model_path = "model.pth"
+            model.load_state_dict(torch.load(model_path, map_location=CONFIG['device']))
+            model.to(CONFIG['device'])
+            print("Model loaded from model.pth")
+        except FileNotFoundError:
+            print("Error: No model found. Please run train.py first.")
+            return
 
     # 4. Inference
     print("Step 4: Starting Inference...")
     model.eval()
     predictions = []
-    
+
     with torch.no_grad():
         for X_batch in tqdm(test_loader, desc="Predicting"):
             X_batch = X_batch.to(CONFIG['device'])
-            
-            preds = model(X_batch)
-                
+
+            logits = model(X_batch)
+            # Apply sigmoid to convert logits to probabilities
+            preds = torch.sigmoid(logits)
+
             predictions.append(preds.cpu().numpy())
-    
+
     # Concatenate predictions
     predictions = np.concatenate(predictions).flatten()
+    print(f"Prediction stats - Min: {predictions.min():.6f}, Max: {predictions.max():.6f}, Mean: {predictions.mean():.6f}")
     
     # 5. Save Submission
     print("Step 5: Creating submission file...")
