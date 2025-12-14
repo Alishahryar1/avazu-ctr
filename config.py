@@ -77,7 +77,7 @@ CONFIG: ConfigType = {
     "senet_reduction_ratio": 3,  # Reduction ratio for excitation bottleneck
     "senet_activation": "tanh",  # Options: sigmoid, tanh, relu, softmax
     
-    "mlp_hidden_dims": [512, 256, 128],  # Deeper network
+    "mlp_hidden_dims": [1024, 512, 512],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
     "use_batch_norm": True,
     
