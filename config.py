@@ -1,9 +1,36 @@
 import os
 import numpy as np
 import torch
+from typing import TypedDict
+
+class ConfigType(TypedDict):
+    seed: int
+    batch_size: int
+    embedding_dim: int
+    lr: float
+    epochs: int
+    device: str
+    min_freq: int
+    num_workers: int
+    train_path: str
+    test_path: str
+    sub_path: str
+    dcn_num_layers: int
+    mlp_hidden_dims: list[int]
+    mlp_dropout: float
+    processed_path: str
+    validation_split: float
+    early_stopping_patience: int
+    lr_warmup_steps: int
+    grad_clip: float
+    weight_decay: float
+    use_batch_norm: bool
+    focal_loss_gamma: float
+    label_smoothing: float
+    models_path: str
 
 # --- CONFIGURATION ---
-CONFIG = {
+CONFIG: ConfigType = {
     "seed": 42,
     "batch_size": 2048,  # Increased for faster training
     "embedding_dim": 64,

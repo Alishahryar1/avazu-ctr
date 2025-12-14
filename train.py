@@ -123,6 +123,9 @@ def train():
         print("Processed data not found. Please run 'python data_processor.py' to generate it.")
         return
 
+    # Type assertions for train mode - these are always non-None
+    assert X_train is not None and y_train is not None
+
     print(f"Train samples: {len(X_train):,}")
     print(f"Positive rate: {y_train.mean():.4f}")
 

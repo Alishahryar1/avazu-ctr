@@ -120,7 +120,7 @@ def list_tests():
     print("Available tests:")
     print("-" * 50)
     for test_group in suite:
-        for test in test_group:
+        for test in iter(test_group):  # type: ignore[arg-type]
             print(f"  {test}")
     print("-" * 50)
     print("\nUsage examples:")

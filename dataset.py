@@ -9,7 +9,7 @@ class AvazuDataset(Dataset):
     def __len__(self):
         return len(self.X)
     
-    def __getitem__(self, idx):
+    def __getitem__(self, index):
         if self.y is not None:
-            return self.X[idx], self.y[idx]
-        return self.X[idx]
+            return self.X[index], self.y[index]
+        return self.X[index]

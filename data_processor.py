@@ -152,7 +152,14 @@ def save_processed_data(X_train, y_train, X_test, test_ids, vocab_sizes, feature
         
     print("Data saved successfully.")
 
-def load_processed_data(mode='train'):
+def load_processed_data(mode: str = 'train') -> tuple[
+    np.ndarray | None,  # X_train
+    np.ndarray | None,  # y_train
+    np.ndarray,         # X_test
+    np.ndarray,         # test_ids
+    dict,               # vocab_sizes
+    list                # feature_names
+]:
     """
     Loads processed data from disk.
     mode: 'train' (loads everything), 'inference' (loads only test data and metadata)
@@ -178,6 +185,8 @@ def load_processed_data(mode='train'):
             X_test = np.load(os.path.join(path, "X_test.npy"), allow_pickle=True)
             test_ids = np.load(os.path.join(path, "test_ids.npy"), allow_pickle=True)
             return None, None, X_test, test_ids, vocab_sizes, feature_names
+        else:
+            raise ValueError(f"Invalid mode: {mode}. Must be 'train' or 'inference'.")
             
     except FileNotFoundError as e:
         raise FileNotFoundError(f"Processed data not found in {path}. Please run 'python data_processor.py' first.") from e

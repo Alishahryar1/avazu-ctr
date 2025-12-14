@@ -79,7 +79,7 @@ class GatedDCNModel(nn.Module):
         self.dcn = DCNv2(total_dim, num_layers=dcn_num_layers)
 
         # 4. Enhanced MLP with BatchNorm and Residuals
-        layers = []
+        layers: list[nn.Module] = []
         input_dim = total_dim
         for i, hidden_dim in enumerate(mlp_hidden_dims):
             layers.append(nn.Linear(input_dim, hidden_dim))
