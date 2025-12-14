@@ -39,14 +39,19 @@ class DCNv2(nn.Module):
     Deep Cross Network V2 (Parallel).
     Explicitly captures high-order feature interactions.
     """
-    def __init__(self, input_dim, num_layers=2):
+    def __init__(self, input_dim, num_layers=2, use_layernorm=False):
         super().__init__()
         self.num_layers = num_layers
         self.input_dim = input_dim
+        self.use_layernorm = use_layernorm
         
         # Parameters for Cross Layers
         self.W = nn.ParameterList([nn.Parameter(torch.randn(input_dim, input_dim)) for _ in range(num_layers)])
         self.b = nn.ParameterList([nn.Parameter(torch.zeros(input_dim)) for _ in range(num_layers)])
+        
+        # Optional LayerNorm for stability
+        if use_layernorm:
+            self.layer_norms = nn.ModuleList([nn.LayerNorm(input_dim) for _ in range(num_layers)])
         
         # Init
         for w in self.W:
@@ -62,6 +67,10 @@ class DCNv2(nn.Module):
             # We use linear layer logic for W * xi + b
             feature_crossing = torch.matmul(xi, self.W[i]) + self.b[i]
             xi = x0 * feature_crossing + xi
+            
+            # Apply LayerNorm if enabled
+            if self.use_layernorm:
+                xi = self.layer_norms[i](xi)
             
         return xi
 
@@ -80,7 +89,7 @@ def get_activation(name: str) -> nn.Module:
 
 
 class GatedDCNModel(nn.Module):
-    def __init__(self, vocab_sizes, embedding_dim, feature_names, dcn_num_layers=2, mlp_hidden_dims=[256, 128], mlp_dropout=0.2, use_batch_norm=True, mlp_activation="relu", gating_activation="sigmoid"):
+    def __init__(self, vocab_sizes, embedding_dim, feature_names, dcn_num_layers=2, dcn_use_layernorm=False, mlp_hidden_dims=[256, 128], mlp_dropout=0.2, use_batch_norm=True, mlp_activation="relu", gating_activation="sigmoid"):
         super().__init__()
         self.feature_names = feature_names
         self.use_batch_norm = use_batch_norm
@@ -103,7 +112,7 @@ class GatedDCNModel(nn.Module):
         self.gating = FeatureGatingLayer(total_dim, gating_activation=gating_activation)
 
         # 3. DCNv2
-        self.dcn = DCNv2(total_dim, num_layers=dcn_num_layers)
+        self.dcn = DCNv2(total_dim, num_layers=dcn_num_layers, use_layernorm=dcn_use_layernorm)
 
 
         # 4. Enhanced MLP with BatchNorm and configurable activation

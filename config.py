@@ -17,6 +17,7 @@ class ConfigType(TypedDict):
     # Model Architecture
     embedding_dim: int
     dcn_num_layers: int
+    dcn_use_layernorm: bool
     mlp_hidden_dims: list[int]
     mlp_activation: str
     gating_activation: str
@@ -61,6 +62,7 @@ CONFIG: ConfigType = {
     # === Model Architecture ===
     "embedding_dim": 64,
     "dcn_num_layers": 4,  # Increased for more feature interactions
+    "dcn_use_layernorm": True,  # LayerNorm for cross layer stability
     "mlp_hidden_dims": [512, 256, 128],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
     "gating_activation": "tanh",  # Options: sigmoid, tanh, relu, softmax

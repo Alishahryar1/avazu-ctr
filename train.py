@@ -173,6 +173,7 @@ def train():
         CONFIG['embedding_dim'],
         feature_names,
         dcn_num_layers=CONFIG['dcn_num_layers'],
+        dcn_use_layernorm=CONFIG['dcn_use_layernorm'],
         mlp_hidden_dims=CONFIG['mlp_hidden_dims'],
         mlp_dropout=CONFIG['mlp_dropout'],
         use_batch_norm=CONFIG['use_batch_norm'],
