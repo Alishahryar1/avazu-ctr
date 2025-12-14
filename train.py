@@ -228,7 +228,7 @@ def train():
         warmup_steps=warmup_steps,
         total_steps=total_steps
     )
-    print(f"LR warmup steps: {warmup_steps} ({CONFIG['lr_warmup_epoch_ratio']*100:.0f}% of {total_steps} total steps)")
+    print(f"LR warmup steps: {warmup_steps} ({CONFIG['lr_warmup_epoch_ratio']*100:.0f}% of {steps_per_epoch} steps)")
 
     # 5. Training Loop
     # Ensure models directory exists

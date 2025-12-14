@@ -78,9 +78,9 @@ CONFIG: ConfigType = {
     "lr": 1e-4,  # Lower initial LR for better convergence
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
     "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
-    "epochs": 15,
-    "lr_warmup_epoch_ratio": 0.8,
-    "early_stopping_patience": 3,
+    "epochs": 50,
+    "lr_warmup_epoch_ratio": 0.2,
+    "early_stopping_patience": 50,
     "use_tensorboard": True,
     "tensorboard_logdir": "./runs",
     
