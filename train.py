@@ -99,8 +99,11 @@ def evaluate(model, data_loader, criterion, device):
     all_preds = np.array(all_preds)
     all_targets = np.array(all_targets)
 
+    # Manual clipping since eps argument is not supported in recent sklearn versions
+    all_preds = np.clip(all_preds, 1e-7, 1 - 1e-7)
+
     auc = roc_auc_score(all_targets, all_preds)
-    logloss = log_loss(all_targets, all_preds, eps=1e-7)
+    logloss = log_loss(all_targets, all_preds)
 
     return avg_loss, auc, logloss
 
