@@ -89,10 +89,12 @@ def get_activation(name: str) -> nn.Module:
 
 
 class GatedDCNModel(nn.Module):
-    def __init__(self, vocab_sizes, embedding_dim, feature_names, dcn_num_layers=2, dcn_use_layernorm=False, mlp_hidden_dims=[256, 128], mlp_dropout=0.2, use_batch_norm=True, mlp_activation="relu", gating_activation="sigmoid"):
+    def __init__(self, vocab_sizes, embedding_dim, feature_names, use_dcn=True, dcn_num_layers=2, dcn_use_layernorm=False, use_gating=True, gating_activation="sigmoid", mlp_hidden_dims=[256, 128], mlp_dropout=0.2, use_batch_norm=True, mlp_activation="relu"):
         super().__init__()
         self.feature_names = feature_names
         self.use_batch_norm = use_batch_norm
+        self.use_dcn = use_dcn
+        self.use_gating = use_gating
 
         # 1. Embedding Layer with better initialization
         self.embeddings = nn.ModuleDict()
@@ -108,11 +110,13 @@ class GatedDCNModel(nn.Module):
         if use_batch_norm:
             self.embed_bn = nn.BatchNorm1d(total_dim)
 
-        # 2. Feature Gating (Replaces SENet)
-        self.gating = FeatureGatingLayer(total_dim, gating_activation=gating_activation)
+        # 2. Feature Gating (Replaces SENet) - Optional
+        if use_gating:
+            self.gating = FeatureGatingLayer(total_dim, gating_activation=gating_activation)
 
-        # 3. DCNv2
-        self.dcn = DCNv2(total_dim, num_layers=dcn_num_layers, use_layernorm=dcn_use_layernorm)
+        # 3. DCNv2 - Optional
+        if use_dcn:
+            self.dcn = DCNv2(total_dim, num_layers=dcn_num_layers, use_layernorm=dcn_use_layernorm)
 
 
         # 4. Enhanced MLP with BatchNorm and configurable activation
@@ -151,12 +155,14 @@ class GatedDCNModel(nn.Module):
         if self.use_batch_norm:
             dnn_input = self.embed_bn(dnn_input)
 
-        # Apply Gating (Sparsity & Reweighting)
-        gated_input = self.gating(dnn_input)
+        # Apply Gating (Sparsity & Reweighting) - Optional
+        if self.use_gating:
+            dnn_input = self.gating(dnn_input)
 
-        # Apply Cross Network (Interactions)
-        cross_out = self.dcn(gated_input)
+        # Apply Cross Network (Interactions) - Optional
+        if self.use_dcn:
+            dnn_input = self.dcn(dnn_input)
 
         # Final Prediction (no sigmoid here - we'll use BCEWithLogitsLoss)
-        logits = self.mlp(cross_out)
+        logits = self.mlp(dnn_input)
         return logits  # Return raw logits for numerical stability

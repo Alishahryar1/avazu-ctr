@@ -16,11 +16,13 @@ class ConfigType(TypedDict):
     
     # Model Architecture
     embedding_dim: int
+    use_dcn: bool
     dcn_num_layers: int
     dcn_use_layernorm: bool
+    use_gating: bool
+    gating_activation: str
     mlp_hidden_dims: list[int]
     mlp_activation: str
-    gating_activation: str
     use_batch_norm: bool
     
     # Training
@@ -61,11 +63,13 @@ CONFIG: ConfigType = {
     
     # === Model Architecture ===
     "embedding_dim": 64,
+    "use_dcn": True,  # Enable/disable DCNv2 cross network
     "dcn_num_layers": 4,  # Increased for more feature interactions
     "dcn_use_layernorm": True,  # LayerNorm for cross layer stability
+    "use_gating": False,  # Enable/disable feature gating layer
+    "gating_activation": "tanh",  # Options: sigmoid, tanh, relu, softmax
     "mlp_hidden_dims": [512, 256, 128],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
-    "gating_activation": "tanh",  # Options: sigmoid, tanh, relu, softmax
     "use_batch_norm": True,
     
     # === Training ===

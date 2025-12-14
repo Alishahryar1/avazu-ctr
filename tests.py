@@ -28,16 +28,20 @@ class TestModelStructure(unittest.TestCase):
             cls.vocab_sizes, 
             CONFIG['embedding_dim'], 
             cls.feature_names,
+            use_dcn=CONFIG['use_dcn'],
             dcn_num_layers=CONFIG['dcn_num_layers'],
             dcn_use_layernorm=CONFIG['dcn_use_layernorm'],
+            use_gating=CONFIG['use_gating'],
+            gating_activation=CONFIG['gating_activation'],
             mlp_hidden_dims=CONFIG['mlp_hidden_dims'],
             mlp_dropout=CONFIG['mlp_dropout'],
-            mlp_activation=CONFIG['mlp_activation'],
-            gating_activation=CONFIG['gating_activation']
+            mlp_activation=CONFIG['mlp_activation']
         )
     
     def test_dcn_layers(self):
-        """Verify DCN has the correct number of layers."""
+        """Verify DCN has the correct number of layers (if enabled)."""
+        if not CONFIG['use_dcn']:
+            self.skipTest("DCN is disabled in config")
         expected_layers = CONFIG['dcn_num_layers']
         actual_layers = len(self.model.dcn.W)
         self.assertEqual(
