@@ -5,19 +5,20 @@ import torch
 # --- CONFIGURATION ---
 CONFIG = {
     "seed": 42,
-    "batch_size": 256,
+    "batch_size": 512,
     "embedding_dim": 64, # Keep small for memory efficiency
     "lr": 1e-3,
-    "epochs": 1,         # 1 Epoch is usually enough for Avazu on this scale
+    "epochs": 2,         # 1 Epoch is usually enough for Avazu on this scale
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     "min_freq": 10,      # Map categories appearing < 10 times to <UNK>
     "num_workers": 2,
     "train_path": "./data/train.gz",
     "test_path": "./data/test.gz",
     "sub_path": "submission.csv",
-    "dcn_num_layers": 2,
-    "mlp_hidden_dims": [256, 128],
-    "mlp_dropout": 0.2
+    "dcn_num_layers": 3,
+    "mlp_hidden_dims": [1024, 512],
+    "mlp_dropout": 0.3,
+    "processed_path": "./data"
 }
 
 def seed_everything(seed=42):

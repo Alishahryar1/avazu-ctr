@@ -6,7 +6,7 @@ import polars as pl
 import gc
 
 from config import CONFIG, seed_everything
-from data_processor import process_data_polars
+from data_processor import load_processed_data
 from dataset import AvazuDataset
 from model import GatedDCNModel
 
@@ -14,13 +14,12 @@ def inference():
     seed_everything(CONFIG['seed'])
     
     # 1. Load and Process Data (Need to get vocab_sizes and feature_names)
-    # Ideally, we load metadata from a file, but here we re-run processing to ensure consistency with notebook logic.
-    print("Step 1: Processing Data (for Inference)...")
-    X_train, y_train, X_test, test_ids, vocab_sizes, feature_names = process_data_polars()
-    
-    # Free Train memory immediately as we only need Test
-    del X_train, y_train
-    gc.collect()
+    print("Step 1: Loading Processed Data (for Inference)...")
+    try:
+        _, _, X_test, test_ids, vocab_sizes, feature_names = load_processed_data(mode='inference')
+    except FileNotFoundError:
+        print("Processed data not found. Please run 'python data_processor.py' to generate it.")
+        return
     
     # 2. Dataset and DataLoader
     print("Step 2: Preparing Test DataLoader...")

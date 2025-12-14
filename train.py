@@ -7,7 +7,7 @@ import time
 import gc
 
 from config import CONFIG, seed_everything
-from data_processor import process_data_polars
+from data_processor import load_processed_data
 from dataset import AvazuDataset
 from model import GatedDCNModel
 
@@ -15,10 +15,12 @@ def train():
     seed_everything(CONFIG['seed'])
     
     # 1. Load and Process Data
-    # Note: For this verification structure, we process everything.
-    # In a real production pipeline, you would separate feature map generation.
-    print("Step 1: Processing Data...")
-    X_train, y_train, X_test, test_ids, vocab_sizes, feature_names = process_data_polars()
+    print("Step 1: Loading Processed Data...")
+    try:
+        X_train, y_train, X_test, test_ids, vocab_sizes, feature_names = load_processed_data(mode='train')
+    except FileNotFoundError:
+        print("Processed data not found. Please run 'python data_processor.py' to generate it.")
+        return
     
     # 2. Dataset and DataLoader
     print("Step 2: Preparing DataLoaders...")

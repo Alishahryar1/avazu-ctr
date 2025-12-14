@@ -131,3 +131,57 @@ def process_data_polars():
     print(f"Test processed. Shape: {X_test.shape}")
     
     return X_train, y_train, X_test, test_ids, vocab_sizes, cat_cols
+
+def save_processed_data(X_train, y_train, X_test, test_ids, vocab_sizes, feature_names):
+    """Saves processed data to disk."""
+    print(f"Saving processed data to {CONFIG['processed_path']}...")
+    os.makedirs(CONFIG['processed_path'], exist_ok=True)
+    
+    np.save(os.path.join(CONFIG['processed_path'], "X_train.npy"), X_train)
+    np.save(os.path.join(CONFIG['processed_path'], "y_train.npy"), y_train)
+    np.save(os.path.join(CONFIG['processed_path'], "X_test.npy"), X_test)
+    np.save(os.path.join(CONFIG['processed_path'], "test_ids.npy"), test_ids)
+    
+    import pickle
+    with open(os.path.join(CONFIG['processed_path'], "vocab_sizes.pkl"), "wb") as f:
+        pickle.dump(vocab_sizes, f)
+        
+    with open(os.path.join(CONFIG['processed_path'], "feature_names.pkl"), "wb") as f:
+        pickle.dump(feature_names, f)
+        
+    print("Data saved successfully.")
+
+def load_processed_data(mode='train'):
+    """
+    Loads processed data from disk.
+    mode: 'train' (loads everything), 'inference' (loads only test data and metadata)
+    """
+    path = CONFIG['processed_path']
+    print(f"Loading processed data from {path} for {mode}...")
+    
+    try:
+        import pickle
+        with open(os.path.join(path, "vocab_sizes.pkl"), "rb") as f:
+            vocab_sizes = pickle.load(f)
+        with open(os.path.join(path, "feature_names.pkl"), "rb") as f:
+            feature_names = pickle.load(f)
+            
+        if mode == 'train':
+            X_train = np.load(os.path.join(path, "X_train.npy"))
+            y_train = np.load(os.path.join(path, "y_train.npy"))
+            X_test = np.load(os.path.join(path, "X_test.npy")) # Optional if you only validate on split of train
+            test_ids = np.load(os.path.join(path, "test_ids.npy"))
+            return X_train, y_train, X_test, test_ids, vocab_sizes, feature_names
+        
+        elif mode == 'inference':
+            X_test = np.load(os.path.join(path, "X_test.npy"))
+            test_ids = np.load(os.path.join(path, "test_ids.npy"))
+            return None, None, X_test, test_ids, vocab_sizes, feature_names
+            
+    except FileNotFoundError as e:
+        raise FileNotFoundError(f"Processed data not found in {path}. Please run 'python data_processor.py' first.") from e
+
+if __name__ == "__main__":
+    X_train, y_train, X_test, test_ids, vocab_sizes, cat_cols = process_data_polars()
+    save_processed_data(X_train, y_train, X_test, test_ids, vocab_sizes, cat_cols)
+
