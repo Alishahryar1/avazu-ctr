@@ -18,6 +18,7 @@ class ConfigType(TypedDict):
     dcn_num_layers: int
     mlp_hidden_dims: list[int]
     mlp_dropout: float
+    mlp_activation: str
     processed_path: str
     validation_split: float
     early_stopping_patience: int
@@ -45,6 +46,7 @@ CONFIG: ConfigType = {
     "dcn_num_layers": 4,  # Increased for more feature interactions
     "mlp_hidden_dims": [512, 256, 128],  # Deeper network
     "mlp_dropout": 0.2,  # Reduced dropout
+    "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
     "processed_path": "./data",
     "validation_split": 0.01,  # NEW: Hold out 10% for validation
     "early_stopping_patience": 3,  # NEW: Early stopping

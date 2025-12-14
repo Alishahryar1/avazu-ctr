@@ -51,8 +51,22 @@ class DCNv2(nn.Module):
             
         return xi
 
+def get_activation(name: str) -> nn.Module:
+    """Get activation function by name."""
+    activations = {
+        "relu": nn.ReLU(),
+        "gelu": nn.GELU(),
+        "silu": nn.SiLU(),
+        "leaky_relu": nn.LeakyReLU(0.1),
+        "tanh": nn.Tanh(),
+    }
+    if name not in activations:
+        raise ValueError(f"Unknown activation: {name}. Choose from {list(activations.keys())}")
+    return activations[name]
+
+
 class GatedDCNModel(nn.Module):
-    def __init__(self, vocab_sizes, embedding_dim, feature_names, dcn_num_layers=2, mlp_hidden_dims=[256, 128], mlp_dropout=0.2, use_batch_norm=True):
+    def __init__(self, vocab_sizes, embedding_dim, feature_names, dcn_num_layers=2, mlp_hidden_dims=[256, 128], mlp_dropout=0.2, use_batch_norm=True, mlp_activation="relu"):
         super().__init__()
         self.feature_names = feature_names
         self.use_batch_norm = use_batch_norm
@@ -77,14 +91,14 @@ class GatedDCNModel(nn.Module):
         # 3. DCNv2
         self.dcn = DCNv2(total_dim, num_layers=dcn_num_layers)
 
-        # 4. Enhanced MLP with BatchNorm and Residuals
+        # 4. Enhanced MLP with BatchNorm and configurable activation
         layers: list[nn.Module] = []
         input_dim = total_dim
         for i, hidden_dim in enumerate(mlp_hidden_dims):
             layers.append(nn.Linear(input_dim, hidden_dim))
             if use_batch_norm:
                 layers.append(nn.BatchNorm1d(hidden_dim))
-            layers.append(nn.ReLU())
+            layers.append(get_activation(mlp_activation))
             layers.append(nn.Dropout(mlp_dropout))
             input_dim = hidden_dim
         layers.append(nn.Linear(input_dim, 1))
