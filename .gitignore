@@ -1,4 +1,5 @@
 data
-submission.csv
-model.pth
+*.csv
+*.pth
 __pycache__
+papers
