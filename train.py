@@ -246,11 +246,12 @@ def train():
     epoch = 0  # Initialize for graceful interrupt handling
 
     # Setup live plot for training loss
+    plt.style.use('dark_background')
     plt.ion()  # Enable interactive mode
     fig, ax = plt.subplots(figsize=(10, 6))
     train_loss_x = []  # epoch + batch/total_batches
     train_loss_y = []  # loss values
-    line, = ax.plot([], [], 'b-', linewidth=0.8, label='Train Loss')
+    line, = ax.plot([], [], 'g-', linewidth=0.8, label='Train Loss')
     ax.set_xlabel('Epoch')
     ax.set_ylabel('Loss')
     ax.set_title('Training Loss (Live)')

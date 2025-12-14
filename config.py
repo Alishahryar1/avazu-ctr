@@ -65,7 +65,7 @@ CONFIG: ConfigType = {
     "use_batch_norm": True,
     
     # === Training ===
-    "lr": 1e-3,  # Lower initial LR for better convergence
+    "lr": 1e-4,  # Lower initial LR for better convergence
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
     "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
     "epochs": 15,
