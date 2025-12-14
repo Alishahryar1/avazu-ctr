@@ -29,6 +29,7 @@ class ConfigType(TypedDict):
     epochs: int
     lr_warmup_steps: int
     early_stopping_patience: int
+    show_live_plot: bool
     
     # Regularization
     mlp_dropout: float
@@ -71,6 +72,7 @@ CONFIG: ConfigType = {
     "epochs": 15,
     "lr_warmup_steps": 1000,
     "early_stopping_patience": 3,
+    "show_live_plot": False,
     
     # === Regularization ===
     "mlp_dropout": 0.1,

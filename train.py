@@ -246,19 +246,20 @@ def train():
     epoch = 0  # Initialize for graceful interrupt handling
 
     # Setup live plot for training loss
-    plt.style.use('dark_background')
-    fig, ax = plt.subplots(figsize=(10, 6))
-    train_loss_x = []  # epoch + batch/total_batches
-    train_loss_y = []  # loss values
-    line, = ax.plot([], [], 'g-', linewidth=0.8, label='Train Loss')
-    ax.set_xlabel('Epoch')
-    ax.set_ylabel('Loss')
-    ax.set_title('Training Loss (Live)')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    plt.tight_layout()
-    plt.show(block=False)
-    plt.pause(0.1)
+    fig, ax, line = None, None, None
+    train_loss_x, train_loss_y = [], []
+    if CONFIG['show_live_plot']:
+        plt.style.use('dark_background')
+        fig, ax = plt.subplots(figsize=(10, 6))
+        line, = ax.plot([], [], 'g-', linewidth=0.8, label='Train Loss')
+        ax.set_xlabel('Epoch')
+        ax.set_ylabel('Loss')
+        ax.set_title('Training Loss (Live)')
+        ax.legend()
+        ax.grid(True, alpha=0.3)
+        plt.tight_layout()
+        plt.show(block=False)
+        plt.pause(0.1)
 
     try:
         for epoch in range(CONFIG['epochs']):
@@ -290,15 +291,16 @@ def train():
                 total_loss += loss.item()
 
                 # Update live plot
-                num_batches = len(train_loader)
-                x_pos = epoch + (batch_idx + 1) / num_batches
-                train_loss_x.append(x_pos)
-                train_loss_y.append(loss.item())
-                line.set_data(train_loss_x, train_loss_y)
-                ax.relim()
-                ax.autoscale_view()
-                fig.canvas.draw_idle()
-                fig.canvas.flush_events()
+                if CONFIG['show_live_plot']:
+                    num_batches = len(train_loader)
+                    x_pos = epoch + (batch_idx + 1) / num_batches
+                    train_loss_x.append(x_pos)
+                    train_loss_y.append(loss.item())
+                    line.set_data(train_loss_x, train_loss_y)
+                    ax.relim()
+                    ax.autoscale_view()
+                    fig.canvas.draw_idle()
+                    fig.canvas.flush_events()
 
                 # Update progress bar
                 pbar.set_postfix({
@@ -352,8 +354,9 @@ def train():
         print("\n" + "=" * 80)
         print("TRAINING INTERRUPTED BY USER (Ctrl+C)")
         print("=" * 80)
-        plt.ioff()
-        plt.close(fig)
+        if CONFIG['show_live_plot']:
+            plt.ioff()
+            plt.close(fig)
         return
 
     # 6. Final Results
@@ -370,8 +373,9 @@ def train():
     torch.save(model.state_dict(), os.path.join(CONFIG['models_path'], "model.pth"))
 
     # Cleanup plot
-    plt.ioff()
-    plt.close(fig)
+    if CONFIG['show_live_plot']:
+        plt.ioff()
+        plt.close(fig)
 
 
 if __name__ == "__main__":
