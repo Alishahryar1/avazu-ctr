@@ -66,14 +66,17 @@ CONFIG: ConfigType = {
     
     # === Model Architecture ===
     "embedding_dim": 64,
+    
     "use_dcn": True,  # Enable/disable DCNv2 cross network
     "dcn_num_layers": 4,  # Increased for more feature interactions
     "dcn_use_layernorm": False,  # LayerNorm for cross layer stability
     "dcn_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
+    
     "use_senet": True,  # Enable/disable SENET (Squeeze-and-Excitation) layer
     "senet_squeeze_funcs": ["mean", "max"],  # Squeeze functions to combine
     "senet_reduction_ratio": 3,  # Reduction ratio for excitation bottleneck
     "senet_activation": "tanh",  # Options: sigmoid, tanh, relu, softmax
+    
     "mlp_hidden_dims": [512, 256, 128],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
     "use_batch_norm": True,
