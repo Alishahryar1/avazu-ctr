@@ -4,6 +4,7 @@ import gc
 from tqdm import tqdm
 from config import CONFIG
 import os
+import pickle
 
 def process_data_polars():
     print("Loading data with Polars (Schema Fixed)...")
@@ -168,7 +169,6 @@ def load_processed_data(mode: str = 'train') -> tuple[
     print(f"Loading processed data from {path} for {mode}...")
     
     try:
-        import pickle
         with open(os.path.join(path, "vocab_sizes.pkl"), "rb") as f:
             vocab_sizes = pickle.load(f)
         with open(os.path.join(path, "feature_names.pkl"), "rb") as f:

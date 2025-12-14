@@ -51,7 +51,7 @@ CONFIG: ConfigType = {
     # === Data Loading ===
     "batch_size": 2048,  # Increased for faster training
     "num_workers": 4,  # Increased for faster data loading
-    "min_freq": 10,
+    "min_freq": 5,
     "validation_split": 0.01,  # Hold out 1% for validation
     
     # === Model Architecture ===
@@ -69,8 +69,8 @@ CONFIG: ConfigType = {
     "early_stopping_patience": 3,
     
     # === Regularization ===
-    "mlp_dropout": 0.2,
-    "grad_clip": 1.0,
+    "mlp_dropout": 0.1,
+    "grad_clip": 10.0,
     "weight_decay": 1e-5,  # L2 regularization
     "focal_loss_gamma": 2.0,  # Focal loss for imbalance
     "label_smoothing": 0.0,  # Optional label smoothing
