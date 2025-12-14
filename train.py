@@ -247,11 +247,14 @@ def train():
     patience_counter = 0
     epoch = 0  # Initialize for graceful interrupt handling
 
-    # Setup TensorBoard writer
+    # Setup TensorBoard writer with timestamped run directory
     writer = None
+    run_dir = None
     if CONFIG['use_tensorboard']:
-        writer = SummaryWriter(log_dir=CONFIG['tensorboard_logdir'])
-        print(f"TensorBoard logging to: {CONFIG['tensorboard_logdir']}")
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        run_dir = os.path.join(CONFIG['tensorboard_logdir'], f"run_{timestamp}")
+        writer = SummaryWriter(log_dir=run_dir)
+        print(f"TensorBoard logging to: {run_dir}")
         print("Run 'tensorboard --logdir=runs' to view training progress")
 
     try:
@@ -368,7 +371,7 @@ def train():
     # Cleanup TensorBoard writer
     if writer is not None:
         writer.close()
-        print(f"TensorBoard logs saved to: {CONFIG['tensorboard_logdir']}")
+        print(f"TensorBoard logs saved to: {run_dir}")
 
 
 if __name__ == "__main__":
