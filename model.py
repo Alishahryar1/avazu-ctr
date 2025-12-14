@@ -53,7 +53,7 @@ class DCNv2(nn.Module):
         return xi
 
 class GatedDCNModel(nn.Module):
-    def __init__(self, vocab_sizes, embedding_dim, feature_names):
+    def __init__(self, vocab_sizes, embedding_dim, feature_names, dcn_num_layers=2, mlp_hidden_dims=[256, 128], mlp_dropout=0.2):
         super().__init__()
         self.feature_names = feature_names
         
@@ -68,18 +68,19 @@ class GatedDCNModel(nn.Module):
         self.gating = FeatureGatingLayer(total_dim)
         
         # 3. DCNv2
-        self.dcn = DCNv2(total_dim, num_layers=2)
+        self.dcn = DCNv2(total_dim, num_layers=dcn_num_layers)
         
         # 4. Final MLP
-        self.mlp = nn.Sequential(
-            nn.Linear(total_dim, 256),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Dropout(0.1),
-            nn.Linear(128, 1)
-        )
+        layers = []
+        input_dim = total_dim
+        for hidden_dim in mlp_hidden_dims:
+            layers.append(nn.Linear(input_dim, hidden_dim))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(mlp_dropout))
+            input_dim = hidden_dim
+        layers.append(nn.Linear(input_dim, 1))
+        
+        self.mlp = nn.Sequential(*layers)
 
     def forward(self, x):
         # x shape: [Batch, Num_Features]

@@ -35,7 +35,14 @@ def inference():
     
     # 3. Model Initialization and Loading
     print("Step 3: Loading Model...")
-    model = GatedDCNModel(vocab_sizes, CONFIG['embedding_dim'], feature_names)
+    model = GatedDCNModel(
+        vocab_sizes, 
+        CONFIG['embedding_dim'], 
+        feature_names,
+        dcn_num_layers=CONFIG['dcn_num_layers'],
+        mlp_hidden_dims=CONFIG['mlp_hidden_dims'],
+        mlp_dropout=CONFIG['mlp_dropout']
+    )
     try:
         model.load_state_dict(torch.load("model.pth"))
         model.to(CONFIG['device'])

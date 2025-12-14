@@ -14,7 +14,10 @@ CONFIG = {
     "num_workers": 2,
     "train_path": "./data/train.gz",
     "test_path": "./data/test.gz",
-    "sub_path": "submission.csv"
+    "sub_path": "submission.csv",
+    "dcn_num_layers": 2,
+    "mlp_hidden_dims": [256, 128],
+    "mlp_dropout": 0.2
 }
 
 def seed_everything(seed=42):
