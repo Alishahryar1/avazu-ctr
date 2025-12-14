@@ -24,6 +24,8 @@ class ConfigType(TypedDict):
     
     # Training
     lr: float
+    embedding_lr: float
+    embedding_optimizer: str
     epochs: int
     lr_warmup_steps: int
     early_stopping_patience: int
@@ -63,7 +65,9 @@ CONFIG: ConfigType = {
     "use_batch_norm": True,
     
     # === Training ===
-    "lr": 5e-3,  # Lower initial LR for better convergence
+    "lr": 1e-3,  # Lower initial LR for better convergence
+    "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
+    "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
     "epochs": 15,
     "lr_warmup_steps": 1000,
     "early_stopping_patience": 3,

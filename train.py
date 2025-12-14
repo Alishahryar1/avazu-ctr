@@ -197,16 +197,37 @@ def train():
         criterion = nn.BCEWithLogitsLoss()
         print("Using BCEWithLogits Loss")
 
-    optimizer = optim.AdamW(
-        model.parameters(),
+    # Separate parameters for embeddings vs other layers
+    embedding_params = []
+    other_params = []
+    for name, param in model.named_parameters():
+        if 'embeddings' in name:
+            embedding_params.append(param)
+        else:
+            other_params.append(param)
+    
+    print(f"Embedding parameters: {sum(p.numel() for p in embedding_params):,}")
+    print(f"Other parameters: {sum(p.numel() for p in other_params):,}")
+    
+    # Adagrad for embeddings (commonly used for sparse/categorical features)
+    embedding_optimizer = optim.Adagrad(
+        embedding_params,
+        lr=CONFIG['embedding_lr']
+    )
+    print(f"Embedding optimizer: Adagrad (lr={CONFIG['embedding_lr']})")
+    
+    # AdamW for other parameters
+    other_optimizer = optim.AdamW(
+        other_params,
         lr=CONFIG['lr'],
         weight_decay=CONFIG['weight_decay']
     )
+    print(f"Other optimizer: AdamW (lr={CONFIG['lr']})")
 
-    # Learning rate scheduler
+    # Learning rate scheduler (only for non-embedding params)
     total_steps = len(train_loader) * CONFIG['epochs']
     scheduler = LRSchedulerWithWarmup(
-        optimizer,
+        other_optimizer,
         warmup_steps=CONFIG['lr_warmup_steps'],
         total_steps=total_steps
     )
@@ -234,7 +255,8 @@ def train():
                 X_batch = X_batch.to(CONFIG['device'])
                 y_batch = y_batch.to(CONFIG['device']).unsqueeze(1)
 
-                optimizer.zero_grad()
+                embedding_optimizer.zero_grad()
+                other_optimizer.zero_grad()
 
                 logits = model(X_batch)
                 loss = criterion(logits, y_batch)
@@ -245,7 +267,8 @@ def train():
                 if CONFIG['grad_clip'] > 0:
                     torch.nn.utils.clip_grad_norm_(model.parameters(), CONFIG['grad_clip'])
 
-                optimizer.step()
+                embedding_optimizer.step()
+                other_optimizer.step()
                 scheduler.step()
 
                 total_loss += loss.item()
@@ -283,7 +306,8 @@ def train():
                 torch.save({
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
-                    'optimizer_state_dict': optimizer.state_dict(),
+                    'embedding_optimizer_state_dict': embedding_optimizer.state_dict(),
+                    'other_optimizer_state_dict': other_optimizer.state_dict(),
                     'val_loss': val_loss,
                     'val_auc': val_auc,
                     'val_logloss': val_logloss,
