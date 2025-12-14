@@ -296,23 +296,6 @@ def train():
         print("\n" + "=" * 80)
         print("TRAINING INTERRUPTED BY USER (Ctrl+C)")
         print("=" * 80)
-        print("Saving interrupted checkpoint...")
-        
-        # Save interrupted checkpoint with full state for resuming
-        torch.save({
-            'epoch': epoch,
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'scheduler_step': scheduler.current_step,
-            'best_val_loss': best_val_loss,
-            'best_val_auc': best_val_auc,
-            'interrupted': True,
-        }, os.path.join(CONFIG['models_path'], "interrupted_checkpoint.pth"))
-        
-        print(f"✓ Interrupted checkpoint saved to: {CONFIG['models_path']}/interrupted_checkpoint.pth")
-        print(f"  Epoch: {epoch + 1}")
-        print(f"  Best Val AUC so far: {best_val_auc:.5f}")
-        print("=" * 80)
         return
 
     # 6. Final Results

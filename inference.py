@@ -1,3 +1,4 @@
+import os
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -45,7 +46,7 @@ def inference():
     )
 
     # Try to load best model first, fall back to model.pth
-    model_path = "best_model.pth"
+    model_path = os.path.join(CONFIG['models_path'], "best_model.pth")
     try:
         checkpoint = torch.load(model_path, map_location=CONFIG['device'], weights_only=False)
         model.load_state_dict(checkpoint['model_state_dict'])
@@ -54,12 +55,12 @@ def inference():
         print(f"  Val AUC: {checkpoint['val_auc']:.5f}, Val LogLoss: {checkpoint['val_logloss']:.5f}")
     except FileNotFoundError:
         try:
-            model_path = "model.pth"
+            model_path = os.path.join(CONFIG['models_path'], "model.pth")
             model.load_state_dict(torch.load(model_path, map_location=CONFIG['device'], weights_only=False))
             model.to(CONFIG['device'])
-            print("Model loaded from model.pth")
+            print(f"Model loaded from {model_path}")
         except FileNotFoundError:
-            print("Error: No model found. Please run train.py first.")
+            print(f"Error: No model found in {CONFIG['models_path']}. Please run train.py first.")
             return
 
     # 4. Inference
