@@ -5,8 +5,8 @@ import torch
 # --- CONFIGURATION ---
 CONFIG = {
     "seed": 42,
-    "batch_size": 128,
-    "embedding_dim": 16, # Keep small for memory efficiency
+    "batch_size": 256,
+    "embedding_dim": 64, # Keep small for memory efficiency
     "lr": 1e-3,
     "epochs": 1,         # 1 Epoch is usually enough for Avazu on this scale
     "device": "cuda" if torch.cuda.is_available() else "cpu",
