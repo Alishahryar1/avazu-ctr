@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from config import ConfigType
+
 def get_gating_activation(name: str) -> nn.Module:
     """Get activation function for feature gating layer by name."""
     activations = {
@@ -113,9 +115,31 @@ def get_activation(name: str) -> nn.Module:
 
 
 class GatedDCNModel(nn.Module):
-    def __init__(self, vocab_sizes, embedding_dim, feature_names, use_dcn=True, dcn_num_layers=2, dcn_use_layernorm=False, dcn_low_rank=None, use_gating=True, gating_activation="sigmoid", mlp_hidden_dims=[256, 128], mlp_dropout=0.2, use_batch_norm=True, mlp_activation="relu"):
+    """
+    Gated DCN Model for CTR prediction.
+    
+    Args:
+        vocab_sizes: Dictionary mapping feature names to vocabulary sizes.
+        feature_names: List of feature names in order.
+        config: Configuration dictionary with model hyperparameters.
+    """
+    def __init__(self, vocab_sizes: dict[str, int], feature_names: list[str], config: ConfigType):
         super().__init__()
         self.feature_names = feature_names
+        
+        # Extract config values
+        embedding_dim = config['embedding_dim']
+        use_dcn = config['use_dcn']
+        dcn_num_layers = config['dcn_num_layers']
+        dcn_use_layernorm = config['dcn_use_layernorm']
+        dcn_low_rank = config['dcn_low_rank']
+        use_gating = config['use_gating']
+        gating_activation = config['gating_activation']
+        mlp_hidden_dims = config['mlp_hidden_dims']
+        mlp_dropout = config['mlp_dropout']
+        use_batch_norm = config['use_batch_norm']
+        mlp_activation = config['mlp_activation']
+        
         self.use_batch_norm = use_batch_norm
         self.use_dcn = use_dcn
         self.use_gating = use_gating

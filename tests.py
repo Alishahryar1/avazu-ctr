@@ -12,8 +12,63 @@ import unittest
 import sys
 import torch
 import torch.nn as nn
-from config import CONFIG
+from config import CONFIG, ConfigType
 from model import GatedDCNModel, DCNv2
+
+
+def make_test_config(**overrides) -> ConfigType:
+    """Create a test config with optional overrides."""
+    test_config: ConfigType = {
+        # General
+        'seed': 42,
+        'device': 'cpu',
+        
+        # Data Loading
+        'batch_size': 32,
+        'num_workers': 0,
+        'min_freq': 5,
+        'validation_split': 0.1,
+        
+        # Model Architecture
+        'embedding_dim': 16,
+        'use_dcn': True,
+        'dcn_num_layers': 2,
+        'dcn_use_layernorm': False,
+        'dcn_low_rank': None,
+        'use_gating': True,
+        'gating_activation': 'sigmoid',
+        'mlp_hidden_dims': [32, 16],
+        'mlp_activation': 'relu',
+        'use_batch_norm': True,
+        
+        # Training
+        'lr': 1e-3,
+        'embedding_lr': 1.0,
+        'embedding_optimizer': 'adagrad',
+        'epochs': 1,
+        'lr_warmup_epoch_ratio': 0.1,
+        'early_stopping_patience': 3,
+        'use_tensorboard': False,
+        'tensorboard_logdir': './runs',
+        
+        # Regularization
+        'mlp_dropout': 0.1,
+        'grad_clip': 1.0,
+        'weight_decay': 1e-5,
+        'focal_loss_gamma': 2.0,
+        'label_smoothing': 0.0,
+        
+        # Paths
+        'train_path': './data/train.gz',
+        'test_path': './data/test.gz',
+        'sub_path': 'submission.csv',
+        'processed_path': './data',
+        'models_path': './models',
+    }
+    # Apply overrides
+    for key, value in overrides.items():
+        test_config[key] = value  # type: ignore
+    return test_config
 
 
 class TestModelStructure(unittest.TestCase):
@@ -24,28 +79,16 @@ class TestModelStructure(unittest.TestCase):
         """Set up mock data used across all tests in this class."""
         cls.vocab_sizes = {'f1': 100, 'f2': 100}
         cls.feature_names = ['f1', 'f2']
-        cls.model = GatedDCNModel(
-            cls.vocab_sizes, 
-            CONFIG['embedding_dim'], 
-            cls.feature_names,
-            use_dcn=CONFIG['use_dcn'],
-            dcn_num_layers=CONFIG['dcn_num_layers'],
-            dcn_use_layernorm=CONFIG['dcn_use_layernorm'],
-            dcn_low_rank=CONFIG['dcn_low_rank'],
-            use_gating=CONFIG['use_gating'],
-            gating_activation=CONFIG['gating_activation'],
-            mlp_hidden_dims=CONFIG['mlp_hidden_dims'],
-            mlp_dropout=CONFIG['mlp_dropout'],
-            mlp_activation=CONFIG['mlp_activation']
-        )
+        cls.config = make_test_config()
+        cls.model = GatedDCNModel(cls.vocab_sizes, cls.feature_names, cls.config)
     
     def test_dcn_layers(self):
         """Verify DCN has the correct number of layers (if enabled)."""
-        if not CONFIG['use_dcn']:
+        if not self.config['use_dcn']:
             self.skipTest("DCN is disabled in config")
-        expected_layers = CONFIG['dcn_num_layers']
+        expected_layers = self.config['dcn_num_layers']
         # Check either full-rank W or low-rank U (depending on config)
-        if CONFIG['dcn_low_rank'] is not None:
+        if self.config['dcn_low_rank'] is not None:
             actual_layers = len(self.model.dcn.U)
         else:
             actual_layers = len(self.model.dcn.W)
@@ -82,7 +125,7 @@ class TestModelStructure(unittest.TestCase):
     
     def test_embedding_dim(self):
         """Verify embeddings have correct dimension."""
-        expected_dim = CONFIG['embedding_dim']
+        expected_dim = self.config['embedding_dim']
         for name, embedding in self.model.embeddings.items():
             actual_dim = embedding.embedding_dim
             self.assertEqual(
@@ -90,6 +133,40 @@ class TestModelStructure(unittest.TestCase):
                 expected_dim,
                 f"Embedding '{name}' has dim {actual_dim}, expected {expected_dim}"
             )
+
+
+class TestModelWithProductionConfig(unittest.TestCase):
+    """Tests using the actual production CONFIG."""
+    
+    @classmethod
+    def setUpClass(cls):
+        """Set up model with production config."""
+        cls.vocab_sizes = {'f1': 100, 'f2': 100}
+        cls.feature_names = ['f1', 'f2']
+        cls.model = GatedDCNModel(cls.vocab_sizes, cls.feature_names, CONFIG)
+    
+    def test_forward_pass_with_production_config(self):
+        """Verify model works with production config."""
+        batch_size = 4
+        num_features = len(self.feature_names)
+        x = torch.randint(0, 100, (batch_size, num_features))
+        
+        with torch.no_grad():
+            output = self.model(x)
+        
+        self.assertEqual(output.shape, (batch_size, 1), "Output shape mismatch")
+    
+    def test_production_config_dcn_layers(self):
+        """Verify DCN layers match production config (if enabled)."""
+        if not CONFIG['use_dcn']:
+            self.skipTest("DCN is disabled in production config")
+        
+        expected_layers = CONFIG['dcn_num_layers']
+        if CONFIG['dcn_low_rank'] is not None:
+            actual_layers = len(self.model.dcn.U)
+        else:
+            actual_layers = len(self.model.dcn.W)
+        self.assertEqual(actual_layers, expected_layers)
 
 
 class TestConfig(unittest.TestCase):
@@ -191,6 +268,50 @@ class TestDCNv2LowRank(unittest.TestCase):
         dcn = DCNv2(input_dim=64, num_layers=3, low_rank=None)
         self.assertTrue(hasattr(dcn, 'W'), "Full-rank DCNv2 should have W matrices")
         self.assertEqual(len(dcn.W), 3, "Should have 3 W matrices")
+
+
+class TestModelVariants(unittest.TestCase):
+    """Test model with different config combinations."""
+    
+    def test_model_without_dcn(self):
+        """Test model with DCN disabled."""
+        config = make_test_config(use_dcn=False)
+        model = GatedDCNModel({'f1': 100}, ['f1'], config)
+        x = torch.randint(0, 100, (4, 1))
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1))
+    
+    def test_model_without_gating(self):
+        """Test model with gating disabled."""
+        config = make_test_config(use_gating=False)
+        model = GatedDCNModel({'f1': 100}, ['f1'], config)
+        x = torch.randint(0, 100, (4, 1))
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1))
+    
+    def test_model_without_batch_norm(self):
+        """Test model with batch norm disabled."""
+        config = make_test_config(use_batch_norm=False)
+        model = GatedDCNModel({'f1': 100}, ['f1'], config)
+        x = torch.randint(0, 100, (4, 1))
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1))
+    
+    def test_model_with_low_rank_dcn(self):
+        """Test model with low-rank DCN."""
+        config = make_test_config(dcn_low_rank=8)
+        model = GatedDCNModel({'f1': 100}, ['f1'], config)
+        x = torch.randint(0, 100, (4, 1))
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1))
+    
+    def test_model_minimal(self):
+        """Test model with minimal config (no DCN, no gating)."""
+        config = make_test_config(use_dcn=False, use_gating=False, use_batch_norm=False)
+        model = GatedDCNModel({'f1': 100}, ['f1'], config)
+        x = torch.randint(0, 100, (4, 1))
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1))
 
 
 def list_tests():

@@ -35,21 +35,7 @@ def inference():
     
     # 3. Model Initialization and Loading
     print("Step 3: Loading Model...")
-    model = GatedDCNModel(
-        vocab_sizes,
-        CONFIG['embedding_dim'],
-        feature_names,
-        use_dcn=CONFIG['use_dcn'],
-        dcn_num_layers=CONFIG['dcn_num_layers'],
-        dcn_use_layernorm=CONFIG['dcn_use_layernorm'],
-        dcn_low_rank=CONFIG['dcn_low_rank'],
-        use_gating=CONFIG['use_gating'],
-        gating_activation=CONFIG['gating_activation'],
-        mlp_hidden_dims=CONFIG['mlp_hidden_dims'],
-        mlp_dropout=CONFIG['mlp_dropout'],
-        use_batch_norm=CONFIG['use_batch_norm'],
-        mlp_activation=CONFIG['mlp_activation']
-    )
+    model = GatedDCNModel(vocab_sizes, feature_names, CONFIG)
 
     # Try to load best model first, fall back to model.pth
     model_path = os.path.join(CONFIG['models_path'], "best_model.pth")

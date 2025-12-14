@@ -168,26 +168,12 @@ def train():
 
     # 3. Model Initialization
     print("\nStep 3: Initializing Model...")
-    model = GatedDCNModel(
-        vocab_sizes,
-        CONFIG['embedding_dim'],
-        feature_names,
-        use_dcn=CONFIG['use_dcn'],
-        dcn_num_layers=CONFIG['dcn_num_layers'],
-        dcn_use_layernorm=CONFIG['dcn_use_layernorm'],
-        dcn_low_rank=CONFIG['dcn_low_rank'],
-        use_gating=CONFIG['use_gating'],
-        gating_activation=CONFIG['gating_activation'],
-        mlp_hidden_dims=CONFIG['mlp_hidden_dims'],
-        mlp_dropout=CONFIG['mlp_dropout'],
-        use_batch_norm=CONFIG['use_batch_norm'],
-        mlp_activation=CONFIG['mlp_activation']
-    )
+    model = GatedDCNModel(vocab_sizes, feature_names, CONFIG)
     model.to(CONFIG['device'])
 
-    # Compile model for faster training
-    model = torch.compile(model, mode="reduce-overhead")
-    print("Model compiled with torch.compile (mode='reduce-overhead')")
+    # # Compile model for faster training
+    # model = torch.compile(model, mode="reduce-overhead")
+    # print("Model compiled with torch.compile (mode='reduce-overhead')")
 
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
