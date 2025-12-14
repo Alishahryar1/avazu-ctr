@@ -76,6 +76,8 @@ def process_data_polars():
         
         # 2. Filter: Keep only features appearing >= min_freq
         frequent_items = counts.filter(pl.col("len") >= CONFIG['min_freq'])[col].to_list()
+        frequent_items.sort() # Ensure deterministic order for mapping
+
         
         # 3. Create Map: Value -> Int ID (Start at 1, 0 is <UNK>)
         # Using a dictionary is fast for Polars 'replace'
