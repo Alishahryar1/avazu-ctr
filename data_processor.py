@@ -168,15 +168,15 @@ def load_processed_data(mode='train'):
             feature_names = pickle.load(f)
             
         if mode == 'train':
-            X_train = np.load(os.path.join(path, "X_train.npy"))
-            y_train = np.load(os.path.join(path, "y_train.npy"))
-            X_test = np.load(os.path.join(path, "X_test.npy")) # Optional if you only validate on split of train
-            test_ids = np.load(os.path.join(path, "test_ids.npy"))
+            X_train = np.load(os.path.join(path, "X_train.npy"), allow_pickle=True)
+            y_train = np.load(os.path.join(path, "y_train.npy"), allow_pickle=True)
+            X_test = np.load(os.path.join(path, "X_test.npy"), allow_pickle=True) # Optional if you only validate on split of train
+            test_ids = np.load(os.path.join(path, "test_ids.npy"), allow_pickle=True)
             return X_train, y_train, X_test, test_ids, vocab_sizes, feature_names
         
         elif mode == 'inference':
-            X_test = np.load(os.path.join(path, "X_test.npy"))
-            test_ids = np.load(os.path.join(path, "test_ids.npy"))
+            X_test = np.load(os.path.join(path, "X_test.npy"), allow_pickle=True)
+            test_ids = np.load(os.path.join(path, "test_ids.npy"), allow_pickle=True)
             return None, None, X_test, test_ids, vocab_sizes, feature_names
             
     except FileNotFoundError as e:
