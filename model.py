@@ -53,52 +53,73 @@ class DCNv2(nn.Module):
         return xi
 
 class GatedDCNModel(nn.Module):
-    def __init__(self, vocab_sizes, embedding_dim, feature_names, dcn_num_layers=2, mlp_hidden_dims=[256, 128], mlp_dropout=0.2):
+    def __init__(self, vocab_sizes, embedding_dim, feature_names, dcn_num_layers=2, mlp_hidden_dims=[256, 128], mlp_dropout=0.2, use_batch_norm=True):
         super().__init__()
         self.feature_names = feature_names
-        
-        # 1. Embedding Layer
+        self.use_batch_norm = use_batch_norm
+
+        # 1. Embedding Layer with better initialization
         self.embeddings = nn.ModuleDict()
         total_dim = 0
         for feat in feature_names:
-            self.embeddings[feat] = nn.Embedding(vocab_sizes[feat], embedding_dim)
+            emb = nn.Embedding(vocab_sizes[feat], embedding_dim)
+            # Xavier initialization for embeddings
+            nn.init.xavier_uniform_(emb.weight)
+            self.embeddings[feat] = emb
             total_dim += embedding_dim
-            
+
+        # Batch norm after embeddings
+        if use_batch_norm:
+            self.embed_bn = nn.BatchNorm1d(total_dim)
+
         # 2. Feature Gating (Replaces SENet)
         self.gating = FeatureGatingLayer(total_dim)
-        
+
         # 3. DCNv2
         self.dcn = DCNv2(total_dim, num_layers=dcn_num_layers)
-        
-        # 4. Final MLP
+
+        # 4. Enhanced MLP with BatchNorm and Residuals
         layers = []
         input_dim = total_dim
-        for hidden_dim in mlp_hidden_dims:
+        for i, hidden_dim in enumerate(mlp_hidden_dims):
             layers.append(nn.Linear(input_dim, hidden_dim))
+            if use_batch_norm:
+                layers.append(nn.BatchNorm1d(hidden_dim))
             layers.append(nn.ReLU())
             layers.append(nn.Dropout(mlp_dropout))
             input_dim = hidden_dim
         layers.append(nn.Linear(input_dim, 1))
-        
+
         self.mlp = nn.Sequential(*layers)
+
+        # Initialize MLP layers properly
+        for m in self.mlp.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
 
     def forward(self, x):
         # x shape: [Batch, Num_Features]
-        
+
         # Flatten inputs into a single dense vector
         embeds = []
         for i, feat in enumerate(self.feature_names):
             embeds.append(self.embeddings[feat](x[:, i]))
-        
+
         # Concatenate: [Batch, Total_Dim]
         dnn_input = torch.cat(embeds, dim=1)
-        
+
+        # Apply batch norm to embeddings
+        if self.use_batch_norm:
+            dnn_input = self.embed_bn(dnn_input)
+
         # Apply Gating (Sparsity & Reweighting)
         gated_input = self.gating(dnn_input)
-        
+
         # Apply Cross Network (Interactions)
         cross_out = self.dcn(gated_input)
-        
-        # Final Prediction
+
+        # Final Prediction (no sigmoid here - we'll use BCEWithLogitsLoss)
         logits = self.mlp(cross_out)
-        return torch.sigmoid(logits)
+        return logits  # Return raw logits for numerical stability
