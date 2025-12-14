@@ -226,8 +226,9 @@ def train():
     print(f"Other optimizer: AdamW (lr={CONFIG['lr']})")
 
     # Learning rate scheduler (only for non-embedding params)
-    total_steps = len(train_loader) * CONFIG['epochs']
-    warmup_steps = int(total_steps * CONFIG['lr_warmup_epoch_ratio'])
+    steps_per_epoch = len(train_loader)
+    total_steps = steps_per_epoch * CONFIG['epochs']
+    warmup_steps = int(steps_per_epoch * CONFIG['lr_warmup_epoch_ratio'])
     scheduler = LRSchedulerWithWarmup(
         other_optimizer,
         warmup_steps=warmup_steps,
