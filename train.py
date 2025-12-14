@@ -175,6 +175,7 @@ def train():
         use_dcn=CONFIG['use_dcn'],
         dcn_num_layers=CONFIG['dcn_num_layers'],
         dcn_use_layernorm=CONFIG['dcn_use_layernorm'],
+        dcn_low_rank=CONFIG['dcn_low_rank'],
         use_gating=CONFIG['use_gating'],
         gating_activation=CONFIG['gating_activation'],
         mlp_hidden_dims=CONFIG['mlp_hidden_dims'],

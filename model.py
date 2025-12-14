@@ -38,15 +38,26 @@ class DCNv2(nn.Module):
     """
     Deep Cross Network V2 (Parallel).
     Explicitly captures high-order feature interactions.
+    
+    Supports low-rank decomposition: W = U @ V where U is (input_dim, rank) 
+    and V is (rank, input_dim). This reduces parameters from O(d^2) to O(2*d*r).
     """
-    def __init__(self, input_dim, num_layers=2, use_layernorm=False):
+    def __init__(self, input_dim, num_layers=2, use_layernorm=False, low_rank=None):
         super().__init__()
         self.num_layers = num_layers
         self.input_dim = input_dim
         self.use_layernorm = use_layernorm
+        self.low_rank = low_rank
         
         # Parameters for Cross Layers
-        self.W = nn.ParameterList([nn.Parameter(torch.randn(input_dim, input_dim)) for _ in range(num_layers)])
+        if low_rank is not None:
+            # Low-rank decomposition: W = U @ V
+            self.U = nn.ParameterList([nn.Parameter(torch.randn(input_dim, low_rank)) for _ in range(num_layers)])
+            self.V = nn.ParameterList([nn.Parameter(torch.randn(low_rank, input_dim)) for _ in range(num_layers)])
+        else:
+            # Full-rank weight matrix
+            self.W = nn.ParameterList([nn.Parameter(torch.randn(input_dim, input_dim)) for _ in range(num_layers)])
+        
         self.b = nn.ParameterList([nn.Parameter(torch.zeros(input_dim)) for _ in range(num_layers)])
         
         # Optional LayerNorm for stability
@@ -54,8 +65,16 @@ class DCNv2(nn.Module):
             self.layer_norms = nn.ModuleList([nn.LayerNorm(input_dim) for _ in range(num_layers)])
         
         # Init
-        for w in self.W:
-            nn.init.xavier_uniform_(w)
+        self._init_weights()
+    
+    def _init_weights(self):
+        if self.low_rank is not None:
+            for u, v in zip(self.U, self.V):
+                nn.init.xavier_uniform_(u)
+                nn.init.xavier_uniform_(v)
+        else:
+            for w in self.W:
+                nn.init.xavier_uniform_(w)
 
     def forward(self, x):
         # x: [Batch, Input_Dim]
@@ -64,8 +83,13 @@ class DCNv2(nn.Module):
         
         for i in range(self.num_layers):
             # x_next = x0 * (W * xi + b) + xi
-            # We use linear layer logic for W * xi + b
-            feature_crossing = torch.matmul(xi, self.W[i]) + self.b[i]
+            if self.low_rank is not None:
+                # Low-rank: xi @ U @ V + b
+                feature_crossing = torch.matmul(torch.matmul(xi, self.U[i]), self.V[i]) + self.b[i]
+            else:
+                # Full-rank: xi @ W + b
+                feature_crossing = torch.matmul(xi, self.W[i]) + self.b[i]
+            
             xi = x0 * feature_crossing + xi
             
             # Apply LayerNorm if enabled
@@ -89,7 +113,7 @@ def get_activation(name: str) -> nn.Module:
 
 
 class GatedDCNModel(nn.Module):
-    def __init__(self, vocab_sizes, embedding_dim, feature_names, use_dcn=True, dcn_num_layers=2, dcn_use_layernorm=False, use_gating=True, gating_activation="sigmoid", mlp_hidden_dims=[256, 128], mlp_dropout=0.2, use_batch_norm=True, mlp_activation="relu"):
+    def __init__(self, vocab_sizes, embedding_dim, feature_names, use_dcn=True, dcn_num_layers=2, dcn_use_layernorm=False, dcn_low_rank=None, use_gating=True, gating_activation="sigmoid", mlp_hidden_dims=[256, 128], mlp_dropout=0.2, use_batch_norm=True, mlp_activation="relu"):
         super().__init__()
         self.feature_names = feature_names
         self.use_batch_norm = use_batch_norm
@@ -114,9 +138,9 @@ class GatedDCNModel(nn.Module):
         if use_gating:
             self.gating = FeatureGatingLayer(total_dim, gating_activation=gating_activation)
 
-        # 3. DCNv2 - Optional
+        # 3. DCNv2 - Optional (supports low-rank decomposition)
         if use_dcn:
-            self.dcn = DCNv2(total_dim, num_layers=dcn_num_layers, use_layernorm=dcn_use_layernorm)
+            self.dcn = DCNv2(total_dim, num_layers=dcn_num_layers, use_layernorm=dcn_use_layernorm, low_rank=dcn_low_rank)
 
 
         # 4. Enhanced MLP with BatchNorm and configurable activation

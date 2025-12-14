@@ -13,7 +13,7 @@ import sys
 import torch
 import torch.nn as nn
 from config import CONFIG
-from model import GatedDCNModel
+from model import GatedDCNModel, DCNv2
 
 
 class TestModelStructure(unittest.TestCase):
@@ -31,6 +31,7 @@ class TestModelStructure(unittest.TestCase):
             use_dcn=CONFIG['use_dcn'],
             dcn_num_layers=CONFIG['dcn_num_layers'],
             dcn_use_layernorm=CONFIG['dcn_use_layernorm'],
+            dcn_low_rank=CONFIG['dcn_low_rank'],
             use_gating=CONFIG['use_gating'],
             gating_activation=CONFIG['gating_activation'],
             mlp_hidden_dims=CONFIG['mlp_hidden_dims'],
@@ -43,7 +44,11 @@ class TestModelStructure(unittest.TestCase):
         if not CONFIG['use_dcn']:
             self.skipTest("DCN is disabled in config")
         expected_layers = CONFIG['dcn_num_layers']
-        actual_layers = len(self.model.dcn.W)
+        # Check either full-rank W or low-rank U (depending on config)
+        if CONFIG['dcn_low_rank'] is not None:
+            actual_layers = len(self.model.dcn.U)
+        else:
+            actual_layers = len(self.model.dcn.W)
         self.assertEqual(
             actual_layers, 
             expected_layers,
@@ -117,6 +122,75 @@ class TestConfig(unittest.TestCase):
         self.assertGreater(CONFIG['dcn_num_layers'], 0, "dcn_num_layers must be positive")
         self.assertGreaterEqual(CONFIG['mlp_dropout'], 0.0, "mlp_dropout must be >= 0")
         self.assertLess(CONFIG['mlp_dropout'], 1.0, "mlp_dropout must be < 1")
+        if CONFIG['dcn_low_rank'] is not None:
+            self.assertGreater(CONFIG['dcn_low_rank'], 0, "dcn_low_rank must be positive if set")
+
+
+class TestDCNv2LowRank(unittest.TestCase):
+    """Tests for DCNv2 low-rank decomposition."""
+    
+    def test_full_rank_forward(self):
+        """Test DCNv2 with full-rank (low_rank=None)."""
+        dcn = DCNv2(input_dim=64, num_layers=2, low_rank=None)
+        x = torch.randn(4, 64)
+        out = dcn(x)
+        self.assertEqual(out.shape, x.shape)
+    
+    def test_low_rank_forward(self):
+        """Test DCNv2 with low-rank decomposition."""
+        dcn = DCNv2(input_dim=64, num_layers=2, low_rank=16)
+        x = torch.randn(4, 64)
+        out = dcn(x)
+        self.assertEqual(out.shape, x.shape)
+    
+    def test_low_rank_parameter_reduction(self):
+        """Verify low-rank reduces parameters."""
+        input_dim = 128
+        num_layers = 2
+        low_rank = 32
+        
+        dcn_full = DCNv2(input_dim=input_dim, num_layers=num_layers, low_rank=None)
+        dcn_low = DCNv2(input_dim=input_dim, num_layers=num_layers, low_rank=low_rank)
+        
+        full_params = sum(p.numel() for p in dcn_full.parameters())
+        low_params = sum(p.numel() for p in dcn_low.parameters())
+        
+        self.assertLess(low_params, full_params, "Low-rank should have fewer parameters")
+    
+    def test_low_rank_numerical_stability(self):
+        """Verify no NaN/Inf in low-rank output."""
+        dcn = DCNv2(input_dim=64, num_layers=4, use_layernorm=True, low_rank=16)
+        for _ in range(10):
+            x = torch.randn(32, 64)
+            out = dcn(x)
+            self.assertFalse(torch.isnan(out).any(), "NaN in output")
+            self.assertFalse(torch.isinf(out).any(), "Inf in output")
+    
+    def test_low_rank_gradient_flow(self):
+        """Verify gradients flow through low-rank DCNv2."""
+        dcn = DCNv2(input_dim=64, num_layers=2, low_rank=16)
+        x = torch.randn(4, 64, requires_grad=True)
+        out = dcn(x)
+        loss = out.sum()
+        loss.backward()
+        
+        for name, param in dcn.named_parameters():
+            self.assertIsNotNone(param.grad, f"No gradient for {name}")
+            self.assertFalse(torch.isnan(param.grad).any(), f"NaN gradient for {name}")
+    
+    def test_low_rank_has_U_V_matrices(self):
+        """Verify low-rank DCNv2 has U and V matrices."""
+        dcn = DCNv2(input_dim=64, num_layers=3, low_rank=16)
+        self.assertTrue(hasattr(dcn, 'U'), "Low-rank DCNv2 should have U matrices")
+        self.assertTrue(hasattr(dcn, 'V'), "Low-rank DCNv2 should have V matrices")
+        self.assertEqual(len(dcn.U), 3, "Should have 3 U matrices")
+        self.assertEqual(len(dcn.V), 3, "Should have 3 V matrices")
+    
+    def test_full_rank_has_W_matrices(self):
+        """Verify full-rank DCNv2 has W matrices."""
+        dcn = DCNv2(input_dim=64, num_layers=3, low_rank=None)
+        self.assertTrue(hasattr(dcn, 'W'), "Full-rank DCNv2 should have W matrices")
+        self.assertEqual(len(dcn.W), 3, "Should have 3 W matrices")
 
 
 def list_tests():
