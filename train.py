@@ -184,6 +184,10 @@ def train():
     )
     model.to(CONFIG['device'])
 
+    # Compile model for faster training
+    model = torch.compile(model, mode="reduce-overhead")
+    print("Model compiled with torch.compile (mode='reduce-overhead')")
+
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
