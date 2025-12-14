@@ -53,7 +53,7 @@ CONFIG: ConfigType = {
     "lr_warmup_steps": 1000,  # NEW: LR warmup
     "grad_clip": 1.0,  # NEW: Gradient clipping
     "weight_decay": 1e-5,  # L2 regularization
-    "use_batch_norm": True,  # NEW: Batch normalization
+    "use_batch_norm": False,  # NEW: Batch normalization
     "focal_loss_gamma": 2.0,  # NEW: Focal loss for imbalance
     "label_smoothing": 0.0,  # NEW: Optional label smoothing
     "models_path": "./models",  # Directory for saving model checkpoints
