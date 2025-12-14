@@ -1,2 +1,4 @@
 data
 submission.csv
+model.pth
+__pycache__
