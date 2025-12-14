@@ -3,6 +3,7 @@ import numpy as np
 import gc
 from tqdm import tqdm
 from config import CONFIG
+import os
 
 def process_data_polars():
     print("Loading data with Polars (Schema Fixed)...")

@@ -6,11 +6,11 @@ import torch
 CONFIG = {
     "seed": 42,
     "batch_size": 512,
-    "embedding_dim": 64, # Keep small for memory efficiency
+    "embedding_dim": 64,
     "lr": 1e-3,
-    "epochs": 2,         # 1 Epoch is usually enough for Avazu on this scale
+    "epochs": 2,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
-    "min_freq": 10,      # Map categories appearing < 10 times to <UNK>
+    "min_freq": 10,
     "num_workers": 2,
     "train_path": "./data/train.gz",
     "test_path": "./data/test.gz",
