@@ -120,8 +120,8 @@ CONFIG: ConfigType = {
     "lr": 1e-3,  # Lower initial LR for better convergence
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
     "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
-    "epochs": 1,
-    "early_stopping_patience": 2,
+    "epochs": 50,
+    "early_stopping_patience": 50,
     "use_tensorboard": False,
     "tensorboard_logdir": "./runs",
     "tensorboard_log_interval": 1000,  # Log every N batches (reduces I/O overhead)

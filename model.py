@@ -318,6 +318,9 @@ class ResidualMLP(nn.Module):
             # Pre-norm: Apply LayerNorm before the linear layer
             if self.layer_norms is not None:
                 x = self.layer_norms[i](x)
+                normed_identity = x  # Use normalized for projection in skip connection
+            else:
+                normed_identity = identity
             
             # Forward through layer
             x = layer(x)
@@ -329,7 +332,7 @@ class ResidualMLP(nn.Module):
             
             # Skip connection (projection is Identity when dims match)
             if self.use_skip_connections:
-                x = x + self.projections[i](identity)
+                x = x + self.projections[i](normed_identity)
         
         # Final output layer
         return self.output_layer(x)
