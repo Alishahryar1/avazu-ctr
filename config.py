@@ -26,6 +26,7 @@ class ConfigType(TypedDict):
     senet_activation: str
     use_feature_gating: bool  # Alternative to SENET (mutually exclusive)
     feature_gating_activation: str  # Options: sigmoid, tanh, relu, etc.
+    feature_gating_low_rank: int | None  # None = full-rank, int = low-rank dimension
     mlp_hidden_dims: list[int]
     mlp_activation: str
     use_layer_norm: bool
@@ -62,7 +63,7 @@ CONFIG: ConfigType = {
     "device": "cuda" if torch.cuda.is_available() else "cpu",
     
     # === Data Loading ===
-    "batch_size": 2048,  # Increased for faster training
+    "batch_size": 4096,  # Increased for faster training
     "num_workers": 4,  # Increased for faster data loading
     "min_freq": 5,
     "validation_split": 0.01,  # Hold out 1% for validation
@@ -73,7 +74,7 @@ CONFIG: ConfigType = {
     "use_dcn": True,  # Enable/disable DCNv2 cross network
     "dcn_num_layers": 4,  # Increased for more feature interactions
     "dcn_use_layernorm": False,  # LayerNorm for cross layer stability
-    "dcn_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
+    "dcn_low_rank": 128,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
     "use_senet": False,  # Enable/disable SENET (Squeeze-and-Excitation) layer
     "senet_squeeze_funcs": ["mean", "max", "min"],  # Squeeze functions to combine
@@ -82,8 +83,9 @@ CONFIG: ConfigType = {
     
     "use_feature_gating": True,  # Alternative to SENET (mutually exclusive)
     "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
+    "feature_gating_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
-    "mlp_hidden_dims": [1024, 512, 512],  # Deeper network
+    "mlp_hidden_dims": [2048, 1024, 1024],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
     "use_layer_norm": True,
     
