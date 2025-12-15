@@ -132,28 +132,23 @@ def train():
     print(f"Train samples: {len(X_train):,}")
     print(f"Positive rate: {y_train.mean():.4f}")
 
-    # 2. Temporal Train/Validation Split (prevents data leakage from future to past)
-    print("\nStep 2: Creating Temporal Train/Validation Split...")
+    # 2. Random Train/Validation Split
+    print("\nStep 2: Creating Random Train/Validation Split...")
     
-    # Sort indices by hour to enable temporal split
-    # Hour format is YYMMDDHH (e.g., "14102100" for 2014-10-21 00:00)
-    sorted_indices = np.argsort(train_hours)
+    from sklearn.model_selection import train_test_split
     
-    # Calculate split point: use last N% of data (chronologically) for validation
-    val_size = int(len(sorted_indices) * CONFIG['validation_split'])
-    train_size = len(sorted_indices) - val_size
+    # Random split
+    X_train_split, X_val_split, y_train_split, y_val_split = train_test_split(
+        X_train, y_train, 
+        test_size=CONFIG['validation_split'], 
+        random_state=CONFIG['seed']
+    )
     
-    train_indices = sorted_indices[:train_size]
-    val_indices = sorted_indices[train_size:]
+    print(f"Random split with test_size={CONFIG['validation_split']}")
     
-    # Get the hour boundary for logging
-    train_max_hour = train_hours[train_indices[-1]]
-    val_min_hour = train_hours[val_indices[0]]
-    print(f"Temporal split: Train ends at hour {train_max_hour}, Val starts at hour {val_min_hour}")
-    
-    # Create datasets using the temporal indices
-    train_dataset = AvazuDataset(X_train[train_indices], y_train[train_indices])
-    val_dataset = AvazuDataset(X_train[val_indices], y_train[val_indices])
+    # Create datasets using the random split
+    train_dataset = AvazuDataset(X_train_split, y_train_split)
+    val_dataset = AvazuDataset(X_val_split, y_val_split)
 
     print(f"Training samples: {len(train_dataset):,}")
     print(f"Validation samples: {len(val_dataset):,}")
@@ -175,7 +170,7 @@ def train():
     )
 
     # Free memory
-    del X_train, y_train, train_hours, X_test, train_indices, val_indices
+    del X_train, y_train, train_hours, X_test
     gc.collect()
 
     # 3. Model Initialization
