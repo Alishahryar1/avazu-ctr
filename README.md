@@ -127,7 +127,7 @@ venv\Scripts\activate  # Windows
 # source venv/bin/activate  # Linux/Mac
 
 # Install dependencies
-pip install torch torchvision polars numpy scikit-learn tqdm tensorboard
+pip install -r requirements.txt
 ```
 
 ### Data Preparation
@@ -226,6 +226,8 @@ All hyperparameters are centralized in `config.py`. Here are the key settings:
 
 ```
 avazu-ctr/
+├── 📄 README.md           # Project documentation
+├── 📄 requirements.txt    # Python dependencies
 ├── 📄 config.py           # Centralized configuration
 ├── 📄 model.py            # Model architecture (DCNv2, SE-Net, MLP)
 ├── 📄 train.py            # Training loop with TensorBoard logging
