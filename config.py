@@ -95,7 +95,7 @@ CONFIG: ConfigType = {
     "mlp_dropout": 0.1,
     "grad_clip": 10.0,
     "weight_decay": 1e-5,  # L2 regularization
-    "focal_loss_gamma": 2.0,  # Focal loss for imbalance
+    "focal_loss_gamma": 0.0,  # Focal loss for imbalance
     "label_smoothing": 0.0,  # Optional label smoothing
     
     # === Paths ===
