@@ -886,6 +886,7 @@ class TestAvazuDataset(unittest.TestCase):
         
         self.assertEqual(len(dataset), 10)
         sample_x = dataset[0]
+        assert isinstance(sample_x, torch.Tensor), "Inference mode should return a Tensor"
         self.assertEqual(sample_x.shape, (5,))
         self.assertIsInstance(sample_x, torch.Tensor)
     
