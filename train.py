@@ -281,8 +281,8 @@ def train():
 
                 total_loss += loss.item()
 
-                # Log to TensorBoard
-                if writer is not None:
+                # Log to TensorBoard (at configured interval to reduce I/O overhead)
+                if writer is not None and batch_idx % CONFIG['tensorboard_log_interval'] == 0:
                     global_step = epoch * len(train_loader) + batch_idx
                     writer.add_scalar('Loss/train_batch', loss.item(), global_step)
                     writer.add_scalar('LR/learning_rate', scheduler.get_lr(), global_step)

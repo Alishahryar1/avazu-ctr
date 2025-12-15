@@ -37,6 +37,7 @@ class ConfigType(TypedDict):
     early_stopping_patience: int
     use_tensorboard: bool
     tensorboard_logdir: str
+    tensorboard_log_interval: int  # Log every N batches
     
     # Regularization
     mlp_dropout: float
@@ -90,6 +91,7 @@ CONFIG: ConfigType = {
     "early_stopping_patience": 50,
     "use_tensorboard": True,
     "tensorboard_logdir": "./runs",
+    "tensorboard_log_interval": 200,  # Log every N batches (reduces I/O overhead)
     
     # === Regularization ===
     "mlp_dropout": 0.1,
