@@ -111,6 +111,8 @@ def evaluate(model, data_loader, criterion, device):
 
 
 def train():
+    # Cache paths early for type checker (avoids unbound-name errors in finally blocks)
+    models_path = CONFIG['models_path']
     seed_everything(CONFIG['seed'])
 
     # 1. Load and Process Data
@@ -368,12 +370,12 @@ def train():
     print("=" * 80)
     print(f"Best Validation Loss: {best_val_loss:.5f}")
     print(f"Best Validation AUC:  {best_val_auc:.5f}")
-    print(f"\nBest model saved to: {CONFIG['models_path']}/best_model.pth")
-    print(f"Latest model saved to: {CONFIG['models_path']}/model.pth")
+    print(f"\nBest model saved to: {models_path}/best_model.pth")
+    print(f"Latest model saved to: {models_path}/model.pth")
     print("=" * 80)
 
     # Save final model
-    torch.save(model.state_dict(), os.path.join(CONFIG['models_path'], "model.pth"))
+    torch.save(model.state_dict(), os.path.join(models_path, "model.pth"))
 
     # Cleanup TensorBoard writer
     if writer is not None:

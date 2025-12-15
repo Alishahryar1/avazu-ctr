@@ -61,6 +61,7 @@ def make_test_config(**overrides) -> ConfigType:
         'mlp_dropout': 0.1,
         'grad_clip': 1.0,
         'weight_decay': 1e-5,
+        'embedding_weight_decay': 0.0,
         'focal_loss_gamma': 2.0,
         'label_smoothing': 0.0,
         

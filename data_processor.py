@@ -233,9 +233,12 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     print("Transforming data to numpy arrays...")
     
     # Transform train data
-    X_train, y_train, train_hours = transform_dataframe(
+    X_train, y_train, train_hours_raw = transform_dataframe(
         lf_train, feat_maps, cat_cols, is_test=False
     )
+    # train_hours is guaranteed to be non-None when is_test=False
+    assert train_hours_raw is not None
+    train_hours = train_hours_raw
     print(f"Train processed: {X_train.shape}")
     
     # Transform test data
