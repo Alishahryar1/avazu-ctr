@@ -172,7 +172,7 @@ def transform_dataframe(
         lf
         .select(select_cols)
         .with_columns(mapping_exprs)
-        .collect(engine="gpu")
+        .collect()
     )
     
     # Extract arrays
