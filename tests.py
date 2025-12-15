@@ -1816,6 +1816,233 @@ class TestHourlyImpressionsBinning(unittest.TestCase):
         self.assertEqual(result['user_hourly_impressions_bin'].dtype, pl.String)
 
 
+# =============================================================================
+# Tests for data_processor.py - Time-Delta Features
+# =============================================================================
+class TestTimeDeltaFeatures(unittest.TestCase):
+    """Tests for time-delta feature computation (hours since last click)."""
+    
+    def test_compute_time_delta_basic(self):
+        """Test basic time delta computation."""
+        import polars as pl
+        from data_processor import compute_time_delta_features
+        
+        # Create test data with known time sequence for same user
+        # user u1 clicks at hours 00, 01, 05 -> deltas should be 0, 1, 4
+        test_data = pl.DataFrame({
+            'user_proxy': ['u1', 'u1', 'u1'],
+            'hour': ['14102100', '14102101', '14102105']
+        }).lazy()
+        
+        result = compute_time_delta_features(test_data, group_col='user_proxy').collect()
+        
+        self.assertIn('hours_since_last_click', result.columns)
+        deltas = result['hours_since_last_click'].to_list()
+        self.assertEqual(deltas[0], 0)  # First click, no previous
+        self.assertEqual(deltas[1], 1)  # 1 hour after first
+        self.assertEqual(deltas[2], 4)  # 4 hours after second
+    
+    def test_compute_time_delta_multiple_users(self):
+        """Test time delta computation with multiple users."""
+        import polars as pl
+        from data_processor import compute_time_delta_features
+        
+        # Two users with different click patterns
+        test_data = pl.DataFrame({
+            'user_proxy': ['u1', 'u2', 'u1', 'u2'],
+            'hour': ['14102100', '14102100', '14102102', '14102110']
+        }).lazy()
+        
+        result = compute_time_delta_features(test_data, group_col='user_proxy').collect()
+        deltas = result['hours_since_last_click'].to_list()
+        
+        # u1: first click (0), then 2 hours later
+        # u2: first click (0), then 10 hours later
+        self.assertEqual(deltas[0], 0)   # u1 first
+        self.assertEqual(deltas[1], 0)   # u2 first
+        self.assertEqual(deltas[2], 2)   # u1 second, 2 hours after first
+        self.assertEqual(deltas[3], 10)  # u2 second, 10 hours after first
+    
+    def test_compute_time_delta_across_days(self):
+        """Test time delta computation across different days."""
+        import polars as pl
+        from data_processor import compute_time_delta_features
+        
+        # User clicks on different days
+        test_data = pl.DataFrame({
+            'user_proxy': ['u1', 'u1'],
+            'hour': ['14102100', '14102200']  # Oct 21 00:00 -> Oct 22 00:00 = 24 hours
+        }).lazy()
+        
+        result = compute_time_delta_features(test_data, group_col='user_proxy').collect()
+        deltas = result['hours_since_last_click'].to_list()
+        
+        self.assertEqual(deltas[0], 0)   # First click
+        self.assertEqual(deltas[1], 24)  # 24 hours later
+
+
+class TestTimeDeltaBinning(unittest.TestCase):
+    """Tests for time delta binning."""
+    
+    def test_bin_time_delta_basic(self):
+        """Test basic time delta binning."""
+        import polars as pl
+        from data_processor import bin_time_delta_features
+        
+        test_data = pl.DataFrame({
+            'hours_since_last_click': [0, 3, 15, 100, 200]
+        })
+        
+        bin_expr = bin_time_delta_features()
+        result = test_data.with_columns(bin_expr)
+        
+        bins = result['hours_since_last_click_bin'].to_list()
+        self.assertEqual(bins[0], 'first')   # 0
+        self.assertEqual(bins[1], '1-6h')    # 3
+        self.assertEqual(bins[2], '6-24h')   # 15
+        self.assertEqual(bins[3], '1-7d')    # 100 (< 168)
+        self.assertEqual(bins[4], '>7d')     # 200 (> 168)
+    
+    def test_bin_time_delta_boundaries(self):
+        """Test binning at exact boundaries."""
+        import polars as pl
+        from data_processor import bin_time_delta_features
+        
+        test_data = pl.DataFrame({
+            'hours_since_last_click': [0, 1, 5, 6, 23, 24, 167, 168]
+        })
+        
+        bin_expr = bin_time_delta_features()
+        result = test_data.with_columns(bin_expr)
+        
+        bins = result['hours_since_last_click_bin'].to_list()
+        self.assertEqual(bins[0], 'first')   # 0
+        self.assertEqual(bins[1], '1-6h')    # 1
+        self.assertEqual(bins[2], '1-6h')    # 5
+        self.assertEqual(bins[3], '6-24h')   # 6
+        self.assertEqual(bins[4], '6-24h')   # 23
+        self.assertEqual(bins[5], '1-7d')    # 24
+        self.assertEqual(bins[6], '1-7d')    # 167
+        self.assertEqual(bins[7], '>7d')     # 168
+
+
+# =============================================================================
+# Tests for data_processor.py - Previous Click Count Features
+# =============================================================================
+class TestPreviousClickCount(unittest.TestCase):
+    """Tests for previous click count feature computation."""
+    
+    def test_compute_prev_click_count_basic(self):
+        """Test basic previous click count computation."""
+        import polars as pl
+        from data_processor import compute_previous_click_count
+        
+        # User makes 4 clicks -> prev counts should be 0, 1, 2, 3
+        test_data = pl.DataFrame({
+            'user_proxy': ['u1', 'u1', 'u1', 'u1']
+        }).lazy()
+        
+        result = compute_previous_click_count(test_data, group_col='user_proxy').collect()
+        
+        self.assertIn('user_proxy_prev_clicks', result.columns)
+        prev_clicks = result['user_proxy_prev_clicks'].to_list()
+        self.assertEqual(prev_clicks, [0, 1, 2, 3])
+    
+    def test_compute_prev_click_count_multiple_users(self):
+        """Test previous click count with multiple users."""
+        import polars as pl
+        from data_processor import compute_previous_click_count
+        
+        # Two users with different click counts
+        test_data = pl.DataFrame({
+            'user_proxy': ['u1', 'u2', 'u1', 'u2', 'u1']
+        }).lazy()
+        
+        result = compute_previous_click_count(test_data, group_col='user_proxy').collect()
+        prev_clicks = result['user_proxy_prev_clicks'].to_list()
+        
+        # u1: 0, 1, 2 (positions 0, 2, 4)
+        # u2: 0, 1 (positions 1, 3)
+        self.assertEqual(prev_clicks[0], 0)  # u1 first
+        self.assertEqual(prev_clicks[1], 0)  # u2 first
+        self.assertEqual(prev_clicks[2], 1)  # u1 second
+        self.assertEqual(prev_clicks[3], 1)  # u2 second
+        self.assertEqual(prev_clicks[4], 2)  # u1 third
+    
+    def test_prev_click_count_all_unique(self):
+        """Test previous click count when all users are unique."""
+        import polars as pl
+        from data_processor import compute_previous_click_count
+        
+        test_data = pl.DataFrame({
+            'user_proxy': ['u1', 'u2', 'u3', 'u4']
+        }).lazy()
+        
+        result = compute_previous_click_count(test_data, group_col='user_proxy').collect()
+        prev_clicks = result['user_proxy_prev_clicks'].to_list()
+        
+        # All first-time users should have 0 previous clicks
+        self.assertEqual(prev_clicks, [0, 0, 0, 0])
+
+
+class TestPreviousClicksBinning(unittest.TestCase):
+    """Tests for previous clicks binning."""
+    
+    def test_bin_prev_clicks_basic(self):
+        """Test basic previous clicks binning."""
+        import polars as pl
+        from data_processor import bin_prev_clicks
+        
+        test_data = pl.DataFrame({
+            'user_proxy_prev_clicks': [0, 3, 15, 75, 150]
+        })
+        
+        bin_expr = bin_prev_clicks('user_proxy')
+        result = test_data.with_columns(bin_expr)
+        
+        bins = result['user_proxy_prev_clicks_bin'].to_list()
+        self.assertEqual(bins[0], 'new')       # 0
+        self.assertEqual(bins[1], 'returning') # 3
+        self.assertEqual(bins[2], 'regular')   # 15
+        self.assertEqual(bins[3], 'heavy')     # 75
+        self.assertEqual(bins[4], 'power')     # 150
+    
+    def test_bin_prev_clicks_boundaries(self):
+        """Test binning at exact boundaries."""
+        import polars as pl
+        from data_processor import bin_prev_clicks
+        
+        test_data = pl.DataFrame({
+            'user_proxy_prev_clicks': [0, 5, 6, 20, 21, 100, 101]
+        })
+        
+        bin_expr = bin_prev_clicks('user_proxy')
+        result = test_data.with_columns(bin_expr)
+        
+        bins = result['user_proxy_prev_clicks_bin'].to_list()
+        self.assertEqual(bins[0], 'new')       # 0
+        self.assertEqual(bins[1], 'returning') # 5
+        self.assertEqual(bins[2], 'regular')   # 6
+        self.assertEqual(bins[3], 'regular')   # 20
+        self.assertEqual(bins[4], 'heavy')     # 21
+        self.assertEqual(bins[5], 'heavy')     # 100
+        self.assertEqual(bins[6], 'power')     # 101
+    
+    def test_bin_prev_clicks_output_type(self):
+        """Verify binned feature is string type."""
+        import polars as pl
+        from data_processor import bin_prev_clicks
+        
+        test_data = pl.DataFrame({
+            'user_proxy_prev_clicks': [0, 50, 200]
+        })
+        
+        bin_expr = bin_prev_clicks('user_proxy')
+        result = test_data.with_columns(bin_expr)
+        
+        self.assertEqual(result['user_proxy_prev_clicks_bin'].dtype, pl.String)
+
+
 class TestDataProcessorPersistence(unittest.TestCase):
     """Tests for data persistence (save/load)."""
     

@@ -171,6 +171,128 @@ def bin_cumcount_features(cols: list[str]) -> list[pl.Expr]:
     return expressions
 
 
+# =============================================================================
+# Time-Delta Features (Hours Since Last Click)
+# =============================================================================
+def compute_time_delta_features(
+    lf: pl.LazyFrame,
+    group_col: str = "user_proxy"
+) -> pl.LazyFrame:
+    """
+    Compute time delta features - hours since last click for each user.
+    
+    This captures click velocity patterns:
+    - Bots/fraudulent clicks have very short intervals
+    - Normal users have longer intervals between clicks
+    
+    Note: Since the 'hour' column is YYMMDDHH format (hour-level granularity),
+    we compute hours since last click, not seconds.
+    
+    Args:
+        lf: Input LazyFrame (must be sorted by 'hour')
+        group_col: Column to group by for computing deltas (default: user_proxy)
+        
+    Returns:
+        LazyFrame with time delta features added
+    """
+    # Parse hour column to datetime for time delta computation
+    # Format: YYMMDDHH -> add "00" for minutes
+    lf = lf.with_columns(
+        (pl.col("hour") + "00")
+        .str.to_datetime("%y%m%d%H%M")
+        .alias("_timestamp")
+    )
+    
+    # Compute hours since previous click for this user
+    lf = lf.with_columns(
+        (
+            pl.col("_timestamp") - pl.col("_timestamp").shift(1).over(group_col)
+        )
+        .dt.total_hours()
+        .fill_null(0)  # First click has no previous
+        .cast(pl.UInt32)
+        .alias("hours_since_last_click")
+    )
+    
+    # Drop temporary timestamp column
+    lf = lf.drop("_timestamp")
+    
+    return lf
+
+
+def bin_time_delta_features() -> pl.Expr:
+    """
+    Bin hours_since_last_click into categorical buckets.
+    
+    Bins:
+    - 'first': First click (0 hours delta)
+    - 'same_hour': Same hour as previous click (would be 0 but we use 'first' for that)
+    - '<1h': Within 1 hour
+    - '1-6h': 1-6 hours
+    - '6-24h': 6-24 hours (same day roughly)
+    - '1-7d': 1-7 days
+    - '>7d': More than a week
+    """
+    return (
+        pl.when(pl.col("hours_since_last_click") == 0).then(pl.lit("first"))
+        .when(pl.col("hours_since_last_click") < 1).then(pl.lit("same_hour"))
+        .when(pl.col("hours_since_last_click") < 6).then(pl.lit("1-6h"))
+        .when(pl.col("hours_since_last_click") < 24).then(pl.lit("6-24h"))
+        .when(pl.col("hours_since_last_click") < 168).then(pl.lit("1-7d"))  # 24*7 = 168
+        .otherwise(pl.lit(">7d"))
+        .alias("hours_since_last_click_bin")
+    )
+
+
+# =============================================================================
+# Previous Click Count Features (Rolling Count)
+# =============================================================================
+def compute_previous_click_count(
+    lf: pl.LazyFrame,
+    group_col: str = "user_proxy"
+) -> pl.LazyFrame:
+    """
+    Compute the number of previous clicks for each user up to (but not including) current row.
+    
+    This is similar to cumulative count but shifted by 1, so it represents
+    "how many clicks has this user made BEFORE this one".
+    
+    This is more useful than cumulative count for prediction because:
+    - cumcount includes the current row
+    - prev_click_count is what we would know at prediction time
+    
+    Args:
+        lf: Input LazyFrame (must be sorted chronologically)
+        group_col: Column to group by
+        
+    Returns:
+        LazyFrame with previous click count feature
+    """
+    return lf.with_columns(
+        (pl.col(group_col).cum_count().over(group_col) - 1)
+        .clip(lower_bound=0)
+        .cast(pl.UInt32)
+        .alias(f"{group_col}_prev_clicks")
+    )
+
+
+def bin_prev_clicks(group_col: str) -> pl.Expr:
+    """
+    Bin previous click counts into categorical buckets.
+    
+    Bins: new (0), returning (1-5), regular (6-20), heavy (21-100), power (100+)
+    """
+    col_name = f"{group_col}_prev_clicks"
+    return (
+        pl.when(pl.col(col_name) == 0).then(pl.lit("new"))
+        .when(pl.col(col_name) <= 5).then(pl.lit("returning"))
+        .when(pl.col(col_name) <= 20).then(pl.lit("regular"))
+        .when(pl.col(col_name) <= 100).then(pl.lit("heavy"))
+        .otherwise(pl.lit("power"))
+        .alias(f"{col_name}_bin")
+    )
+
+
 def get_string_cast_expressions(columns: list[str]) -> list[pl.Expr]:
     """Returns expressions to cast columns to String type."""
     return [pl.col(c).cast(pl.String) for c in columns]
@@ -524,8 +646,28 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     lf_train = lf_train.with_columns(hourly_bin_expr)
     lf_test = lf_test.with_columns(hourly_bin_expr)
     
+    # === Step 8: Compute time-delta features (hours since last click) ===
+    print("Computing time-delta features...")
+    lf_train = compute_time_delta_features(lf_train, group_col="user_proxy")
+    lf_test = compute_time_delta_features(lf_test, group_col="user_proxy")
+    
+    # Bin time delta
+    time_delta_bin_expr = bin_time_delta_features()
+    lf_train = lf_train.with_columns(time_delta_bin_expr)
+    lf_test = lf_test.with_columns(time_delta_bin_expr)
+    
+    # === Step 9: Compute previous click count features ===
+    print("Computing previous click count features...")
+    lf_train = compute_previous_click_count(lf_train, group_col="user_proxy")
+    lf_test = compute_previous_click_count(lf_test, group_col="user_proxy")
+    
+    # Bin previous clicks
+    prev_clicks_bin_expr = bin_prev_clicks("user_proxy")
+    lf_train = lf_train.with_columns(prev_clicks_bin_expr)
+    lf_test = lf_test.with_columns(prev_clicks_bin_expr)
+    
     # === Build final feature list ===
-    # Categorical columns: base + engineered + time + count bins + cumcount bins + hourly bins
+    # Categorical columns: base + engineered + time + count bins + cumcount bins + hourly bins + time delta + prev clicks
     count_bin_cols = [f"{col}_count_bin" for col in COUNT_FEATURE_COLS]
     cumcount_bin_cols = [f"{col}_cumcount_bin" for col in CUMCOUNT_COLS]
     cat_cols = (
@@ -534,6 +676,8 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
         + count_bin_cols 
         + cumcount_bin_cols 
         + ['user_hourly_impressions_bin']
+        + ['hours_since_last_click_bin']
+        + ['user_proxy_prev_clicks_bin']
     )
     
     print(f"Total categorical features: {len(cat_cols)}")
