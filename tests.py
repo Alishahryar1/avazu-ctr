@@ -12,6 +12,7 @@ import unittest
 import sys
 import torch
 import torch.nn as nn
+import numpy as np
 from config import CONFIG, ConfigType
 from model import GatedDCNModel, DCNv2, SENetLayer, FeatureGatingLayer
 
@@ -650,6 +651,665 @@ class TestVariableEmbeddings(unittest.TestCase):
         self.assertEqual(model.embeddings['huge'].embedding_dim, 64)  # Default
 
 
+# =============================================================================
+# Tests for train.py - FocalLoss
+# =============================================================================
+class TestFocalLoss(unittest.TestCase):
+    """Tests for Focal Loss implementation."""
+    
+    @classmethod
+    def setUpClass(cls):
+        """Import FocalLoss from train module."""
+        from train import FocalLoss
+        cls.FocalLoss = FocalLoss
+    
+    def test_focal_loss_forward_basic(self):
+        """Test basic forward pass."""
+        focal = self.FocalLoss(gamma=2.0)
+        logits = torch.randn(4, 1)
+        targets = torch.randint(0, 2, (4, 1)).float()
+        loss = focal(logits, targets)
+        
+        self.assertEqual(loss.dim(), 0)  # Scalar output
+        self.assertFalse(torch.isnan(loss))
+        self.assertFalse(torch.isinf(loss))
+    
+    def test_focal_loss_gamma_zero_equals_bce(self):
+        """Verify gamma=0 is equivalent to standard BCE."""
+        focal = self.FocalLoss(gamma=0.0)
+        bce = nn.BCEWithLogitsLoss()
+        
+        logits = torch.randn(32, 1)
+        targets = torch.randint(0, 2, (32, 1)).float()
+        
+        focal_loss = focal(logits, targets)
+        bce_loss = bce(logits, targets)
+        
+        self.assertAlmostEqual(focal_loss.item(), bce_loss.item(), places=5)
+    
+    def test_focal_loss_down_weights_easy_examples(self):
+        """Verify focal loss down-weights confident predictions."""
+        focal_high_gamma = self.FocalLoss(gamma=5.0)
+        focal_low_gamma = self.FocalLoss(gamma=0.0)
+        
+        # Easy example: prediction and target are the same (high confidence)
+        easy_logits = torch.tensor([[10.0]])  # Very confident positive
+        easy_targets = torch.tensor([[1.0]])
+        
+        focal_high = focal_high_gamma(easy_logits, easy_targets)
+        focal_low = focal_low_gamma(easy_logits, easy_targets)
+        
+        # High gamma should have lower loss for easy examples
+        self.assertLess(focal_high.item(), focal_low.item())
+    
+    def test_focal_loss_with_alpha(self):
+        """Test focal loss with class weights (alpha)."""
+        focal = self.FocalLoss(gamma=2.0, alpha=0.75)
+        logits = torch.randn(4, 1)
+        targets = torch.randint(0, 2, (4, 1)).float()
+        loss = focal(logits, targets)
+        
+        self.assertFalse(torch.isnan(loss))
+        self.assertGreater(loss.item(), 0)
+    
+    def test_focal_loss_all_zeros_targets(self):
+        """Test focal loss when all targets are 0."""
+        focal = self.FocalLoss(gamma=2.0)
+        logits = torch.randn(8, 1)
+        targets = torch.zeros(8, 1)
+        loss = focal(logits, targets)
+        
+        self.assertFalse(torch.isnan(loss))
+        self.assertGreater(loss.item(), 0)
+    
+    def test_focal_loss_all_ones_targets(self):
+        """Test focal loss when all targets are 1."""
+        focal = self.FocalLoss(gamma=2.0)
+        logits = torch.randn(8, 1)
+        targets = torch.ones(8, 1)
+        loss = focal(logits, targets)
+        
+        self.assertFalse(torch.isnan(loss))
+        self.assertGreater(loss.item(), 0)
+    
+    def test_focal_loss_gradient_flow(self):
+        """Verify gradients flow through focal loss."""
+        focal = self.FocalLoss(gamma=2.0)
+        logits = torch.randn(4, 1, requires_grad=True)
+        targets = torch.randint(0, 2, (4, 1)).float()
+        
+        loss = focal(logits, targets)
+        loss.backward()
+        
+        self.assertIsNotNone(logits.grad)
+        self.assertFalse(torch.isnan(logits.grad).any())
+
+
+# =============================================================================
+# Tests for train.py - LRSchedulerWithWarmup
+# =============================================================================
+class TestLRSchedulerWithWarmup(unittest.TestCase):
+    """Tests for learning rate scheduler with warmup."""
+    
+    @classmethod
+    def setUpClass(cls):
+        """Import LRSchedulerWithWarmup from train module."""
+        from train import LRSchedulerWithWarmup
+        cls.LRSchedulerWithWarmup = LRSchedulerWithWarmup
+    
+    def test_warmup_phase(self):
+        """Test that LR increases linearly during warmup."""
+        model = nn.Linear(10, 1)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        scheduler = self.LRSchedulerWithWarmup(
+            optimizer, warmup_steps=100, total_steps=1000
+        )
+        
+        initial_lr = scheduler.get_lr()
+        self.assertEqual(initial_lr, 0.001)  # Base LR
+        
+        # After a few warmup steps, LR should be increasing
+        for _ in range(10):
+            scheduler.step()
+        
+        warmup_lr = scheduler.get_lr()
+        self.assertLess(warmup_lr, initial_lr)  # Still in warmup (below base)
+        self.assertGreater(warmup_lr, 0)
+    
+    def test_lr_at_warmup_end(self):
+        """Test that LR equals base_lr exactly at end of warmup."""
+        model = nn.Linear(10, 1)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        scheduler = self.LRSchedulerWithWarmup(
+            optimizer, warmup_steps=100, total_steps=1000
+        )
+        
+        # Run exactly to end of warmup
+        for _ in range(100):
+            scheduler.step()
+        
+        lr_at_warmup_end = scheduler.get_lr()
+        # At step 100 (end of warmup), we start cosine decay, so LR should be close to base
+        self.assertAlmostEqual(lr_at_warmup_end, 0.01, places=3)
+    
+    def test_cosine_decay_phase(self):
+        """Test that LR decays after warmup."""
+        model = nn.Linear(10, 1)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        scheduler = self.LRSchedulerWithWarmup(
+            optimizer, warmup_steps=10, total_steps=100, min_lr=1e-6
+        )
+        
+        # Complete warmup
+        for _ in range(10):
+            scheduler.step()
+        lr_after_warmup = scheduler.get_lr()
+        
+        # Continue into decay phase
+        for _ in range(50):
+            scheduler.step()
+        lr_mid_decay = scheduler.get_lr()
+        
+        # LR should have decayed
+        self.assertLess(lr_mid_decay, lr_after_warmup)
+        self.assertGreater(lr_mid_decay, 1e-6)  # Above min_lr
+    
+    def test_lr_at_end(self):
+        """Test that LR approaches min_lr at end of training."""
+        model = nn.Linear(10, 1)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
+        min_lr = 1e-5
+        scheduler = self.LRSchedulerWithWarmup(
+            optimizer, warmup_steps=10, total_steps=100, min_lr=min_lr
+        )
+        
+        # Run to completion
+        for _ in range(100):
+            scheduler.step()
+        
+        final_lr = scheduler.get_lr()
+        # LR should be close to min_lr at end
+        self.assertAlmostEqual(final_lr, min_lr, places=5)
+    
+    def test_get_lr_returns_current(self):
+        """Test that get_lr returns current optimizer LR."""
+        model = nn.Linear(10, 1)
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        scheduler = self.LRSchedulerWithWarmup(
+            optimizer, warmup_steps=10, total_steps=100
+        )
+        
+        for _ in range(5):
+            scheduler.step()
+        
+        reported_lr = scheduler.get_lr()
+        actual_lr = optimizer.param_groups[0]['lr']
+        self.assertEqual(reported_lr, actual_lr)
+
+
+# =============================================================================
+# Tests for dataset.py - AvazuDataset
+# =============================================================================
+class TestAvazuDataset(unittest.TestCase):
+    """Tests for AvazuDataset PyTorch dataset."""
+    
+    @classmethod
+    def setUpClass(cls):
+        """Import AvazuDataset."""
+        from dataset import AvazuDataset
+        cls.AvazuDataset = AvazuDataset
+    
+    def test_dataset_with_labels(self):
+        """Test dataset initialization with labels (training mode)."""
+        X = np.random.randint(0, 100, (10, 5)).astype(np.int32)
+        y = np.random.rand(10).astype(np.float32)
+        
+        dataset = self.AvazuDataset(X, y)
+        
+        self.assertEqual(len(dataset), 10)
+        sample_x, sample_y = dataset[0]
+        self.assertEqual(sample_x.shape, (5,))
+        self.assertEqual(sample_y.shape, ())
+    
+    def test_dataset_without_labels(self):
+        """Test dataset initialization without labels (inference mode)."""
+        X = np.random.randint(0, 100, (10, 5)).astype(np.int32)
+        
+        dataset = self.AvazuDataset(X)
+        
+        self.assertEqual(len(dataset), 10)
+        sample_x = dataset[0]
+        self.assertEqual(sample_x.shape, (5,))
+        self.assertIsInstance(sample_x, torch.Tensor)
+    
+    def test_dataset_tensor_types(self):
+        """Verify correct tensor dtypes."""
+        X = np.random.randint(0, 100, (5, 3)).astype(np.int32)
+        y = np.random.rand(5).astype(np.float32)
+        
+        dataset = self.AvazuDataset(X, y)
+        sample_x, sample_y = dataset[0]
+        
+        self.assertEqual(sample_x.dtype, torch.long)
+        self.assertEqual(sample_y.dtype, torch.float32)
+    
+    def test_dataset_getitem_range(self):
+        """Test that all indices are accessible."""
+        X = np.random.randint(0, 100, (20, 4)).astype(np.int32)
+        y = np.random.rand(20).astype(np.float32)
+        
+        dataset = self.AvazuDataset(X, y)
+        
+        for i in range(len(dataset)):
+            sample = dataset[i]
+            self.assertIsNotNone(sample)
+    
+    def test_dataset_works_with_dataloader(self):
+        """Test that dataset works with PyTorch DataLoader."""
+        from torch.utils.data import DataLoader
+        
+        X = np.random.randint(0, 100, (32, 5)).astype(np.int32)
+        y = np.random.rand(32).astype(np.float32)
+        
+        dataset = self.AvazuDataset(X, y)
+        loader = DataLoader(dataset, batch_size=8, shuffle=True)
+        
+        for batch_x, batch_y in loader:
+            self.assertEqual(batch_x.shape[0], 8)
+            self.assertEqual(batch_x.shape[1], 5)
+            self.assertEqual(batch_y.shape[0], 8)
+            break
+    
+    def test_dataset_inference_with_dataloader(self):
+        """Test that inference dataset works with DataLoader."""
+        from torch.utils.data import DataLoader
+        
+        X = np.random.randint(0, 100, (16, 5)).astype(np.int32)
+        
+        dataset = self.AvazuDataset(X)
+        loader = DataLoader(dataset, batch_size=4)
+        
+        for batch_x in loader:
+            self.assertEqual(batch_x.shape[0], 4)
+            self.assertEqual(batch_x.shape[1], 5)
+            break
+
+
+# =============================================================================
+# Tests for config.py
+# =============================================================================
+class TestConfigExtended(unittest.TestCase):
+    """Extended tests for config validation and seed_everything."""
+    
+    def test_seed_everything_reproducibility(self):
+        """Test that seed_everything produces reproducible results."""
+        from config import seed_everything
+        
+        seed_everything(42)
+        random1 = np.random.rand(5)
+        torch_random1 = torch.rand(5)
+        
+        seed_everything(42)
+        random2 = np.random.rand(5)
+        torch_random2 = torch.rand(5)
+        
+        np.testing.assert_array_equal(random1, random2)
+        self.assertTrue(torch.equal(torch_random1, torch_random2))
+    
+    def test_seed_everything_different_seeds(self):
+        """Test that different seeds produce different results."""
+        from config import seed_everything
+        
+        seed_everything(42)
+        random1 = np.random.rand(5)
+        
+        seed_everything(123)
+        random2 = np.random.rand(5)
+        
+        self.assertFalse(np.array_equal(random1, random2))
+    
+    def test_config_embedding_dim_positive(self):
+        """Verify embedding_dim is positive."""
+        self.assertGreater(CONFIG['embedding_dim'], 0)
+    
+    def test_config_batch_size_positive(self):
+        """Verify batch_size is positive."""
+        self.assertGreater(CONFIG['batch_size'], 0)
+    
+    def test_config_epochs_positive(self):
+        """Verify epochs is positive."""
+        self.assertGreater(CONFIG['epochs'], 0)
+    
+    def test_config_lr_positive(self):
+        """Verify learning rate is positive."""
+        self.assertGreater(CONFIG['lr'], 0)
+    
+    def test_config_validation_split_valid(self):
+        """Verify validation_split is in valid range (0, 1)."""
+        self.assertGreater(CONFIG['validation_split'], 0)
+        self.assertLess(CONFIG['validation_split'], 1)
+    
+    def test_config_senet_and_gating_mutual_exclusivity(self):
+        """Verify SENET and feature gating are mutually exclusive in production config."""
+        # This test checks production config doesn't violate the constraint
+        if CONFIG['use_senet'] and CONFIG['use_feature_gating']:
+            self.fail("Production config has both use_senet and use_feature_gating enabled")
+    
+    def test_config_mlp_hidden_dims_not_empty(self):
+        """Verify MLP has at least one hidden layer."""
+        self.assertGreater(len(CONFIG['mlp_hidden_dims']), 0)
+    
+    def test_config_embedding_dim_rules_sorted(self):
+        """Verify embedding_dim_rules are sorted ascending by cardinality."""
+        rules = CONFIG['embedding_dim_rules']
+        cardinalities = [r[0] for r in rules]
+        self.assertEqual(cardinalities, sorted(cardinalities))
+
+
+# =============================================================================
+# Tests for data_processor.py - Time Feature Expressions
+# =============================================================================
+class TestDataProcessorTimeFeatures(unittest.TestCase):
+    """Tests for data_processor time feature extraction."""
+    
+    def test_time_feature_expressions_output(self):
+        """Test that time feature expressions produce correct output."""
+        import polars as pl
+        from data_processor import get_time_feature_expressions
+        
+        # Create test data with known hour values (YYMMDDHH format)
+        test_data = pl.DataFrame({
+            'hour': ['14102100', '14102223', '14110105']  # 2014-10-21 00:00, 2014-10-22 23:00, 2014-11-01 05:00
+        })
+        
+        time_exprs = get_time_feature_expressions()
+        result = test_data.lazy().with_columns(time_exprs).collect()
+        
+        # Verify extracted values
+        self.assertEqual(result['year'].to_list(), [14, 14, 14])
+        self.assertEqual(result['month'].to_list(), [10, 10, 11])
+        self.assertEqual(result['day_of_month'].to_list(), [21, 22, 1])
+        self.assertEqual(result['hour_of_day'].to_list(), [0, 23, 5])
+    
+    def test_time_feature_day_of_week(self):
+        """Test day_of_week calculation."""
+        import polars as pl
+        from data_processor import get_time_feature_expressions
+        
+        # 2014-10-21 was a Tuesday (weekday = 1 in Polars, 0=Monday)
+        test_data = pl.DataFrame({
+            'hour': ['14102100']
+        })
+        
+        time_exprs = get_time_feature_expressions()
+        result = test_data.lazy().with_columns(time_exprs).collect()
+        
+        # Tuesday = 2 (1-indexed in Polars dt.weekday())
+        self.assertEqual(result['day_of_week'].to_list()[0], 2)
+    
+    def test_time_features_types(self):
+        """Verify time features have correct types."""
+        import polars as pl
+        from data_processor import get_time_feature_expressions
+        
+        test_data = pl.DataFrame({
+            'hour': ['14102100']
+        })
+        
+        time_exprs = get_time_feature_expressions()
+        result = test_data.lazy().with_columns(time_exprs).collect()
+        
+        self.assertEqual(result['year'].dtype, pl.UInt8)
+        self.assertEqual(result['month'].dtype, pl.UInt8)
+        self.assertEqual(result['day_of_month'].dtype, pl.UInt8)
+        self.assertEqual(result['hour_of_day'].dtype, pl.UInt8)
+        self.assertEqual(result['day_of_week'].dtype, pl.UInt8)
+
+
+class TestDataProcessorVocabulary(unittest.TestCase):
+    """Tests for vocabulary building functions."""
+    
+    def test_build_vocabularies_basic(self):
+        """Test basic vocabulary building."""
+        import polars as pl
+        from data_processor import build_vocabularies
+        
+        # Create test data
+        test_data = pl.DataFrame({
+            'cat1': ['a', 'b', 'a', 'c', 'a', 'b', 'a'],  # a=4, b=2, c=1
+            'cat2': ['x', 'x', 'y', 'y', 'z', 'z', 'z'],  # x=2, y=2, z=3
+        })
+        
+        vocab_sizes, feat_maps = build_vocabularies(
+            test_data.lazy(), ['cat1', 'cat2'], min_freq=2
+        )
+        
+        # cat1: a and b pass min_freq=2, c doesn't -> size = 2 + 1 (UNK) = 3
+        self.assertEqual(vocab_sizes['cat1'], 3)
+        # cat2: all pass min_freq=2 -> size = 3 + 1 (UNK) = 4
+        self.assertEqual(vocab_sizes['cat2'], 4)
+        
+        # Verify mappings exist
+        self.assertIn('a', feat_maps['cat1'])
+        self.assertIn('b', feat_maps['cat1'])
+        self.assertNotIn('c', feat_maps['cat1'])  # Filtered by min_freq
+    
+    def test_build_vocabularies_min_freq_filtering(self):
+        """Test that min_freq correctly filters low-frequency values."""
+        import polars as pl
+        from data_processor import build_vocabularies
+        
+        test_data = pl.DataFrame({
+            'cat': ['a'] * 10 + ['b'] * 5 + ['c'] * 2 + ['d'] * 1
+        })
+        
+        vocab_sizes, feat_maps = build_vocabularies(
+            test_data.lazy(), ['cat'], min_freq=5
+        )
+        
+        # Only 'a' (10) and 'b' (5) should pass min_freq=5
+        self.assertEqual(vocab_sizes['cat'], 3)  # a, b + UNK
+        self.assertIn('a', feat_maps['cat'])
+        self.assertIn('b', feat_maps['cat'])
+        self.assertNotIn('c', feat_maps['cat'])
+        self.assertNotIn('d', feat_maps['cat'])
+    
+    def test_build_vocabularies_mapping_starts_at_one(self):
+        """Verify vocabulary indices start at 1 (0 reserved for UNK)."""
+        import polars as pl
+        from data_processor import build_vocabularies
+        
+        test_data = pl.DataFrame({
+            'cat': ['x', 'y', 'z'] * 5
+        })
+        
+        _, feat_maps = build_vocabularies(
+            test_data.lazy(), ['cat'], min_freq=1
+        )
+        
+        # All indices should be >= 1
+        for val, idx in feat_maps['cat'].items():
+            self.assertGreaterEqual(idx, 1)
+        
+        # Index 0 should not be used (reserved for UNK)
+        self.assertNotIn(0, feat_maps['cat'].values())
+
+
+class TestDataProcessorMapping(unittest.TestCase):
+    """Tests for mapping expression creation."""
+    
+    def test_create_mapping_expressions(self):
+        """Test that mapping expressions correctly transform values."""
+        import polars as pl
+        from data_processor import create_mapping_expressions
+        
+        # Create a simple mapping
+        feat_maps = {
+            'cat1': {'a': 1, 'b': 2, 'c': 3}
+        }
+        
+        test_data = pl.DataFrame({
+            'cat1': ['a', 'b', 'c', 'unknown']  # 'unknown' should map to 0
+        })
+        
+        mapping_exprs = create_mapping_expressions(feat_maps, ['cat1'])
+        result = test_data.with_columns(mapping_exprs)
+        
+        expected = [1, 2, 3, 0]  # 'unknown' -> 0 (UNK)
+        self.assertEqual(result['cat1'].to_list(), expected)
+    
+    def test_create_mapping_expressions_multiple_columns(self):
+        """Test mapping with multiple categorical columns."""
+        import polars as pl
+        from data_processor import create_mapping_expressions
+        
+        feat_maps = {
+            'cat1': {'x': 1, 'y': 2},
+            'cat2': {'p': 1, 'q': 2, 'r': 3}
+        }
+        
+        test_data = pl.DataFrame({
+            'cat1': ['x', 'y', 'x'],
+            'cat2': ['p', 'q', 'r']
+        })
+        
+        mapping_exprs = create_mapping_expressions(feat_maps, ['cat1', 'cat2'])
+        result = test_data.with_columns(mapping_exprs)
+        
+        self.assertEqual(result['cat1'].to_list(), [1, 2, 1])
+        self.assertEqual(result['cat2'].to_list(), [1, 2, 3])
+
+
+class TestDataProcessorPersistence(unittest.TestCase):
+    """Tests for data persistence (save/load)."""
+    
+    def setUp(self):
+        """Create temporary directory for test files."""
+        import tempfile
+        self.temp_dir = tempfile.mkdtemp()
+    
+    def tearDown(self):
+        """Clean up temporary files."""
+        import shutil
+        shutil.rmtree(self.temp_dir, ignore_errors=True)
+    
+    def test_save_and_load_processed_data(self):
+        """Test saving and loading processed data."""
+        from data_processor import save_processed_data, load_processed_data
+        from config import CONFIG
+        import pickle
+        
+        # Create test data
+        X_train = np.random.randint(0, 100, (50, 5)).astype(np.int32)
+        y_train = np.random.rand(50).astype(np.float32)
+        train_hours = np.array(['14102100'] * 50)
+        X_test = np.random.randint(0, 100, (20, 5)).astype(np.int32)
+        test_ids = np.array([f'id_{i}' for i in range(20)])
+        vocab_sizes = {'f1': 10, 'f2': 20}
+        feature_names = ['f1', 'f2', 'f3', 'f4', 'f5']
+        
+        # Temporarily override config path
+        original_path = CONFIG['processed_path']
+        CONFIG['processed_path'] = self.temp_dir
+        
+        try:
+            save_processed_data(
+                X_train, y_train, train_hours,
+                X_test, test_ids, vocab_sizes, feature_names
+            )
+            
+            # Load in train mode
+            loaded = load_processed_data(mode='train')
+            X_train_loaded, y_train_loaded, hours_loaded, X_test_loaded, ids_loaded, vocab_loaded, names_loaded = loaded
+            
+            np.testing.assert_array_equal(X_train_loaded, X_train)
+            np.testing.assert_array_equal(y_train_loaded, y_train)
+            np.testing.assert_array_equal(X_test_loaded, X_test)
+            self.assertEqual(vocab_loaded, vocab_sizes)
+            self.assertEqual(names_loaded, feature_names)
+        finally:
+            CONFIG['processed_path'] = original_path
+    
+    def test_load_processed_data_inference_mode(self):
+        """Test loading in inference mode (no train data)."""
+        from data_processor import save_processed_data, load_processed_data
+        from config import CONFIG
+        
+        # Create test data
+        X_train = np.random.randint(0, 100, (50, 5)).astype(np.int32)
+        y_train = np.random.rand(50).astype(np.float32)
+        train_hours = np.array(['14102100'] * 50)
+        X_test = np.random.randint(0, 100, (20, 5)).astype(np.int32)
+        test_ids = np.array([f'id_{i}' for i in range(20)])
+        vocab_sizes = {'f1': 10}
+        feature_names = ['f1', 'f2', 'f3', 'f4', 'f5']
+        
+        original_path = CONFIG['processed_path']
+        CONFIG['processed_path'] = self.temp_dir
+        
+        try:
+            save_processed_data(
+                X_train, y_train, train_hours,
+                X_test, test_ids, vocab_sizes, feature_names
+            )
+            
+            # Load in inference mode
+            loaded = load_processed_data(mode='inference')
+            X_train_loaded, y_train_loaded, hours_loaded, X_test_loaded, ids_loaded, vocab_loaded, names_loaded = loaded
+            
+            # Train data should be None in inference mode
+            self.assertIsNone(X_train_loaded)
+            self.assertIsNone(y_train_loaded)
+            self.assertIsNone(hours_loaded)
+            
+            # Test data should be loaded
+            np.testing.assert_array_equal(X_test_loaded, X_test)
+        finally:
+            CONFIG['processed_path'] = original_path
+    
+    def test_load_processed_data_file_not_found(self):
+        """Test that FileNotFoundError is raised when data doesn't exist."""
+        from data_processor import load_processed_data
+        from config import CONFIG
+        
+        original_path = CONFIG['processed_path']
+        CONFIG['processed_path'] = '/nonexistent/path'
+        
+        try:
+            with self.assertRaises(FileNotFoundError):
+                load_processed_data(mode='train')
+        finally:
+            CONFIG['processed_path'] = original_path
+    
+    def test_load_processed_data_invalid_mode(self):
+        """Test that ValueError is raised for invalid mode."""
+        from data_processor import save_processed_data, load_processed_data
+        from config import CONFIG
+        
+        # First save some data
+        X_train = np.random.randint(0, 100, (10, 3)).astype(np.int32)
+        y_train = np.random.rand(10).astype(np.float32)
+        train_hours = np.array(['14102100'] * 10)
+        X_test = np.random.randint(0, 100, (5, 3)).astype(np.int32)
+        test_ids = np.array(['id_0', 'id_1', 'id_2', 'id_3', 'id_4'])
+        vocab_sizes = {'f1': 5}
+        feature_names = ['f1', 'f2', 'f3']
+        
+        original_path = CONFIG['processed_path']
+        CONFIG['processed_path'] = self.temp_dir
+        
+        try:
+            save_processed_data(
+                X_train, y_train, train_hours,
+                X_test, test_ids, vocab_sizes, feature_names
+            )
+            
+            with self.assertRaises(ValueError):
+                load_processed_data(mode='invalid_mode')
+        finally:
+            CONFIG['processed_path'] = original_path
+
+
 def list_tests():
     """Print all available tests."""
     loader = unittest.TestLoader()
@@ -674,3 +1334,4 @@ if __name__ == "__main__":
     else:
         # Run with verbosity by default for better output
         unittest.main(verbosity=2)
+
