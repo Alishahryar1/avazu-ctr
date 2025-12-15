@@ -13,6 +13,7 @@ import numpy as np
 import gc
 from pathlib import Path
 from config import CONFIG
+import pickle
 
 
 # =============================================================================
@@ -723,7 +724,7 @@ def save_processed_data(
     feature_names: list
 ) -> None:
     """Save processed numpy arrays and metadata to disk."""
-    import pickle
+    
     
     path = Path(CONFIG['processed_path'])
     path.mkdir(parents=True, exist_ok=True)
@@ -765,7 +766,6 @@ def load_processed_data(mode: str = 'train') -> tuple[
     Returns:
         Tuple of arrays and metadata
     """
-    import pickle
     
     path = Path(CONFIG['processed_path'])
     print(f"Loading processed data from {path} ({mode} mode)...")
