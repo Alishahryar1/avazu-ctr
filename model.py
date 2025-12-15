@@ -280,9 +280,9 @@ class ResidualMLP(nn.Module):
             # Main linear layer
             self.layers.append(nn.Linear(dims[i], dims[i + 1]))
             
-            # Optional layer norm (use Identity as placeholder if not used)
+            # Optional layer norm for pre-norm (applied to input, so use input dim)
             if self.layer_norms is not None:
-                self.layer_norms.append(nn.LayerNorm(dims[i + 1]))
+                self.layer_norms.append(nn.LayerNorm(dims[i]))
             
             # Activation
             self.activations.append(get_activation(activation))
