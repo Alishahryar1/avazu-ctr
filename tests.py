@@ -1187,6 +1187,392 @@ class TestDataProcessorMapping(unittest.TestCase):
         self.assertEqual(result['cat2'].to_list(), [1, 2, 3])
 
 
+# =============================================================================
+# Tests for data_processor.py - User Proxy Feature
+# =============================================================================
+class TestUserProxyFeature(unittest.TestCase):
+    """Tests for user proxy feature (device_ip + device_model)."""
+    
+    def test_user_proxy_expression_creates_combined_id(self):
+        """Test that user proxy correctly combines device_ip and device_model."""
+        import polars as pl
+        from data_processor import get_user_proxy_expression
+        
+        test_data = pl.DataFrame({
+            'device_ip': ['192.168.1.1', '10.0.0.1', '192.168.1.1'],
+            'device_model': ['iPhone12', 'Galaxy_S21', 'iPhone12']
+        })
+        
+        user_proxy_expr = get_user_proxy_expression()
+        result = test_data.lazy().with_columns(user_proxy_expr).collect()
+        
+        expected = ['192.168.1.1_iPhone12', '10.0.0.1_Galaxy_S21', '192.168.1.1_iPhone12']
+        self.assertEqual(result['user_proxy'].to_list(), expected)
+    
+    def test_user_proxy_same_ip_different_model(self):
+        """Test that same IP with different models creates different user proxies."""
+        import polars as pl
+        from data_processor import get_user_proxy_expression
+        
+        test_data = pl.DataFrame({
+            'device_ip': ['192.168.1.1', '192.168.1.1'],
+            'device_model': ['iPhone12', 'iPhone13']
+        })
+        
+        user_proxy_expr = get_user_proxy_expression()
+        result = test_data.lazy().with_columns(user_proxy_expr).collect()
+        
+        proxies = result['user_proxy'].to_list()
+        self.assertNotEqual(proxies[0], proxies[1])
+        self.assertEqual(proxies[0], '192.168.1.1_iPhone12')
+        self.assertEqual(proxies[1], '192.168.1.1_iPhone13')
+    
+    def test_user_proxy_different_ip_same_model(self):
+        """Test that different IPs with same model creates different user proxies."""
+        import polars as pl
+        from data_processor import get_user_proxy_expression
+        
+        test_data = pl.DataFrame({
+            'device_ip': ['192.168.1.1', '10.0.0.1'],
+            'device_model': ['iPhone12', 'iPhone12']
+        })
+        
+        user_proxy_expr = get_user_proxy_expression()
+        result = test_data.lazy().with_columns(user_proxy_expr).collect()
+        
+        proxies = result['user_proxy'].to_list()
+        self.assertNotEqual(proxies[0], proxies[1])
+    
+    def test_user_proxy_with_empty_values(self):
+        """Test user proxy handles empty/null values gracefully."""
+        import polars as pl
+        from data_processor import get_user_proxy_expression
+        
+        test_data = pl.DataFrame({
+            'device_ip': ['192.168.1.1', '', 'null'],
+            'device_model': ['iPhone12', 'Galaxy', '']
+        })
+        
+        user_proxy_expr = get_user_proxy_expression()
+        result = test_data.lazy().with_columns(user_proxy_expr).collect()
+        
+        # Should still produce valid strings (even if containing empty parts)
+        proxies = result['user_proxy'].to_list()
+        self.assertEqual(len(proxies), 3)
+        self.assertEqual(proxies[0], '192.168.1.1_iPhone12')
+        self.assertEqual(proxies[1], '_Galaxy')
+        self.assertEqual(proxies[2], 'null_')
+    
+    def test_user_proxy_with_special_characters(self):
+        """Test user proxy handles special characters in values."""
+        import polars as pl
+        from data_processor import get_user_proxy_expression
+        
+        test_data = pl.DataFrame({
+            'device_ip': ['192.168.1.1'],
+            'device_model': ['iPhone-12_Pro Max']
+        })
+        
+        user_proxy_expr = get_user_proxy_expression()
+        result = test_data.lazy().with_columns(user_proxy_expr).collect()
+        
+        proxies = result['user_proxy'].to_list()
+        self.assertEqual(proxies[0], '192.168.1.1_iPhone-12_Pro Max')
+
+
+# =============================================================================
+# Tests for data_processor.py - Interaction Features
+# =============================================================================
+class TestInteractionFeatures(unittest.TestCase):
+    """Tests for interaction feature creation (device_id_x_app_id, device_ip_x_C14)."""
+    
+    def test_interaction_expressions_create_correct_columns(self):
+        """Test that interaction expressions create the expected columns."""
+        import polars as pl
+        from data_processor import get_interaction_feature_expressions
+        
+        test_data = pl.DataFrame({
+            'device_id': ['dev_001', 'dev_002'],
+            'app_id': ['app_A', 'app_B'],
+            'device_ip': ['192.168.1.1', '10.0.0.1'],
+            'C14': ['14001', '14002']
+        })
+        
+        interaction_exprs = get_interaction_feature_expressions()
+        result = test_data.lazy().with_columns(interaction_exprs).collect()
+        
+        # Check columns exist
+        self.assertIn('device_id_x_app_id', result.columns)
+        self.assertIn('device_ip_x_C14', result.columns)
+    
+    def test_interaction_device_id_app_id(self):
+        """Test device_id x app_id interaction feature values."""
+        import polars as pl
+        from data_processor import get_interaction_feature_expressions
+        
+        test_data = pl.DataFrame({
+            'device_id': ['dev_001', 'dev_002', 'dev_001'],
+            'app_id': ['app_A', 'app_B', 'app_B'],
+            'device_ip': ['ip1', 'ip2', 'ip3'],
+            'C14': ['c1', 'c2', 'c3']
+        })
+        
+        interaction_exprs = get_interaction_feature_expressions()
+        result = test_data.lazy().with_columns(interaction_exprs).collect()
+        
+        expected = ['dev_001_app_A', 'dev_002_app_B', 'dev_001_app_B']
+        self.assertEqual(result['device_id_x_app_id'].to_list(), expected)
+    
+    def test_interaction_device_ip_c14(self):
+        """Test device_ip x C14 interaction feature values."""
+        import polars as pl
+        from data_processor import get_interaction_feature_expressions
+        
+        test_data = pl.DataFrame({
+            'device_id': ['dev_001', 'dev_002'],
+            'app_id': ['app_A', 'app_B'],
+            'device_ip': ['192.168.1.1', '10.0.0.1'],
+            'C14': ['14001', '14002']
+        })
+        
+        interaction_exprs = get_interaction_feature_expressions()
+        result = test_data.lazy().with_columns(interaction_exprs).collect()
+        
+        expected = ['192.168.1.1_14001', '10.0.0.1_14002']
+        self.assertEqual(result['device_ip_x_C14'].to_list(), expected)
+    
+    def test_interaction_uniqueness(self):
+        """Test that different input combinations produce different interaction values."""
+        import polars as pl
+        from data_processor import get_interaction_feature_expressions
+        
+        test_data = pl.DataFrame({
+            'device_id': ['dev_001', 'dev_001', 'dev_002', 'dev_002'],
+            'app_id': ['app_A', 'app_B', 'app_A', 'app_B'],
+            'device_ip': ['ip1', 'ip1', 'ip1', 'ip1'],
+            'C14': ['c1', 'c1', 'c1', 'c1']
+        })
+        
+        interaction_exprs = get_interaction_feature_expressions()
+        result = test_data.lazy().with_columns(interaction_exprs).collect()
+        
+        interactions = result['device_id_x_app_id'].to_list()
+        # All 4 combinations should be unique
+        self.assertEqual(len(set(interactions)), 4)
+
+
+# =============================================================================
+# Tests for data_processor.py - Count Features
+# =============================================================================
+class TestCountFeatures(unittest.TestCase):
+    """Tests for count/frequency feature computation."""
+    
+    def test_compute_count_features_basic(self):
+        """Test basic count feature computation."""
+        import polars as pl
+        from data_processor import compute_count_features_from_train
+        
+        # Create train data with known frequencies
+        train_data = pl.DataFrame({
+            'device_ip': ['ip1', 'ip1', 'ip1', 'ip2', 'ip2', 'ip3']  # ip1=3, ip2=2, ip3=1
+        }).lazy()
+        
+        # Test data with same and new values
+        test_data = pl.DataFrame({
+            'device_ip': ['ip1', 'ip2', 'ip4']  # ip4 is new (count=0)
+        }).lazy()
+        
+        lf_train, lf_test = compute_count_features_from_train(
+            train_data, test_data, ['device_ip']
+        )
+        
+        train_result = lf_train.collect()
+        test_result = lf_test.collect()
+        
+        # Verify train counts
+        self.assertIn('device_ip_count', train_result.columns)
+        train_counts = train_result['device_ip_count'].to_list()
+        self.assertEqual(train_counts, [3, 3, 3, 2, 2, 1])
+        
+        # Verify test counts (based on train frequencies)
+        test_counts = test_result['device_ip_count'].to_list()
+        self.assertEqual(test_counts, [3, 2, 0])  # ip4 has count 0 (not in train)
+    
+    def test_compute_count_features_multiple_columns(self):
+        """Test count features for multiple columns."""
+        import polars as pl
+        from data_processor import compute_count_features_from_train
+        
+        train_data = pl.DataFrame({
+            'device_ip': ['ip1', 'ip1', 'ip2'],
+            'C14': ['c1', 'c2', 'c1']  # c1=2, c2=1
+        }).lazy()
+        
+        test_data = pl.DataFrame({
+            'device_ip': ['ip1', 'ip3'],
+            'C14': ['c1', 'c2']
+        }).lazy()
+        
+        lf_train, lf_test = compute_count_features_from_train(
+            train_data, test_data, ['device_ip', 'C14']
+        )
+        
+        test_result = lf_test.collect()
+        
+        self.assertIn('device_ip_count', test_result.columns)
+        self.assertIn('C14_count', test_result.columns)
+        
+        self.assertEqual(test_result['device_ip_count'].to_list(), [2, 0])
+        self.assertEqual(test_result['C14_count'].to_list(), [2, 1])
+    
+    def test_compute_count_features_no_data_leakage(self):
+        """Test that count features don't leak test data into training stats."""
+        import polars as pl
+        from data_processor import compute_count_features_from_train
+        
+        # Train has ip1 only
+        train_data = pl.DataFrame({
+            'device_ip': ['ip1', 'ip1']
+        }).lazy()
+        
+        # Test has ip2 only (not in train)
+        test_data = pl.DataFrame({
+            'device_ip': ['ip2', 'ip2', 'ip2']
+        }).lazy()
+        
+        lf_train, lf_test = compute_count_features_from_train(
+            train_data, test_data, ['device_ip']
+        )
+        
+        test_result = lf_test.collect()
+        
+        # ip2 should have count 0 (not in train), not 3 (from test)
+        test_counts = test_result['device_ip_count'].to_list()
+        self.assertEqual(test_counts, [0, 0, 0])
+    
+    def test_count_features_dtype(self):
+        """Verify count features have correct data type (UInt32)."""
+        import polars as pl
+        from data_processor import compute_count_features_from_train
+        
+        train_data = pl.DataFrame({
+            'device_ip': ['ip1', 'ip1', 'ip2']
+        }).lazy()
+        
+        test_data = pl.DataFrame({
+            'device_ip': ['ip1']
+        }).lazy()
+        
+        lf_train, lf_test = compute_count_features_from_train(
+            train_data, test_data, ['device_ip']
+        )
+        
+        train_result = lf_train.collect()
+        self.assertEqual(train_result['device_ip_count'].dtype, pl.UInt32)
+
+
+# =============================================================================
+# Tests for data_processor.py - Count Binning
+# =============================================================================
+class TestCountBinning(unittest.TestCase):
+    """Tests for count feature binning."""
+    
+    def test_bin_count_features_basic(self):
+        """Test basic count binning."""
+        import polars as pl
+        from data_processor import bin_count_features
+        
+        test_data = pl.DataFrame({
+            'device_ip_count': [0, 1, 3, 7, 25, 75, 250, 750, 2000]
+        })
+        
+        bin_exprs = bin_count_features(['device_ip'])
+        result = test_data.with_columns(bin_exprs)
+        
+        expected_bins = ['0', '1', '2-5', '6-10', '11-50', '51-100', '101-500', '501-1000', '1000+']
+        self.assertEqual(result['device_ip_count_bin'].to_list(), expected_bins)
+    
+    def test_bin_count_features_boundary_values(self):
+        """Test binning at exact boundary values."""
+        import polars as pl
+        from data_processor import bin_count_features
+        
+        # Test exact boundary values
+        test_data = pl.DataFrame({
+            'device_ip_count': [0, 1, 5, 6, 10, 11, 50, 51, 100, 101, 500, 501, 1000, 1001]
+        })
+        
+        bin_exprs = bin_count_features(['device_ip'])
+        result = test_data.with_columns(bin_exprs)
+        
+        bins = result['device_ip_count_bin'].to_list()
+        
+        # Verify boundaries
+        self.assertEqual(bins[0], '0')       # 0
+        self.assertEqual(bins[1], '1')       # 1
+        self.assertEqual(bins[2], '2-5')     # 5 (upper bound of 2-5)
+        self.assertEqual(bins[3], '6-10')    # 6 (lower edge of 6-10)
+        self.assertEqual(bins[4], '6-10')    # 10 (upper bound of 6-10)
+        self.assertEqual(bins[5], '11-50')   # 11 (lower edge)
+        self.assertEqual(bins[6], '11-50')   # 50 (upper bound)
+        self.assertEqual(bins[7], '51-100')  # 51
+        self.assertEqual(bins[8], '51-100')  # 100
+        self.assertEqual(bins[9], '101-500') # 101
+        self.assertEqual(bins[10], '101-500') # 500
+        self.assertEqual(bins[11], '501-1000') # 501
+        self.assertEqual(bins[12], '501-1000') # 1000
+        self.assertEqual(bins[13], '1000+')    # 1001
+    
+    def test_bin_count_features_multiple_columns(self):
+        """Test binning for multiple columns."""
+        import polars as pl
+        from data_processor import bin_count_features
+        
+        test_data = pl.DataFrame({
+            'device_ip_count': [0, 100, 5000],
+            'C14_count': [1, 50, 1500]
+        })
+        
+        bin_exprs = bin_count_features(['device_ip', 'C14'])
+        result = test_data.with_columns(bin_exprs)
+        
+        self.assertIn('device_ip_count_bin', result.columns)
+        self.assertIn('C14_count_bin', result.columns)
+        
+        self.assertEqual(result['device_ip_count_bin'].to_list(), ['0', '51-100', '1000+'])
+        self.assertEqual(result['C14_count_bin'].to_list(), ['1', '11-50', '1000+'])
+    
+    def test_bin_count_features_all_same_bin(self):
+        """Test when all values fall in the same bin."""
+        import polars as pl
+        from data_processor import bin_count_features
+        
+        test_data = pl.DataFrame({
+            'device_ip_count': [3, 4, 5, 2, 3]  # All in '2-5' bin
+        })
+        
+        bin_exprs = bin_count_features(['device_ip'])
+        result = test_data.with_columns(bin_exprs)
+        
+        bins = result['device_ip_count_bin'].to_list()
+        self.assertTrue(all(b == '2-5' for b in bins))
+    
+    def test_bin_count_features_output_type(self):
+        """Verify binned features are string type (for categorical encoding)."""
+        import polars as pl
+        from data_processor import bin_count_features
+        
+        test_data = pl.DataFrame({
+            'device_ip_count': [0, 100, 5000]
+        })
+        
+        bin_exprs = bin_count_features(['device_ip'])
+        result = test_data.with_columns(bin_exprs)
+        
+        # Binned columns should be strings (for later label encoding)
+        self.assertEqual(result['device_ip_count_bin'].dtype, pl.String)
+
+
 class TestDataProcessorPersistence(unittest.TestCase):
     """Tests for data persistence (save/load)."""
     
