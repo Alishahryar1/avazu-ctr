@@ -29,10 +29,17 @@ class SENetLayer(nn.Module):
     Args:
         num_fields: Number of feature fields
         embedding_dim: Dimension of each field's embedding
-        squeeze_funcs: List of squeeze functions to use. Options: 'mean', 'max'
+        squeeze_funcs: List of squeeze functions to use. Options: 'mean', 'max', 'min'
         reduction_ratio: Reduction ratio for the excitation network bottleneck
         excitation_activation: Activation function for the excitation output
     """
+    # Hashmap of squeeze operations - single source of truth
+    SQUEEZE_OPS = {
+        "mean": lambda t: t.mean(dim=-1),
+        "max": lambda t: t.max(dim=-1).values,
+        "min": lambda t: t.min(dim=-1).values,
+    }
+    
     def __init__(
         self,
         num_fields: int,
@@ -46,11 +53,10 @@ class SENetLayer(nn.Module):
         self.embedding_dim = embedding_dim
         self.squeeze_funcs = squeeze_funcs
         
-        # Validate squeeze functions
-        valid_squeeze_funcs = {"mean", "max", "min"}
+        # Validate squeeze functions using the class-level hashmap
         for func in squeeze_funcs:
-            if func not in valid_squeeze_funcs:
-                raise ValueError(f"Unknown squeeze function: {func}. Choose from {valid_squeeze_funcs}")
+            if func not in self.SQUEEZE_OPS:
+                raise ValueError(f"Unknown squeeze function: {func}. Choose from {list(self.SQUEEZE_OPS.keys())}")
         
         # Number of squeeze outputs determines input to excitation network
         num_squeeze_outputs = len(squeeze_funcs)
@@ -72,21 +78,10 @@ class SENetLayer(nn.Module):
         # Reshape to [Batch, Num_Fields, Embed_Dim]
         x_3d = x.view(batch_size, self.num_fields, self.embedding_dim)
         
-        # Squeeze: Pool each field's embedding to a scalar
+        # Squeeze: Pool each field's embedding to a scalar using class-level hashmap
         squeeze_outputs = []
         for func in self.squeeze_funcs:
-            if func == "mean":
-                # Mean pooling: [Batch, Num_Fields]
-                squeezed = x_3d.mean(dim=-1)
-            elif func == "max":
-                # Max pooling: [Batch, Num_Fields]
-                squeezed = x_3d.max(dim=-1).values
-            elif func == "min":
-                # Min pooling: [Batch, Num_Fields]
-                squeezed = x_3d.min(dim=-1).values
-            else:
-                # Should never reach here due to validation in __init__
-                raise ValueError(f"Unknown squeeze function: {func}")
+            squeezed = self.SQUEEZE_OPS[func](x_3d)
             squeeze_outputs.append(squeezed)
         
         # Concatenate squeeze outputs: [Batch, Num_Fields * Num_Squeeze_Funcs]
