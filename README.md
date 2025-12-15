@@ -191,5 +191,5 @@ avazu-ctr/
 ---
 
 <p align="center">
-  Built with ❤️ for High-Performance CTR Prediction
+  Built with PyTorch❤️ for High-Performance CTR Prediction
 </p>
