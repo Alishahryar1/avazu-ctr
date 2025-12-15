@@ -174,7 +174,7 @@ We recommend trying the following configurations to boost performance:
 
 ---
 
-## 📁 specific Project Structure
+## 📁 Specific Project Structure
 
 ```
 avazu-ctr/
