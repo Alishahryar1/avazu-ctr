@@ -67,7 +67,7 @@ CONFIG: ConfigType = {
     "batch_size": 4096,  # Increased for faster training
     "num_workers": 4,  # Increased for faster data loading
     "min_freq": 5,
-    "validation_split": 0.01,  # Hold out 1% for validation
+    "validation_split": 0.001,  # Hold out 1% for validation
     
     # === Model Architecture ===
     "embedding_dim": 64,
