@@ -55,6 +55,10 @@ class ConfigType(TypedDict):
     tensorboard_logdir: str
     tensorboard_log_interval: int  # Log every N batches
     
+    # Automatic Mixed Precision (AMP)
+    auto_amp: bool  # Enable automatic mixed precision for faster training
+    amp_dtype: str  # Options: 'float16' or 'bfloat16'
+    
     # Regularization
     mlp_dropout: float
     grad_clip: float
@@ -125,6 +129,10 @@ CONFIG: ConfigType = {
     "use_tensorboard": False,
     "tensorboard_logdir": "./runs",
     "tensorboard_log_interval": 1000,  # Log every N batches (reduces I/O overhead)
+    
+    # === Automatic Mixed Precision (AMP) ===
+    "auto_amp": True,  # Enable AMP for faster training on CUDA (uses float16/bfloat16)
+    "amp_dtype": "float16",  # Options: 'float16' (more compatible), 'bfloat16' (better numerics)
     
     # === Regularization ===
     "lr_warmup_epoch_ratio": 0.1,

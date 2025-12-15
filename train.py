@@ -71,10 +71,18 @@ class LRSchedulerWithWarmup:
         return self.optimizer.param_groups[0]['lr']
 
 
-def evaluate(model, data_loader, criterion, device):
+def evaluate(model, data_loader, criterion, device, use_amp=False, amp_dtype=torch.float16):
     """
     Evaluate model on validation set.
     Returns loss, AUC, and LogLoss.
+    
+    Args:
+        model: The model to evaluate
+        data_loader: DataLoader for validation data
+        criterion: Loss function
+        device: Device to run on
+        use_amp: Whether to use automatic mixed precision
+        amp_dtype: Data type for AMP (torch.float16 or torch.bfloat16)
     """
     model.eval()
     total_loss = 0
@@ -86,8 +94,11 @@ def evaluate(model, data_loader, criterion, device):
             X_batch = X_batch.to(device)
             y_batch = y_batch.to(device).unsqueeze(1)
 
-            logits = model(X_batch)
-            loss = criterion(logits, y_batch)
+            # Use autocast for mixed precision inference
+            with torch.amp.autocast(device_type='cuda', dtype=amp_dtype, enabled=use_amp):
+                logits = model(X_batch)
+                loss = criterion(logits, y_batch)
+            
             total_loss += loss.item()
 
             # Collect predictions and targets for metrics
@@ -239,6 +250,21 @@ def train():
     )
     print(f"LR warmup steps: {warmup_steps} ({CONFIG['lr_warmup_epoch_ratio']*100:.0f}% of {steps_per_epoch} steps)")
 
+    # Setup Automatic Mixed Precision (AMP)
+    use_amp = CONFIG['auto_amp'] and CONFIG['device'] == 'cuda'
+    amp_dtype_str = CONFIG.get('amp_dtype', 'float16')
+    amp_dtype = torch.bfloat16 if amp_dtype_str == 'bfloat16' else torch.float16
+    
+    if use_amp:
+        scaler = torch.amp.GradScaler('cuda')
+        print(f"Automatic Mixed Precision (AMP) ENABLED with dtype={amp_dtype_str}")
+    else:
+        scaler = None
+        if CONFIG['auto_amp'] and CONFIG['device'] != 'cuda':
+            print("AMP disabled (requires CUDA device)")
+        else:
+            print("Automatic Mixed Precision (AMP) disabled")
+
     # 5. Training Loop
     # Ensure models directory exists
     os.makedirs(CONFIG['models_path'], exist_ok=True)
@@ -275,17 +301,34 @@ def train():
                 embedding_optimizer.zero_grad()
                 other_optimizer.zero_grad()
 
-                logits = model(X_batch)
-                loss = criterion(logits, y_batch)
+                # Forward pass with optional AMP
+                with torch.amp.autocast(device_type='cuda', dtype=amp_dtype, enabled=use_amp):
+                    logits = model(X_batch)
+                    loss = criterion(logits, y_batch)
 
-                loss.backward()
-
-                # Gradient clipping
-                if CONFIG['grad_clip'] > 0:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), CONFIG['grad_clip'])
-
-                embedding_optimizer.step()
-                other_optimizer.step()
+                # Backward pass with gradient scaling for AMP
+                if use_amp and scaler is not None:
+                    scaler.scale(loss).backward()
+                    
+                    # Gradient clipping (unscale first for proper clipping)
+                    if CONFIG['grad_clip'] > 0:
+                        scaler.unscale_(embedding_optimizer)
+                        scaler.unscale_(other_optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), CONFIG['grad_clip'])
+                    
+                    scaler.step(embedding_optimizer)
+                    scaler.step(other_optimizer)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    
+                    # Gradient clipping
+                    if CONFIG['grad_clip'] > 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), CONFIG['grad_clip'])
+                    
+                    embedding_optimizer.step()
+                    other_optimizer.step()
+                
                 scheduler.step()
 
                 total_loss += loss.item()
@@ -307,7 +350,7 @@ def train():
             epoch_time = time.time() - start_time
 
             # Validation
-            val_loss, val_auc, val_logloss = evaluate(model, val_loader, criterion, CONFIG['device'])
+            val_loss, val_auc, val_logloss = evaluate(model, val_loader, criterion, CONFIG['device'], use_amp=use_amp, amp_dtype=amp_dtype)
 
             # Log epoch metrics to TensorBoard
             if writer is not None:
