@@ -372,7 +372,8 @@ class GatedDCNModel(nn.Module):
             if use_layer_norm:
                 layers.append(nn.LayerNorm(hidden_dim))
             layers.append(get_activation(mlp_activation))
-            layers.append(nn.Dropout(mlp_dropout))
+            if mlp_dropout > 0:
+                layers.append(nn.Dropout(mlp_dropout))
             input_dim = hidden_dim
         layers.append(nn.Linear(input_dim, 1))
 
