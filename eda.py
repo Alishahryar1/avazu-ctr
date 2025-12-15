@@ -309,15 +309,18 @@ def analyze_cumcount_distribution(lf: pl.LazyFrame, cumcount_cols: list[str]) ->
     all_p95 = np.mean([s["percentiles"][95] for s in all_stats.values()])
     
     print(f"  Aggregated P50: {all_p50:.0f}, P75: {all_p75:.0f}, P90: {all_p90:.0f}, P95: {all_p95:.0f}")
-    print("""
+    p50_val = int(all_p50)
+    p75_val = int(all_p75)
+    p90_val = int(all_p90)
+    print(f"""
 Suggested bins: 
   - "first" (==1)
   - "2-3" (<=3)
-  - "4-{p50}" (<=p50)
-  - "{p50+1}-{p75}" (<=p75)
-  - "{p75+1}-{p90}" (<=p90)
-  - "{p90}+"
-""".format(p50=int(all_p50), p75=int(all_p75), p90=int(all_p90)))
+  - "4-{p50_val}" (<=p50)
+  - "{p50_val+1}-{p75_val}" (<=p75)
+  - "{p75_val+1}-{p90_val}" (<=p90)
+  - "{p90_val}+"
+""")
     
     return all_stats
 
