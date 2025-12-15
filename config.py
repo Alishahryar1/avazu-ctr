@@ -26,7 +26,7 @@ class ConfigType(TypedDict):
     senet_activation: str
     mlp_hidden_dims: list[int]
     mlp_activation: str
-    use_batch_norm: bool
+    use_layer_norm: bool
     
     # Training
     lr: float
@@ -80,7 +80,7 @@ CONFIG: ConfigType = {
     
     "mlp_hidden_dims": [1024, 512, 512],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
-    "use_batch_norm": True,
+    "use_layer_norm": True,
     
     # === Training ===
     "lr": 1e-3,  # Lower initial LR for better convergence

@@ -47,7 +47,7 @@ class SENetLayer(nn.Module):
         self.squeeze_funcs = squeeze_funcs
         
         # Validate squeeze functions
-        valid_squeeze_funcs = {"mean", "max"}
+        valid_squeeze_funcs = {"mean", "max", "min"}
         for func in squeeze_funcs:
             if func not in valid_squeeze_funcs:
                 raise ValueError(f"Unknown squeeze function: {func}. Choose from {valid_squeeze_funcs}")
@@ -207,10 +207,10 @@ class GatedDCNModel(nn.Module):
         senet_activation = config['senet_activation']
         mlp_hidden_dims = config['mlp_hidden_dims']
         mlp_dropout = config['mlp_dropout']
-        use_batch_norm = config['use_batch_norm']
+        use_layer_norm = config['use_layer_norm']
         mlp_activation = config['mlp_activation']
         
-        self.use_batch_norm = use_batch_norm
+        self.use_layer_norm = use_layer_norm
         self.use_dcn = use_dcn
         self.use_senet = use_senet
         self.num_fields = len(feature_names)
@@ -226,9 +226,9 @@ class GatedDCNModel(nn.Module):
             self.embeddings[feat] = emb
             total_dim += embedding_dim
 
-        # Batch norm after embeddings
-        if use_batch_norm:
-            self.embed_bn = nn.BatchNorm1d(total_dim)
+        # Layer norm after embeddings
+        if use_layer_norm:
+            self.embed_ln = nn.LayerNorm(total_dim)
 
         # 2. SENET (Squeeze-and-Excitation) - Optional
         if use_senet:
@@ -245,13 +245,13 @@ class GatedDCNModel(nn.Module):
             self.dcn = DCNv2(total_dim, num_layers=dcn_num_layers, use_layernorm=dcn_use_layernorm, low_rank=dcn_low_rank)
 
 
-        # 4. Enhanced MLP with BatchNorm and configurable activation
+        # 4. Enhanced MLP with LayerNorm and configurable activation
         layers: list[nn.Module] = []
         input_dim = total_dim
         for i, hidden_dim in enumerate(mlp_hidden_dims):
             layers.append(nn.Linear(input_dim, hidden_dim))
-            if use_batch_norm:
-                layers.append(nn.BatchNorm1d(hidden_dim))
+            if use_layer_norm:
+                layers.append(nn.LayerNorm(hidden_dim))
             layers.append(get_activation(mlp_activation))
             layers.append(nn.Dropout(mlp_dropout))
             input_dim = hidden_dim
@@ -277,9 +277,9 @@ class GatedDCNModel(nn.Module):
         # Concatenate: [Batch, Total_Dim]
         dnn_input = torch.cat(embeds, dim=1)
 
-        # Apply batch norm to embeddings
-        if self.use_batch_norm:
-            dnn_input = self.embed_bn(dnn_input)
+        # Apply layer norm to embeddings
+        if self.use_layer_norm:
+            dnn_input = self.embed_ln(dnn_input)
 
         # Apply SENET (Feature Importance Reweighting) - Optional
         if self.use_senet:

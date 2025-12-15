@@ -41,7 +41,7 @@ def make_test_config(**overrides) -> ConfigType:
         'senet_activation': 'sigmoid',
         'mlp_hidden_dims': [32, 16],
         'mlp_activation': 'relu',
-        'use_batch_norm': True,
+        'use_layer_norm': True,
         
         # Training
         'lr': 1e-3,
@@ -52,6 +52,7 @@ def make_test_config(**overrides) -> ConfigType:
         'early_stopping_patience': 3,
         'use_tensorboard': False,
         'tensorboard_logdir': './runs',
+        'tensorboard_log_interval': 1000,
         
         # Regularization
         'mlp_dropout': 0.1,
@@ -104,7 +105,7 @@ class TestModelStructure(unittest.TestCase):
         """Verify MLP has layers for each hidden dim.
         
         MLP typically contains Linear, BatchNorm/ReLU, Dropout layers.
-        The exact structure depends on use_batch_norm config.
+        The exact structure depends on use_layer_norm config.
         """
         # Just verify MLP has more than 0 layers and ends with Linear(*, 1)
         self.assertGreater(len(self.model.mlp), 0, "MLP should have layers")
@@ -293,7 +294,7 @@ class TestModelVariants(unittest.TestCase):
     
     def test_model_without_batch_norm(self):
         """Test model with batch norm disabled."""
-        config = make_test_config(use_batch_norm=False)
+        config = make_test_config(use_layer_norm=False)
         model = GatedDCNModel({'f1': 100}, ['f1'], config)
         x = torch.randint(0, 100, (4, 1))
         out = model(x)
@@ -309,7 +310,7 @@ class TestModelVariants(unittest.TestCase):
     
     def test_model_minimal(self):
         """Test model with minimal config (no DCN, no SENET)."""
-        config = make_test_config(use_dcn=False, use_senet=False, use_batch_norm=False)
+        config = make_test_config(use_dcn=False, use_senet=False, use_layer_norm=False)
         model = GatedDCNModel({'f1': 100}, ['f1'], config)
         x = torch.randint(0, 100, (4, 1))
         out = model(x)
