@@ -83,7 +83,7 @@ CONFIG: ConfigType = {
     
     "use_feature_gating": True,  # Alternative to SENET (mutually exclusive)
     "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
-    "feature_gating_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
+    "feature_gating_low_rank": 128,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
     "mlp_hidden_dims": [2048, 1024, 1024],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
