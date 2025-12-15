@@ -96,9 +96,8 @@ def process_data_polars():
         # Include 'hour' for temporal splitting (train only)
         cols_to_select = cat_cols + (['id'] if is_test else ['click', 'hour'])
         
-        # Materialize the dataframe using streaming mode.
-        # streaming=True processes data in batches, reducing peak memory from ~10GB to ~4GB.
-        df = df_lazy.select(cols_to_select).collect(streaming=True)
+        # Materialize the dataframe using gpu engine.
+        df = df_lazy.select(cols_to_select).collect(engine="gpu")
         
         # Extract ID or Target before mapping
         extra_data = df['id'].to_numpy() if is_test else df['click'].to_numpy().astype(np.float32)
