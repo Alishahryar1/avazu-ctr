@@ -3,12 +3,13 @@
   <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
   <img src="https://img.shields.io/badge/Polars-Data%20Processing-CD792C?style=for-the-badge&logo=polars&logoColor=white" alt="Polars">
   <img src="https://img.shields.io/badge/TensorBoard-Logging-FF6F00?style=for-the-badge&logo=tensorboard&logoColor=white" alt="TensorBoard">
+  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
 </p>
 
 <h1 align="center">🎯 Avazu Click-Through Rate Prediction</h1>
 
 <p align="center">
-  <strong>A state-of-the-art deep learning solution combining DCNv2 and FiBiNET architectures for CTR prediction</strong>
+  <strong>Next-Gen CTR Prediction with Gated DCNv2 & FiBiNET Architecture</strong>
 </p>
 
 <p align="center">
@@ -23,306 +24,172 @@
 
 ## 📋 Overview
 
-This project implements a cutting-edge Click-Through Rate (CTR) prediction model for the [Avazu CTR Prediction](https://www.kaggle.com/c/avazu-ctr-prediction) Kaggle competition. The model combines multiple advanced deep learning techniques to effectively capture both implicit and explicit feature interactions in advertising data.
+This project implements a state-of-the-art **Click-Through Rate (CTR)** prediction pipeline for the [Avazu CTR Prediction](https://www.kaggle.com/c/avazu-ctr-prediction) competition. It introduces a highly configurable **GatedDCNModel** that unifies multiple advanced techniques:
 
-### Key Highlights
+*   **Deep Cross Network V2 (DCNv2)** for explicit high-order interactions.
+*   **SE-Net (FiBiNET)** for dynamic feature importance.
+*   **Feature Gating** for noise suppression and sparsity handling.
 
-- 🚀 **Modern Architecture**: Combines DCNv2 (Deep Cross Network V2) with SE-Net attention from FiBiNET
-- ⚡ **Efficient Training**: Low-rank decomposition, mixed optimizers, and TensorBoard monitoring
-- 🔧 **Highly Configurable**: Easy-to-modify configuration for rapid experimentation
-- 📊 **Production Ready**: Clean codebase with comprehensive test suite
+> **Why this model?** It combines the best of "cross" networks (explicit interactions) with "deep" networks (implicit interactions) and adds modern "attention/gating" mechanisms to focus on what matters.
 
 ---
 
-## ✨ Features
+## ✨ Key Features
 
 | Feature | Description |
-|---------|-------------|
-| **DCNv2 Cross Network** | Explicit high-order feature interactions with optional low-rank decomposition |
-| **SE-Net (FiBiNET)** | Squeeze-and-Excitation for dynamic feature importance weighting |
-| **Focal Loss** | Handles severe class imbalance (CTR datasets are typically 80%+ negative) |
-| **Dual Optimizer** | Adagrad for embeddings + AdamW for other parameters |
-| **LR Warmup** | Linear warmup with cosine annealing for stable training |
-| **Early Stopping** | Prevents overfitting with patience-based stopping |
-| **TensorBoard** | Real-time training visualization |
-| **Graceful Interrupt** | Ctrl+C safely stops training without losing progress |
+| :--- | :--- |
+| **Feature Gating** 🆕 | **New!** Element-wise gating mechanism to suppress noise and highlight important features (Alternative to SE-Net). |
+| **DCNv2** | Deep Cross Network V2 with **Low-Rank Decomposition** to capture high-order interactions efficiently. |
+| **SE-Net** | Squeeze-and-Excitation network (from FiBiNET) for dynamic feature re-weighting. |
+| **Dual Optimizer** | **Adagrad** (lr=1.0) for embeddings + **AdamW** (lr=1e-3) for deep layers. |
+| **Focal Loss** | Configurable loss function (Gamma > 0) to handle severe class imbalance. |
+| **Polars Processing** | Blazing fast data preprocessing using the Polars library. |
+| **TensorBoard** | Built-in logging for loss curves, AUC, and learning rate schedules. |
+| **Graceful Exit** | Safely interrupt training (Ctrl+C) and save the best model found so far. |
 
 ---
 
 ## 🏗 Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                        Input Features                           │
-│              (Categorical: site_id, app_id, device_id, ...)     │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    Embedding Layer (64-dim)                     │
-│                     + Batch Normalization                       │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                         SE-Net Layer                            │
-│    ┌──────────────────────────────────────────────────────┐     │
-│    │  Squeeze: Mean + Max Pooling → [Batch, 2*Fields]     │     │
-│    │  Excitation: MLP → Field Weights                     │     │
-│    │  Re-weight: Scale embeddings by importance           │     │
-│    └──────────────────────────────────────────────────────┘     │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                    DCNv2 Cross Network                          │
-│    ┌──────────────────────────────────────────────────────┐     │
-│    │  Layer i: x_{i+1} = x_0 ⊙ (W_i · x_i + b_i) + x_i   │     │
-│    │  Low-rank: W = U @ V reduces O(d²) → O(2dr)          │     │
-│    └──────────────────────────────────────────────────────┘     │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                      Deep MLP Network                           │
-│                 [1024 → 512 → 512 → 1]                          │
-│              + BatchNorm + GELU + Dropout                       │
-└─────────────────────────────┬───────────────────────────────────┘
-                              │
-                              ▼
-┌─────────────────────────────────────────────────────────────────┐
-│                     Sigmoid → CTR Prediction                    │
-└─────────────────────────────────────────────────────────────────┘
+The model architecture is modular, allowing you to toggle components via `config.py`.
+
+```mermaid
+graph TD
+    Input[Input Features] --> Embed[Embedding Layer<br>64-dim + Xavier Init]
+    Embed --> LN[Layer Norm]
+    
+    subgraph "Feature Interaction & Gating (Select One)"
+        LN -.->|Option A| SENet[SE-Net Layer<br>Squeeze & Excitation]
+        LN -.->|Option B| Gate[Feature Gating Layer<br>Element-wise Gating]
+    end
+    
+    LN --> DCN[DCNv2 Cross Network<br>Low-Rank / Full-Rank]
+    
+    SENet --> Concat[Concatenate]
+    Gate --> Concat
+    DCN --> Concat
+    
+    Concat --> MLP[Deep MLP Network<br>1024 → 512 → 512]
+    MLP --> Head[Prediction Head<br>Logits]
+    
+    style Input fill:#f9f,stroke:#333
+    style Head fill:#9f9,stroke:#333
+    style SENet fill:#ff9,stroke:#333
+    style Gate fill:#ff9,stroke:#333
 ```
 
-### Model Components
+### Component Details
 
-#### 1. SE-Net Layer (Squeeze-and-Excitation)
-From the **FiBiNET** paper, this layer learns the importance of each feature field dynamically:
-- **Squeeze**: Aggregates each field's embedding into a scalar (supports mean, max, or both)
-- **Excitation**: 2-layer MLP with bottleneck to compute field importance weights
-- **Re-weight**: Scales each field embedding by its importance
+#### 1. Feature Gating (New standard)
+Inspired by Gated Linear Units, this layer applies a learned gate to suppress noisy features:
+$$y = x \odot \sigma(W x)$$
+This is computationally cheaper than Self-Attention ($O(N)$ vs $O(N^2)$) but highly effective for sparse data.
 
-#### 2. DCNv2 (Deep Cross Network V2)
-Captures explicit feature interactions up to arbitrary order:
-- **Full-rank mode**: Standard cross layers with O(d²) parameters
-- **Low-rank mode**: Matrix decomposition W = U @ V, reducing to O(2dr) parameters
-
-#### 3. Deep Network
-Standard MLP with modern best practices:
-- Batch Normalization for training stability
-- GELU activation (shown to outperform ReLU in many tasks)
-- Dropout for regularization
+#### 2. DCNv2 (Deep Cross Network)
+Captures explicit feature interactions. We support **Low-Rank Decomposition** to reduce parameter count:
+$$W = U \cdot V^T, \quad \text{where } U \in \mathbb{R}^{d \times r}, V \in \mathbb{R}^{d \times r}, \ r \ll d$$
 
 ---
 
 ## 🚀 Quick Start
 
-### Prerequisites
-
+### 1. Setup Environment
 ```bash
-# Create virtual environment (recommended)
-python -m venv venv
-venv\Scripts\activate  # Windows
-# source venv/bin/activate  # Linux/Mac
+# Clone and enter
+git clone https://github.com/yourusername/avazu-ctr.git
+cd avazu-ctr
 
-# Install dependencies
+# Install dependencies (Torch, Polars, Scikit-learn)
 pip install -r requirements.txt
 ```
 
-### Data Preparation
-
-1. Download the Avazu dataset from [Kaggle](https://www.kaggle.com/c/avazu-ctr-prediction/data)
-2. Place `train.gz` and `test.gz` in the `./data/` directory
+### 2. Prepare Data
+Download `train.gz` and `test.gz` from [Kaggle](https://www.kaggle.com/c/avazu-ctr-prediction/data) into the `./data/` folder.
 
 ```bash
-# Process the raw data (builds vocabulary and encodes features)
+# Process raw data (encodes features, builds vocab)
 python data_processor.py
 ```
 
-### Training
-
+### 3. Train
 ```bash
-# Start training
+# Start training (default: 2 epochs, batch size 2048)
 python train.py
 
-# Monitor training with TensorBoard
+# Launch TensorBoard to view progress
 tensorboard --logdir=runs
 ```
 
-### Inference
-
+### 4. Inference
 ```bash
-# Generate predictions on test set
+# Generate submission.csv
 python inference.py
-
-# Output: submission.csv
-```
-
-### Running Tests
-
-```bash
-# Run all tests
-python tests.py
-
-# Run specific test
-python tests.py TestModelStructure.test_dcn_layers
-
-# List available tests
-python tests.py --list
 ```
 
 ---
 
 ## ⚙️ Configuration
 
-All hyperparameters are centralized in `config.py`. Here are the key settings:
+Hyperparameters are centrally managed in `config.py`. Below are the defaults:
 
 ### Model Architecture
-
 ```python
-{
-    "embedding_dim": 64,          # Dimension of feature embeddings
-    
-    # DCNv2 Settings
-    "use_dcn": True,              # Enable/disable DCNv2
-    "dcn_num_layers": 4,          # Number of cross layers
-    "dcn_low_rank": 32,           # Low-rank dimension (None = full-rank)
-    
-    # SE-Net Settings
-    "use_senet": True,            # Enable/disable SE-Net
-    "senet_squeeze_funcs": ["mean", "max"],  # Squeeze functions
-    "senet_reduction_ratio": 3,   # Bottleneck reduction
-    "senet_activation": "tanh",   # Output activation
-    
-    # MLP Settings
-    "mlp_hidden_dims": [1024, 512, 512],
-    "mlp_activation": "gelu",
-}
+"embedding_dim": 64,
+"use_dcn": True,
+"dcn_low_rank": 32,           # Low-rank dim (set None for full rank)
+
+# Attention / Gating (choose one)
+"use_senet": False,           # FiBiNET style
+"use_feature_gating": True,   # Gated Attention style (Recommended)
+"feature_gating_activation": "sigmoid",
+
+"mlp_hidden_dims": [1024, 512, 512],
+"mlp_activation": "gelu",     # GELU, ReLU, SiLU
+"use_layer_norm": True,
 ```
 
-### Training Settings
-
+### Training Strategy
 ```python
-{
-    "batch_size": 2048,
-    "epochs": 50,
-    "lr": 1e-4,                   # Learning rate for MLP/DCN
-    "embedding_lr": 1.0,          # Learning rate for embeddings
-    "lr_warmup_epoch_ratio": 0.2, # 20% of first epoch for warmup
-    "early_stopping_patience": 50,
-    
-    # Regularization
-    "mlp_dropout": 0.1,
-    "weight_decay": 1e-5,
-    "focal_loss_gamma": 2.0,      # Focal loss (0 = BCE)
-    "grad_clip": 10.0,
-}
+"batch_size": 2048,           # Large batch size for stability
+"epochs": 2,                  # Fast convergence
+"lr": 1e-3,                   # AdamW learning rate
+"embedding_lr": 1.0,          # Adagrad learning rate (high for embeddings)
+"focal_loss_gamma": 0.0,      # Set > 0 (e.g., 2.0) to enable Focal Loss
 ```
+
+> **💡 Pro Tip:** To switch back to the classic FiBiNET architecture, set `use_feature_gating: False` and `use_senet: True` in `config.py`.
 
 ---
 
-## 📁 Project Structure
+## 🧪 Experiments & Ablation
+
+We recommend trying the following configurations to boost performance:
+
+| Configuration | Config Change | Effect |
+| :--- | :--- | :--- |
+| **Enable SENet** | `use_senet=True`<br>`use_feature_gating=False` | Uses field-aware importance weights (classic FiBiNET). |
+| **Enable Focal Loss** | `focal_loss_gamma=2.0` | Focuses training on "hard" negatives. |
+| **Full-Rank DCN** | `dcn_low_rank=None` | Increases expressivity (slower training). |
+| **Deeper MLP** | `mlp_hidden_dims=[1024, 512, 512, 256]` | Captures more complex implicit interactions. |
+
+---
+
+## 📁 specific Project Structure
 
 ```
 avazu-ctr/
-├── 📄 README.md           # Project documentation
-├── 📄 requirements.txt    # Python dependencies
-├── 📄 config.py           # Centralized configuration
-├── 📄 model.py            # Model architecture (DCNv2, SE-Net, MLP)
-├── 📄 train.py            # Training loop with TensorBoard logging
-├── 📄 inference.py        # Generate test predictions
-├── 📄 data_processor.py   # Polars-based data preprocessing
-├── 📄 dataset.py          # PyTorch Dataset wrapper
-├── 📄 tests.py            # Comprehensive test suite
-├── 📁 data/               # Raw and processed data
-│   ├── train.gz
-│   ├── test.gz
-│   ├── X_train.npy
-│   └── ...
-├── 📁 models/             # Saved model checkpoints
-│   └── best_model.pth
-├── 📁 runs/               # TensorBoard logs
-└── 📄 submission.csv      # Final predictions
+├── 📄 config.py           # ⚙️  The Brain: All hyperparameters here
+├── 📄 data_processor.py   # ⚡  Polars data pipeline
+├── 📄 model.py            # 🧠  GatedDCNModel, DCNv2, SENet, FeatureGating
+├── 📄 train.py            # 🚂  Training loop, FocalLoss, Logging
+├── 📄 inference.py        # 🔮  Prediction generation
+├── 📄 dataset.py          # 💾  PyTorch Dataset
+├── 📄 tests.py            # 🧪  Unit tests
+└── 📁 data/               #     Data storage
 ```
-
----
-
-## 📊 Training Features
-
-### Dual Optimizer Strategy
-Following recommendations from CTR literature, embeddings and other parameters use different optimizers:
-- **Embeddings**: Adagrad with lr=1.0 (works well for sparse categorical features)
-- **Other layers**: AdamW with lr=1e-4 and weight decay
-
-### Learning Rate Schedule
-```
-    LR
-    │
-1e-4├────────────╲
-    │   warmup    ╲  cosine decay
-    │  ╱           ╲
-    │╱              ╲
-1e-6├────────────────────────────
-    └────────────────────────────→ Steps
-         20%              100%
-```
-
-### Focal Loss for Imbalance
-CTR datasets are extremely imbalanced (2-17% positive rate). Focal loss down-weights easy negatives:
-
-```
-FL(p) = -(1-p)^γ * log(p)
-```
-
-With γ=2, well-classified examples contribute less to the loss.
-
----
-
-## 🧪 Experimentation Tips
-
-### Quick Ablations
-
-```python
-# Test without DCNv2
-CONFIG["use_dcn"] = False
-
-# Test without SE-Net
-CONFIG["use_senet"] = False
-
-# Try different MLP architectures
-CONFIG["mlp_hidden_dims"] = [512, 256]
-CONFIG["mlp_activation"] = "silu"
-
-# Full-rank DCN (more expressive but slower)
-CONFIG["dcn_low_rank"] = None
-```
-
-### Memory Optimization
-
-If running out of GPU memory:
-```python
-CONFIG["batch_size"] = 1024
-CONFIG["embedding_dim"] = 32
-CONFIG["mlp_hidden_dims"] = [512, 256]
-```
-
----
-
-## 📚 References
-
-- **DCN V2**: [DCN V2: Improved Deep & Cross Network](https://arxiv.org/abs/2008.13535)
-- **FiBiNET**: [FiBiNET: Combining Feature Importance and Bilinear Feature Interaction](https://arxiv.org/abs/1905.09433)
-- **Focal Loss**: [Focal Loss for Dense Object Detection](https://arxiv.org/abs/1708.02002)
-
----
-
-## 📝 License
-
-This project is for educational and competition purposes.
 
 ---
 
 <p align="center">
-  Built with ❤️ using PyTorch
+  Built with ❤️ for High-Performance CTR Prediction
 </p>
