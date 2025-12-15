@@ -117,7 +117,7 @@ python data_processor.py
 python train.py
 
 # Launch TensorBoard to view progress
-tensorboard --logdir=runs
+python -m tensorboard.main --logdir=runs
 ```
 
 ### 4. Inference
