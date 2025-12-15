@@ -222,19 +222,18 @@ class DCNv2(nn.Module):
         xi = x
         
         for i in range(self.num_layers):
-            # x_next = x0 * (W * xi + b) + xi
+            # Pre-norm: Apply LayerNorm before the cross operation
+            xi_normed = self.layer_norms[i](xi) if self.use_layernorm else xi
+            
+            # x_next = x0 * (W * xi_normed + b) + xi
             if self.low_rank is not None:
-                # Low-rank: xi @ U @ V + b
-                feature_crossing = torch.matmul(torch.matmul(xi, self.U[i]), self.V[i]) + self.b[i]
+                # Low-rank: xi_normed @ U @ V + b
+                feature_crossing = torch.matmul(torch.matmul(xi_normed, self.U[i]), self.V[i]) + self.b[i]
             else:
-                # Full-rank: xi @ W + b
-                feature_crossing = torch.matmul(xi, self.W[i]) + self.b[i]
+                # Full-rank: xi_normed @ W + b
+                feature_crossing = torch.matmul(xi_normed, self.W[i]) + self.b[i]
             
             xi = x0 * feature_crossing + xi
-            
-            # Apply LayerNorm if enabled
-            if self.use_layernorm:
-                xi = self.layer_norms[i](xi)
             
         return xi
 
@@ -316,11 +315,12 @@ class ResidualMLP(nn.Module):
         for i, layer in enumerate(self.layers):
             identity = x
             
-            # Forward through layer
-            x = layer(x)
-            
+            # Pre-norm: Apply LayerNorm before the linear layer
             if self.layer_norms is not None:
                 x = self.layer_norms[i](x)
+            
+            # Forward through layer
+            x = layer(x)
             
             x = self.activations[i](x)
             
