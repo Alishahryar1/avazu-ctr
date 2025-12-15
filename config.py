@@ -113,11 +113,11 @@ CONFIG: ConfigType = {
     
     "mlp_hidden_dims": [2048, 1024, 512],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
-    "mlp_use_skip_connections": False,  # Add residual/skip connections to MLP
+    "mlp_use_skip_connections": True,  # Add residual/skip connections to MLP
     "use_layer_norm": True,
     
     # === Training ===
-    "lr": 5e-4,  # Lower initial LR for better convergence
+    "lr": 1e-4,  # Lower initial LR for better convergence
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
     "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
     "epochs": 50,
@@ -127,8 +127,8 @@ CONFIG: ConfigType = {
     "tensorboard_log_interval": 1000,  # Log every N batches (reduces I/O overhead)
     
     # === Regularization ===
-    "lr_warmup_epoch_ratio": 0.0,
-    "mlp_dropout": 0.0,
+    "lr_warmup_epoch_ratio": 0.1,
+    "mlp_dropout": 0.1,
     "grad_clip": 1.0,
     "weight_decay": 1e-5,  # L2 regularization for MLP/DCN params
     "embedding_weight_decay": 0.0,  # L2 regularization for embeddings (usually 0)
