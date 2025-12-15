@@ -1,6 +1,5 @@
 data
 *.csv
-*.pth
 __pycache__
 models
 runs
