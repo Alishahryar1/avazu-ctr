@@ -71,7 +71,8 @@ def get_time_feature_expressions() -> list[pl.Expr]:
         # Extract hour of day (positions 6-7, e.g., "00" -> 0)
         pl.col("hour").str.slice(6, 2).cast(pl.UInt8).alias("hour_of_day"),
         # Calculate actual day of week (0=Monday, 6=Sunday) by parsing as datetime
-        pl.col("hour").str.to_datetime("%y%m%d%H").dt.weekday().cast(pl.UInt8).alias("day_of_week"),
+        # Append "00" for minutes since Polars requires both hour and minute in format string
+        (pl.col("hour") + "00").str.to_datetime("%y%m%d%H%M").dt.weekday().cast(pl.UInt8).alias("day_of_week"),
     ]
 
 
