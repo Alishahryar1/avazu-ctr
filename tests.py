@@ -29,8 +29,18 @@ def make_test_config(**overrides) -> ConfigType:
         'min_freq': 5,
         'validation_split': 0.1,
         
-        # Model Architecture
+        # Model Architecture - Embeddings
         'embedding_dim': 16,
+        'use_variable_embeddings': False,  # Disabled for backward compatibility in tests
+        'embedding_dim_rules': [
+            (10, 8),
+            (100, 16),
+            (1000, 32),
+        ],
+        'embedding_projection_dim': None,
+        'feature_embedding_overrides': {},
+        
+        # Model Architecture - DCN/Attention
         'use_dcn': True,
         'dcn_num_layers': 2,
         'dcn_use_layernorm': False,
@@ -517,6 +527,127 @@ class TestMutualExclusivity(unittest.TestCase):
         out = model(x)
         self.assertEqual(out.shape, (4, 1))
         self.assertTrue(hasattr(model, 'senet'), "Model should have senet layer")
+
+
+class TestVariableEmbeddings(unittest.TestCase):
+    """Tests for variable embedding dimensions based on feature cardinality."""
+    
+    def test_cardinality_based_embedding_dims(self):
+        """Test that embeddings get different dimensions based on vocab size."""
+        config = make_test_config(
+            use_variable_embeddings=True,
+            use_senet=False,  # SENET needs uniform dims
+            use_feature_gating=True
+        )
+        # Create features with different cardinalities
+        vocab_sizes = {
+            'small': 5,      # Should get 8 dims (cardinality <= 10)
+            'medium': 50,    # Should get 16 dims (cardinality <= 100)
+            'large': 500,    # Should get 32 dims (cardinality <= 1000)
+        }
+        feature_names = ['small', 'medium', 'large']
+        
+        model = GatedDCNModel(vocab_sizes, feature_names, config)
+        
+        # Verify each feature has correct embedding dimension
+        self.assertEqual(model.embeddings['small'].embedding_dim, 8)
+        self.assertEqual(model.embeddings['medium'].embedding_dim, 16)
+        self.assertEqual(model.embeddings['large'].embedding_dim, 32)
+    
+    def test_variable_embeddings_forward_pass(self):
+        """Test forward pass with variable embedding dimensions."""
+        config = make_test_config(
+            use_variable_embeddings=True,
+            use_senet=False,
+            use_feature_gating=True
+        )
+        vocab_sizes = {'small': 5, 'medium': 50, 'large': 500}
+        model = GatedDCNModel(vocab_sizes, ['small', 'medium', 'large'], config)
+        
+        x = torch.randint(0, 5, (4, 3))  # Use min vocab size for safety
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1))
+    
+    def test_projection_layer(self):
+        """Test that projection layer unifies variable embedding dimensions."""
+        config = make_test_config(
+            use_variable_embeddings=True,
+            embedding_projection_dim=64,  # Project to 64 dims
+            use_senet=False,
+            use_feature_gating=False
+        )
+        vocab_sizes = {'small': 5, 'medium': 50}
+        model = GatedDCNModel(vocab_sizes, ['small', 'medium'], config)
+        
+        self.assertTrue(model.use_projection)
+        self.assertTrue(hasattr(model, 'projection'))
+        
+        # Forward pass should work
+        x = torch.randint(0, 5, (4, 2))
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1))
+    
+    def test_projection_with_senet(self):
+        """Test that SENET works with variable embeddings when projection is enabled."""
+        config = make_test_config(
+            use_variable_embeddings=True,
+            embedding_projection_dim=64,  # Must divide evenly by num_fields for SENET
+            use_senet=True,
+            use_feature_gating=False
+        )
+        vocab_sizes = {'small': 5, 'medium': 50}  # 2 fields
+        model = GatedDCNModel(vocab_sizes, ['small', 'medium'], config)
+        
+        self.assertTrue(hasattr(model, 'senet'))
+        x = torch.randint(0, 5, (4, 2))
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1))
+    
+    def test_senet_requires_uniform_or_projection(self):
+        """Test that SENET raises error with variable embeddings and no projection."""
+        config = make_test_config(
+            use_variable_embeddings=True,
+            embedding_projection_dim=None,
+            use_senet=True,
+            use_feature_gating=False
+        )
+        vocab_sizes = {'small': 5, 'large': 500}  # Different dims
+        
+        with self.assertRaises(ValueError) as context:
+            GatedDCNModel(vocab_sizes, ['small', 'large'], config)
+        self.assertIn("SENET requires uniform embedding dimensions", str(context.exception))
+    
+    def test_feature_embedding_overrides(self):
+        """Test per-feature embedding dimension overrides."""
+        config = make_test_config(
+            use_variable_embeddings=True,
+            feature_embedding_overrides={
+                'special': {'embedding_dim': 128}  # Override to 128
+            },
+            use_senet=False,
+            use_feature_gating=True
+        )
+        vocab_sizes = {'small': 5, 'special': 50}
+        model = GatedDCNModel(vocab_sizes, ['small', 'special'], config)
+        
+        # 'small' should use cardinality rules (8 dims for <= 10)
+        self.assertEqual(model.embeddings['small'].embedding_dim, 8)
+        # 'special' should use override (128 dims)
+        self.assertEqual(model.embeddings['special'].embedding_dim, 128)
+    
+    def test_default_embedding_fallback(self):
+        """Test that high-cardinality features use default embedding_dim."""
+        config = make_test_config(
+            use_variable_embeddings=True,
+            embedding_dim=64,  # Default for high cardinality
+            embedding_dim_rules=[(10, 8), (100, 16)],  # No rule for > 100
+            use_senet=False
+        )
+        vocab_sizes = {'small': 5, 'huge': 10000}  # 10000 > 100, uses default
+        model = GatedDCNModel(vocab_sizes, ['small', 'huge'], config)
+        
+        self.assertEqual(model.embeddings['small'].embedding_dim, 8)
+        self.assertEqual(model.embeddings['huge'].embedding_dim, 64)  # Default
 
 
 def list_tests():

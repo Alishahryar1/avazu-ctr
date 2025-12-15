@@ -19,6 +19,33 @@ def get_activation(name: str) -> nn.Module:
     return activations[name]
 
 
+def compute_embedding_dim(vocab_size: int, config: ConfigType) -> int:
+    """
+    Compute optimal embedding dimension based on vocabulary size.
+    
+    Uses cardinality-based rules from config:
+    - Smaller vocabularies get smaller embedding dimensions
+    - Larger vocabularies get larger dimensions (more capacity needed)
+    
+    Args:
+        vocab_size: Number of unique values for this feature
+        config: Configuration dict containing embedding_dim_rules
+        
+    Returns:
+        Optimal embedding dimension for this vocabulary size
+    """
+    if not config.get('use_variable_embeddings', False):
+        return config['embedding_dim']
+    
+    # Check cardinality rules (sorted ascending by max_vocab_size)
+    for max_vocab, embed_dim in config['embedding_dim_rules']:
+        if vocab_size <= max_vocab:
+            return embed_dim
+    
+    # Default to base embedding_dim for very large vocabularies
+    return config['embedding_dim']
+
+
 class SENetLayer(nn.Module):
     """
     Squeeze-and-Excitation Network (SENET) from FiBiNET paper.
@@ -254,27 +281,70 @@ class GatedDCNModel(nn.Module):
         self.use_senet = use_senet
         self.use_feature_gating = use_feature_gating
         self.num_fields = len(feature_names)
-        self.embedding_dim = embedding_dim
+        self.base_embedding_dim = embedding_dim  # Base/fallback dimension
+        
+        # Track per-feature embedding dimensions for variable embeddings
+        use_variable_embeddings = config.get('use_variable_embeddings', False)
+        feature_overrides = config.get('feature_embedding_overrides', {})
+        projection_dim = config.get('embedding_projection_dim', None)
 
-        # 1. Embedding Layer with better initialization
+        # 1. Embedding Layer with variable dimensions per feature
         self.embeddings = nn.ModuleDict()
-        total_dim = 0
+        self.feature_dims: dict[str, int] = {}  # Track dimension per feature
+        total_embed_dim = 0
+        
         for feat in feature_names:
-            emb = nn.Embedding(vocab_sizes[feat], embedding_dim)
+            # Check for manual override first
+            if feat in feature_overrides and 'embedding_dim' in feature_overrides[feat]:
+                feat_dim = feature_overrides[feat]['embedding_dim']
+            elif use_variable_embeddings:
+                # Compute dimension based on cardinality
+                feat_dim = compute_embedding_dim(vocab_sizes[feat], config)
+            else:
+                feat_dim = embedding_dim
+            
+            self.feature_dims[feat] = feat_dim
+            emb = nn.Embedding(vocab_sizes[feat], feat_dim)
             # Xavier initialization for embeddings
             nn.init.xavier_uniform_(emb.weight)
             self.embeddings[feat] = emb
-            total_dim += embedding_dim
+            total_embed_dim += feat_dim
+        
+        # Store dimensions for later use
+        self.total_embed_dim = total_embed_dim
+        self.use_projection = projection_dim is not None
+        
+        # 2. Optional Projection Layer to unify dimensions
+        if self.use_projection and projection_dim is not None:
+            self.projection = nn.Linear(total_embed_dim, projection_dim)
+            nn.init.xavier_uniform_(self.projection.weight)
+            nn.init.zeros_(self.projection.bias)
+            working_dim = projection_dim
+            # For SENET, we need uniform embedding dim after projection
+            self.embedding_dim = projection_dim // self.num_fields
+        else:
+            working_dim = total_embed_dim
+            # For SENET compatibility: only works with uniform embeddings
+            # When variable embeddings without projection, SENET is disabled
+            self.embedding_dim = embedding_dim if not use_variable_embeddings else embedding_dim
 
-        # Layer norm after embeddings
+        # Layer norm after embeddings (before or after projection)
         if use_layer_norm:
-            self.embed_ln = nn.LayerNorm(total_dim)
+            self.embed_ln = nn.LayerNorm(working_dim)
 
-        # 2. SENET (Squeeze-and-Excitation) - Optional
+        # 3. SENET (Squeeze-and-Excitation) - Optional
+        # Note: SENET requires uniform embedding dimensions per field
         if use_senet:
+            if use_variable_embeddings and not self.use_projection:
+                raise ValueError(
+                    "SENET requires uniform embedding dimensions. "
+                    "Either disable 'use_variable_embeddings', enable 'embedding_projection_dim', "
+                    "or disable 'use_senet'."
+                )
+            senet_embed_dim = self.embedding_dim if self.embedding_dim else embedding_dim
             self.senet = SENetLayer(
                 num_fields=self.num_fields,
-                embedding_dim=embedding_dim,
+                embedding_dim=senet_embed_dim,
                 squeeze_funcs=senet_squeeze_funcs,
                 reduction_ratio=senet_reduction_ratio,
                 excitation_activation=senet_activation
@@ -284,19 +354,19 @@ class GatedDCNModel(nn.Module):
         if use_feature_gating:
             feature_gating_low_rank = config['feature_gating_low_rank']
             self.feature_gating = FeatureGatingLayer(
-                input_dim=total_dim,
+                input_dim=working_dim,
                 gating_activation=feature_gating_activation,
                 low_rank=feature_gating_low_rank
             )
 
-        # 3. DCNv2 - Optional (supports low-rank decomposition)
+        # 4. DCNv2 - Optional (supports low-rank decomposition)
         if use_dcn:
-            self.dcn = DCNv2(total_dim, num_layers=dcn_num_layers, use_layernorm=dcn_use_layernorm, low_rank=dcn_low_rank)
+            self.dcn = DCNv2(working_dim, num_layers=dcn_num_layers, use_layernorm=dcn_use_layernorm, low_rank=dcn_low_rank)
 
 
-        # 4. Enhanced MLP with LayerNorm and configurable activation
+        # 5. Enhanced MLP with LayerNorm and configurable activation
         layers: list[nn.Module] = []
-        input_dim = total_dim
+        input_dim = working_dim
         for i, hidden_dim in enumerate(mlp_hidden_dims):
             layers.append(nn.Linear(input_dim, hidden_dim))
             if use_layer_norm:
@@ -323,8 +393,12 @@ class GatedDCNModel(nn.Module):
         for i, feat in enumerate(self.feature_names):
             embeds.append(self.embeddings[feat](x[:, i]))
 
-        # Concatenate: [Batch, Total_Dim]
+        # Concatenate: [Batch, Total_Embed_Dim]
         dnn_input = torch.cat(embeds, dim=1)
+        
+        # Apply optional projection to unify dimensions
+        if self.use_projection:
+            dnn_input = self.projection(dnn_input)
 
         # Apply layer norm to embeddings
         if self.use_layer_norm:

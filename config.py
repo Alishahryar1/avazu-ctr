@@ -3,6 +3,12 @@ import numpy as np
 import torch
 from typing import TypedDict
 
+
+class FeatureEmbeddingConfig(TypedDict, total=False):
+    """Per-feature embedding configuration with optional overrides."""
+    embedding_dim: int  # Override embedding dimension for this feature
+
+
 class ConfigType(TypedDict):
     # General
     seed: int
@@ -14,8 +20,14 @@ class ConfigType(TypedDict):
     min_freq: int
     validation_split: float
     
-    # Model Architecture
-    embedding_dim: int
+    # Model Architecture - Embeddings
+    embedding_dim: int  # Default/uniform embedding dimension
+    use_variable_embeddings: bool  # Enable cardinality-based embedding dimensions
+    embedding_dim_rules: list[tuple[int, int]]  # (max_cardinality, embed_dim) sorted ascending
+    embedding_projection_dim: int | None  # None = sum of all, int = project to this dim
+    feature_embedding_overrides: dict[str, FeatureEmbeddingConfig]  # Per-feature overrides
+    
+    # Model Architecture - DCN/Attention
     use_dcn: bool
     dcn_num_layers: int
     dcn_use_layernorm: bool
@@ -69,13 +81,25 @@ CONFIG: ConfigType = {
     "min_freq": 5,
     "validation_split": 0.001,  # Hold out 1% for validation
     
-    # === Model Architecture ===
-    "embedding_dim": 64,
+    # === Model Architecture - Embeddings ===
+    "embedding_dim": 64,  # Default/fallback embedding dimension
+    "use_variable_embeddings": True,  # Enable cardinality-based embedding dimensions
+    # Cardinality rules: (max_vocab_size, embedding_dim) - sorted ascending
+    # e.g., vocab <= 10 -> dim 8, vocab <= 100 -> dim 16, etc.
+    "embedding_dim_rules": [
+        (10, 8),       # Very low cardinality (device_type, banner_pos)
+        (100, 16),     # Low cardinality (hour_of_day, C15, C16, C18)
+        (1000, 32),    # Medium cardinality (categories)
+        (10000, 48),   # High cardinality (C14, C17, C21)
+        # Anything above 10000 uses embedding_dim (64)
+    ],
+    "embedding_projection_dim": None,  # None = no projection, int = project to uniform dim
+    "feature_embedding_overrides": {},  # Per-feature overrides, e.g., {"device_id": {"embedding_dim": 128}}
     
     "use_dcn": True,  # Enable/disable DCNv2 cross network
     "dcn_num_layers": 4,  # Increased for more feature interactions
     "dcn_use_layernorm": False,  # LayerNorm for cross layer stability
-    "dcn_low_rank": 128,  # None = full-rank, int (e.g. 32) = low-rank decomposition
+    "dcn_low_rank": None,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
     "use_senet": False,  # Enable/disable SENET (Squeeze-and-Excitation) layer
     "senet_squeeze_funcs": ["mean", "max", "min"],  # Squeeze functions to combine
@@ -83,8 +107,8 @@ CONFIG: ConfigType = {
     "senet_activation": "tanh",  # Options: sigmoid, tanh, relu, softmax
     
     "use_feature_gating": True,  # Alternative to SENET (mutually exclusive)
-    "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
-    "feature_gating_low_rank": 128,  # None = full-rank, int (e.g. 32) = low-rank decomposition
+    "feature_gating_activation": "gelu",  # Options: sigmoid, tanh, relu, etc.
+    "feature_gating_low_rank": None,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
     "mlp_hidden_dims": [2048, 1024, 1024],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
@@ -94,14 +118,14 @@ CONFIG: ConfigType = {
     "lr": 1e-3,  # Lower initial LR for better convergence
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
     "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
-    "epochs": 2,
-    "lr_warmup_epoch_ratio": 0.25,
+    "epochs": 1,
     "early_stopping_patience": 2,
     "use_tensorboard": False,
     "tensorboard_logdir": "./runs",
     "tensorboard_log_interval": 1000,  # Log every N batches (reduces I/O overhead)
     
     # === Regularization ===
+    "lr_warmup_epoch_ratio": 0.25,
     "mlp_dropout": 0.1,
     "grad_clip": 10.0,
     "weight_decay": 1e-5,  # L2 regularization for MLP/DCN params
