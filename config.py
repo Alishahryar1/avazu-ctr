@@ -88,15 +88,16 @@ CONFIG: ConfigType = {
     
     # === Model Architecture - Embeddings ===
     "embedding_dim": 128,  # Default/fallback embedding dimension
-    "use_variable_embeddings": False,  # Enable cardinality-based embedding dimensions
+    "use_variable_embeddings": True,  # Enable cardinality-based embedding dimensions
     # Cardinality rules: (max_vocab_size, embedding_dim) - sorted ascending
-    # e.g., vocab <= 10 -> dim 8, vocab <= 100 -> dim 16, etc.
+    # Based on EDA analysis of actual feature cardinalities
     "embedding_dim_rules": [
-        (10, 8),       # Very low cardinality (device_type, banner_pos)
-        (100, 16),     # Low cardinality (hour_of_day, C15, C16, C18)
-        (1000, 32),    # Medium cardinality (categories)
-        (10000, 48),   # High cardinality (C14, C17, C21)
-        # Anything above 10000 uses embedding_dim (64)
+        (10, 8),       # 10 features: device_type, C18, C1, banner_pos, day_of_week, C15, C16, month, day_of_month, device_conn_type
+        (100, 16),     # 5 features: site_category, hour_of_day, app_category, C21, C19
+        (500, 24),     # 3 features: C20, app_domain, C17
+        (5000, 32),    # 3 features: C14, site_id, site_domain
+        (20000, 48),   # 2 features: app_id, device_model
+        # Anything above 20000 uses embedding_dim (128): device_id, device_id_x_app_id, device_ip_x_C14, device_ip, user_proxy
     ],
     "embedding_projection_dim": None,  # None = no projection, int = project to uniform dim
     "feature_embedding_overrides": {},  # Per-feature overrides, e.g., {"device_id": {"embedding_dim": 128}}

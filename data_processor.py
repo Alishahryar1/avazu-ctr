@@ -225,22 +225,19 @@ def bin_time_delta_features() -> pl.Expr:
     """
     Bin hours_since_last_click into categorical buckets.
     
-    Bins:
+    EDA-optimized bins based on percentiles (80.8% are first clicks with 0):
     - 'first': First click (0 hours delta)
-    - 'same_hour': Same hour as previous click (would be 0 but we use 'first' for that)
-    - '<1h': Within 1 hour
-    - '1-6h': 1-6 hours
-    - '6-24h': 6-24 hours (same day roughly)
-    - '1-7d': 1-7 days
-    - '>7d': More than a week
+    - '1-4h': Up to P50 (short interval)
+    - '5-19h': P50 to P75 (medium interval)  
+    - '20-53h': P75 to P90 (long interval)
+    - '>53h': Top 10% (re-engagement)
     """
     return (
         pl.when(pl.col("hours_since_last_click") == 0).then(pl.lit("first"))
-        .when(pl.col("hours_since_last_click") < 1).then(pl.lit("same_hour"))
-        .when(pl.col("hours_since_last_click") < 6).then(pl.lit("1-6h"))
-        .when(pl.col("hours_since_last_click") < 24).then(pl.lit("6-24h"))
-        .when(pl.col("hours_since_last_click") < 168).then(pl.lit("1-7d"))  # 24*7 = 168
-        .otherwise(pl.lit(">7d"))
+        .when(pl.col("hours_since_last_click") <= 4).then(pl.lit("1-4h"))
+        .when(pl.col("hours_since_last_click") <= 19).then(pl.lit("5-19h"))
+        .when(pl.col("hours_since_last_click") <= 53).then(pl.lit("20-53h"))
+        .otherwise(pl.lit(">53h"))
         .alias("hours_since_last_click_bin")
     )
 
@@ -281,14 +278,19 @@ def bin_prev_clicks(group_col: str) -> pl.Expr:
     """
     Bin previous click counts into categorical buckets.
     
-    Bins: new (0), returning (1-5), regular (6-20), heavy (21-100), power (100+)
+    EDA-optimized bins based on percentiles:
+    - new (0): 29.4% of users
+    - returning (1-7): Up to P50
+    - regular (8-32): P50 to P75
+    - heavy (33-224): P75 to P90
+    - power (224+): Top 10% most active
     """
     col_name = f"{group_col}_prev_clicks"
     return (
         pl.when(pl.col(col_name) == 0).then(pl.lit("new"))
-        .when(pl.col(col_name) <= 5).then(pl.lit("returning"))
-        .when(pl.col(col_name) <= 20).then(pl.lit("regular"))
-        .when(pl.col(col_name) <= 100).then(pl.lit("heavy"))
+        .when(pl.col(col_name) <= 7).then(pl.lit("returning"))
+        .when(pl.col(col_name) <= 32).then(pl.lit("regular"))
+        .when(pl.col(col_name) <= 224).then(pl.lit("heavy"))
         .otherwise(pl.lit("power"))
         .alias(f"{col_name}_bin")
     )
@@ -437,14 +439,17 @@ def bin_hourly_impressions() -> pl.Expr:
     """
     Bin hourly impressions into categorical buckets.
     
-    Bins: 1 (single), 2-3, 4-10, 11-50, 50+
+    EDA-optimized bins based on percentiles (65.4% are single impressions):
+    - 'single' (1): P50/median, most common
+    - '2' (2): P75, returning within hour
+    - '3-4' (3-4): Up to P90
+    - '5+': Top 10% high-frequency users
     """
     return (
         pl.when(pl.col("user_hourly_impressions") == 1).then(pl.lit("single"))
-        .when(pl.col("user_hourly_impressions") <= 3).then(pl.lit("2-3"))
-        .when(pl.col("user_hourly_impressions") <= 10).then(pl.lit("4-10"))
-        .when(pl.col("user_hourly_impressions") <= 50).then(pl.lit("11-50"))
-        .otherwise(pl.lit("50+"))
+        .when(pl.col("user_hourly_impressions") == 2).then(pl.lit("2"))
+        .when(pl.col("user_hourly_impressions") <= 4).then(pl.lit("3-4"))
+        .otherwise(pl.lit("5+"))
         .alias("user_hourly_impressions_bin")
     )
 
