@@ -1574,6 +1574,248 @@ class TestCountBinning(unittest.TestCase):
         self.assertEqual(result['device_ip_count_bin'].dtype, pl.String)
 
 
+# =============================================================================
+# Tests for data_processor.py - Cumulative Count Features
+# =============================================================================
+class TestCumulativeCountFeatures(unittest.TestCase):
+    """Tests for cumulative count feature computation."""
+    
+    def test_cumulative_count_basic(self):
+        """Test basic cumulative count computation."""
+        import polars as pl
+        from data_processor import get_cumulative_count_expressions
+        
+        # Create test data with repeated values
+        test_data = pl.DataFrame({
+            'device_ip': ['ip1', 'ip2', 'ip1', 'ip1', 'ip2']
+        })
+        
+        cumcount_exprs = get_cumulative_count_expressions(['device_ip'])
+        result = test_data.with_columns(cumcount_exprs)
+        
+        # ip1 appears at positions 0, 2, 3 -> cumcount should be 1, 2, 3
+        # ip2 appears at positions 1, 4 -> cumcount should be 1, 2
+        expected = [1, 1, 2, 3, 2]
+        self.assertEqual(result['device_ip_cumcount'].to_list(), expected)
+    
+    def test_cumulative_count_multiple_columns(self):
+        """Test cumulative count for multiple columns."""
+        import polars as pl
+        from data_processor import get_cumulative_count_expressions
+        
+        test_data = pl.DataFrame({
+            'device_ip': ['ip1', 'ip1', 'ip2'],
+            'user_proxy': ['u1', 'u2', 'u1']
+        })
+        
+        cumcount_exprs = get_cumulative_count_expressions(['device_ip', 'user_proxy'])
+        result = test_data.with_columns(cumcount_exprs)
+        
+        self.assertEqual(result['device_ip_cumcount'].to_list(), [1, 2, 1])
+        self.assertEqual(result['user_proxy_cumcount'].to_list(), [1, 1, 2])
+    
+    def test_cumulative_count_all_unique(self):
+        """Test cumulative count when all values are unique."""
+        import polars as pl
+        from data_processor import get_cumulative_count_expressions
+        
+        test_data = pl.DataFrame({
+            'device_ip': ['ip1', 'ip2', 'ip3', 'ip4']
+        })
+        
+        cumcount_exprs = get_cumulative_count_expressions(['device_ip'])
+        result = test_data.with_columns(cumcount_exprs)
+        
+        # All unique values should have cumcount of 1
+        self.assertEqual(result['device_ip_cumcount'].to_list(), [1, 1, 1, 1])
+    
+    def test_cumulative_count_all_same(self):
+        """Test cumulative count when all values are the same."""
+        import polars as pl
+        from data_processor import get_cumulative_count_expressions
+        
+        test_data = pl.DataFrame({
+            'device_ip': ['ip1', 'ip1', 'ip1', 'ip1']
+        })
+        
+        cumcount_exprs = get_cumulative_count_expressions(['device_ip'])
+        result = test_data.with_columns(cumcount_exprs)
+        
+        # All same values should have increasing cumcount
+        self.assertEqual(result['device_ip_cumcount'].to_list(), [1, 2, 3, 4])
+
+
+class TestCumulativeCountBinning(unittest.TestCase):
+    """Tests for cumulative count binning."""
+    
+    def test_bin_cumcount_basic(self):
+        """Test basic cumulative count binning."""
+        import polars as pl
+        from data_processor import bin_cumcount_features
+        
+        test_data = pl.DataFrame({
+            'device_ip_cumcount': [1, 2, 5, 15, 75, 150]
+        })
+        
+        bin_exprs = bin_cumcount_features(['device_ip'])
+        result = test_data.with_columns(bin_exprs)
+        
+        expected = ['first', '2-3', '4-10', '11-50', '51-100', '100+']
+        self.assertEqual(result['device_ip_cumcount_bin'].to_list(), expected)
+    
+    def test_bin_cumcount_boundary_values(self):
+        """Test binning at exact boundaries."""
+        import polars as pl
+        from data_processor import bin_cumcount_features
+        
+        test_data = pl.DataFrame({
+            'device_ip_cumcount': [1, 3, 4, 10, 11, 50, 51, 100, 101]
+        })
+        
+        bin_exprs = bin_cumcount_features(['device_ip'])
+        result = test_data.with_columns(bin_exprs)
+        
+        bins = result['device_ip_cumcount_bin'].to_list()
+        self.assertEqual(bins[0], 'first')   # 1
+        self.assertEqual(bins[1], '2-3')     # 3
+        self.assertEqual(bins[2], '4-10')    # 4
+        self.assertEqual(bins[3], '4-10')    # 10
+        self.assertEqual(bins[4], '11-50')   # 11
+        self.assertEqual(bins[5], '11-50')   # 50
+        self.assertEqual(bins[6], '51-100')  # 51
+        self.assertEqual(bins[7], '51-100')  # 100
+        self.assertEqual(bins[8], '100+')    # 101
+    
+    def test_bin_cumcount_output_type(self):
+        """Verify binned features are string type."""
+        import polars as pl
+        from data_processor import bin_cumcount_features
+        
+        test_data = pl.DataFrame({
+            'device_ip_cumcount': [1, 50, 200]
+        })
+        
+        bin_exprs = bin_cumcount_features(['device_ip'])
+        result = test_data.with_columns(bin_exprs)
+        
+        self.assertEqual(result['device_ip_cumcount_bin'].dtype, pl.String)
+
+
+# =============================================================================
+# Tests for data_processor.py - Hourly Aggregated Features
+# =============================================================================
+class TestHourlyAggregatedFeatures(unittest.TestCase):
+    """Tests for hourly aggregated feature computation."""
+    
+    def test_compute_hourly_features_basic(self):
+        """Test basic hourly aggregated feature computation."""
+        import polars as pl
+        from data_processor import compute_hourly_aggregated_features
+        
+        # Create train data with known user-hour patterns
+        train_data = pl.DataFrame({
+            'user_proxy': ['u1', 'u1', 'u1', 'u2', 'u2'],
+            'hour': ['14102100', '14102100', '14102101', '14102100', '14102100']
+        }).lazy()
+        
+        test_data = pl.DataFrame({
+            'user_proxy': ['u1', 'u2', 'u3'],
+            'hour': ['14102100', '14102100', '14102100']
+        }).lazy()
+        
+        lf_train, lf_test = compute_hourly_aggregated_features(train_data, test_data)
+        
+        train_result = lf_train.collect()
+        test_result = lf_test.collect()
+        
+        # u1 in hour 14102100 appears 2 times in train
+        # u2 in hour 14102100 appears 2 times in train
+        # u1 in hour 14102101 appears 1 time in train
+        self.assertIn('user_hourly_impressions', train_result.columns)
+        
+        # Test data: u1@14102100 -> 2, u2@14102100 -> 2, u3@14102100 -> 1 (unknown)
+        test_impressions = test_result['user_hourly_impressions'].to_list()
+        self.assertEqual(test_impressions[0], 2)  # u1@14102100
+        self.assertEqual(test_impressions[1], 2)  # u2@14102100
+        self.assertEqual(test_impressions[2], 1)  # u3@14102100 (not in train, defaults to 1)
+    
+    def test_hourly_features_no_leakage(self):
+        """Test that hourly features don't leak test data."""
+        import polars as pl
+        from data_processor import compute_hourly_aggregated_features
+        
+        train_data = pl.DataFrame({
+            'user_proxy': ['u1', 'u1'],
+            'hour': ['14102100', '14102100']
+        }).lazy()
+        
+        # Test has u2 who's not in train
+        test_data = pl.DataFrame({
+            'user_proxy': ['u2', 'u2', 'u2'],
+            'hour': ['14102100', '14102100', '14102100']
+        }).lazy()
+        
+        _, lf_test = compute_hourly_aggregated_features(train_data, test_data)
+        test_result = lf_test.collect()
+        
+        # u2 should have count 1 (default), not 3 (from test)
+        self.assertTrue(all(c == 1 for c in test_result['user_hourly_impressions'].to_list()))
+
+
+class TestHourlyImpressionsBinning(unittest.TestCase):
+    """Tests for hourly impressions binning."""
+    
+    def test_bin_hourly_impressions_basic(self):
+        """Test basic hourly impressions binning."""
+        import polars as pl
+        from data_processor import bin_hourly_impressions
+        
+        test_data = pl.DataFrame({
+            'user_hourly_impressions': [1, 2, 5, 15, 75]
+        })
+        
+        bin_expr = bin_hourly_impressions()
+        result = test_data.with_columns(bin_expr)
+        
+        expected = ['single', '2-3', '4-10', '11-50', '50+']
+        self.assertEqual(result['user_hourly_impressions_bin'].to_list(), expected)
+    
+    def test_bin_hourly_impressions_boundaries(self):
+        """Test binning at exact boundaries."""
+        import polars as pl
+        from data_processor import bin_hourly_impressions
+        
+        test_data = pl.DataFrame({
+            'user_hourly_impressions': [1, 3, 4, 10, 11, 50, 51]
+        })
+        
+        bin_expr = bin_hourly_impressions()
+        result = test_data.with_columns(bin_expr)
+        
+        bins = result['user_hourly_impressions_bin'].to_list()
+        self.assertEqual(bins[0], 'single')  # 1
+        self.assertEqual(bins[1], '2-3')     # 3
+        self.assertEqual(bins[2], '4-10')    # 4
+        self.assertEqual(bins[3], '4-10')    # 10
+        self.assertEqual(bins[4], '11-50')   # 11
+        self.assertEqual(bins[5], '11-50')   # 50
+        self.assertEqual(bins[6], '50+')     # 51
+    
+    def test_bin_hourly_impressions_output_type(self):
+        """Verify binned feature is string type."""
+        import polars as pl
+        from data_processor import bin_hourly_impressions
+        
+        test_data = pl.DataFrame({
+            'user_hourly_impressions': [1, 10, 100]
+        })
+        
+        bin_expr = bin_hourly_impressions()
+        result = test_data.with_columns(bin_expr)
+        
+        self.assertEqual(result['user_hourly_impressions_bin'].dtype, pl.String)
+
+
 class TestDataProcessorPersistence(unittest.TestCase):
     """Tests for data persistence (save/load)."""
     

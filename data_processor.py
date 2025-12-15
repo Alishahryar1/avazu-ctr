@@ -122,6 +122,54 @@ def get_interaction_feature_expressions() -> list[pl.Expr]:
 # Columns to compute count features for (high-cardinality)
 COUNT_FEATURE_COLS = ["device_ip", "device_id", "C14", "C17", "C21", "user_proxy"]
 
+# Columns to compute cumulative count features for (captures user "maturity")
+CUMCOUNT_COLS = ["device_ip", "user_proxy", "device_id"]
+
+
+def get_cumulative_count_expressions(cols: list[str]) -> list[pl.Expr]:
+    """
+    Create cumulative count expressions for specified columns.
+    
+    Cumulative count captures how many times a value has appeared UP TO this point
+    in the dataset (when sorted chronologically). This helps distinguish:
+    - New users (low cumcount) vs returning users (high cumcount)
+    - First impressions vs repeat impressions
+    
+    Args:
+        cols: Columns to compute cumulative counts for
+        
+    Returns:
+        List of Polars expressions for cumulative counts
+    """
+    return [
+        pl.col(col).cum_count().over(col).alias(f"{col}_cumcount")
+        for col in cols
+    ]
+
+
+def bin_cumcount_features(cols: list[str]) -> list[pl.Expr]:
+    """
+    Create binned versions of cumulative count features for categorical encoding.
+    
+    Bins: 1 (first), 2-3, 4-10, 11-50, 51-100, 100+
+    These bins distinguish user engagement levels.
+    """
+    expressions = []
+    for col in cols:
+        cumcount_col = f"{col}_cumcount"
+        binned_col = f"{col}_cumcount_bin"
+        expr = (
+            pl.when(pl.col(cumcount_col) == 1).then(pl.lit("first"))
+            .when(pl.col(cumcount_col) <= 3).then(pl.lit("2-3"))
+            .when(pl.col(cumcount_col) <= 10).then(pl.lit("4-10"))
+            .when(pl.col(cumcount_col) <= 50).then(pl.lit("11-50"))
+            .when(pl.col(cumcount_col) <= 100).then(pl.lit("51-100"))
+            .otherwise(pl.lit("100+"))
+            .alias(binned_col)
+        )
+        expressions.append(expr)
+    return expressions
+
 
 def get_string_cast_expressions(columns: list[str]) -> list[pl.Expr]:
     """Returns expressions to cast columns to String type."""
@@ -208,6 +256,74 @@ def bin_count_features(count_cols: list[str]) -> list[pl.Expr]:
         )
         expressions.append(expr)
     return expressions
+
+
+def compute_hourly_aggregated_features(
+    lf_train: pl.LazyFrame,
+    lf_test: pl.LazyFrame
+) -> tuple[pl.LazyFrame, pl.LazyFrame]:
+    """
+    Compute hourly aggregated features for user activity.
+    
+    This is an efficient alternative to rolling window features.
+    For each row, adds the count of impressions this user had in the same hour.
+    
+    Features added:
+    - user_hourly_impressions: Number of impressions for this user_proxy in this hour
+    
+    Args:
+        lf_train: Training LazyFrame
+        lf_test: Test LazyFrame
+        
+    Returns:
+        Updated train and test LazyFrames with hourly features
+    """
+    print("Computing hourly aggregated features...")
+    
+    # Compute user impressions per hour from training data
+    hourly_counts = (
+        lf_train
+        .select(["user_proxy", "hour"])
+        .group_by(["user_proxy", "hour"])
+        .len()
+        .rename({"len": "user_hourly_impressions"})
+        .collect()
+        .lazy()
+    )
+    
+    # Join to both train and test
+    lf_train = (
+        lf_train
+        .join(hourly_counts, on=["user_proxy", "hour"], how="left")
+        .with_columns(
+            pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32)
+        )
+    )
+    lf_test = (
+        lf_test
+        .join(hourly_counts, on=["user_proxy", "hour"], how="left")
+        .with_columns(
+            pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32)
+        )
+    )
+    
+    return lf_train, lf_test
+
+
+def bin_hourly_impressions() -> pl.Expr:
+    """
+    Bin hourly impressions into categorical buckets.
+    
+    Bins: 1 (single), 2-3, 4-10, 11-50, 50+
+    """
+    return (
+        pl.when(pl.col("user_hourly_impressions") == 1).then(pl.lit("single"))
+        .when(pl.col("user_hourly_impressions") <= 3).then(pl.lit("2-3"))
+        .when(pl.col("user_hourly_impressions") <= 10).then(pl.lit("4-10"))
+        .when(pl.col("user_hourly_impressions") <= 50).then(pl.lit("11-50"))
+        .otherwise(pl.lit("50+"))
+        .alias("user_hourly_impressions_bin")
+    )
 
 
 # =============================================================================
@@ -385,12 +501,43 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     lf_train = lf_train.with_columns(bin_exprs)
     lf_test = lf_test.with_columns(bin_exprs)
     
+    # === Step 6: Compute cumulative count features (user maturity) ===
+    print("Computing cumulative count features...")
+    # Sort by hour for chronological order, then compute cumulative counts
+    lf_train = lf_train.sort("hour")
+    lf_test = lf_test.sort("hour")
+    
+    cumcount_exprs = get_cumulative_count_expressions(CUMCOUNT_COLS)
+    lf_train = lf_train.with_columns(cumcount_exprs)
+    lf_test = lf_test.with_columns(cumcount_exprs)
+    
+    # Bin cumulative counts
+    cumcount_bin_exprs = bin_cumcount_features(CUMCOUNT_COLS)
+    lf_train = lf_train.with_columns(cumcount_bin_exprs)
+    lf_test = lf_test.with_columns(cumcount_bin_exprs)
+    
+    # === Step 7: Compute hourly aggregated features ===
+    lf_train, lf_test = compute_hourly_aggregated_features(lf_train, lf_test)
+    
+    # Bin hourly impressions
+    hourly_bin_expr = bin_hourly_impressions()
+    lf_train = lf_train.with_columns(hourly_bin_expr)
+    lf_test = lf_test.with_columns(hourly_bin_expr)
+    
     # === Build final feature list ===
-    # Categorical columns: base + engineered + time + count bins
+    # Categorical columns: base + engineered + time + count bins + cumcount bins + hourly bins
     count_bin_cols = [f"{col}_count_bin" for col in COUNT_FEATURE_COLS]
-    cat_cols = CATEGORICAL_COLS + ['year', 'month', 'day_of_month', 'hour_of_day', 'day_of_week'] + count_bin_cols
+    cumcount_bin_cols = [f"{col}_cumcount_bin" for col in CUMCOUNT_COLS]
+    cat_cols = (
+        CATEGORICAL_COLS 
+        + ['year', 'month', 'day_of_month', 'hour_of_day', 'day_of_week'] 
+        + count_bin_cols 
+        + cumcount_bin_cols 
+        + ['user_hourly_impressions_bin']
+    )
     
     print(f"Total categorical features: {len(cat_cols)}")
+
     
     # Build vocabularies from training data
     vocab_sizes, feat_maps = build_vocabularies(
