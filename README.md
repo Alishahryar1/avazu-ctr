@@ -58,24 +58,24 @@ graph TD
     Input[Input Features] --> Embed[Embedding Layer<br>64-dim + Xavier Init]
     Embed --> LN[Layer Norm]
     
-    subgraph "Feature Interaction & Gating (Select One)"
-        LN -.->|Option A| SENet[SE-Net Layer<br>Squeeze & Excitation]
-        LN -.->|Option B| Gate[Feature Gating Layer<br>Element-wise Gating]
+    subgraph "Serial Stack"
+        LN --> Gating{Gating/SENet?}
+        Gating -->|Yes| Interaction[SENet OR Feature Gating]
+        Gating -->|No| DCN
+        
+        Interaction --> DCN{DCNv2 Enabled?}
+        DCN -->|Yes| Cross[DCNv2 Cross Network<br>Low-Rank / Full-Rank]
+        DCN -->|No| MLP
+        
+        Cross --> MLP
     end
     
-    LN --> DCN[DCNv2 Cross Network<br>Low-Rank / Full-Rank]
-    
-    SENet --> Concat[Concatenate]
-    Gate --> Concat
-    DCN --> Concat
-    
-    Concat --> MLP[Deep MLP Network<br>1024 → 512 → 512]
-    MLP --> Head[Prediction Head<br>Logits]
+    MLP[Deep MLP Network<br>1024 → 512 → 512] --> Head[Prediction Head<br>Logits]
     
     style Input fill:#f9f,stroke:#333
     style Head fill:#9f9,stroke:#333
-    style SENet fill:#ff9,stroke:#333
-    style Gate fill:#ff9,stroke:#333
+    style Interaction fill:#ff9,stroke:#333
+    style Cross fill:#ff9,stroke:#333
 ```
 
 ### Component Details

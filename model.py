@@ -126,7 +126,7 @@ class FeatureGatingLayer(nn.Module):
 
 class DCNv2(nn.Module):
     """
-    Deep Cross Network V2 (Parallel).
+    Deep Cross Network V2 (Stacked).
     Explicitly captures high-order feature interactions.
     
     Supports low-rank decomposition: W = U @ V where U is (input_dim, rank) 
