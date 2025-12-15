@@ -81,6 +81,9 @@ class SENetLayer(nn.Module):
             elif func == "max":
                 # Max pooling: [Batch, Num_Fields]
                 squeezed = x_3d.max(dim=-1).values
+            elif func == "min":
+                # Min pooling: [Batch, Num_Fields]
+                squeezed = x_3d.min(dim=-1).values
             else:
                 # Should never reach here due to validation in __init__
                 raise ValueError(f"Unknown squeeze function: {func}")

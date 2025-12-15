@@ -74,7 +74,7 @@ CONFIG: ConfigType = {
     "dcn_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
     "use_senet": True,  # Enable/disable SENET (Squeeze-and-Excitation) layer
-    "senet_squeeze_funcs": ["mean", "max"],  # Squeeze functions to combine
+    "senet_squeeze_funcs": ["mean", "max", "min"],  # Squeeze functions to combine
     "senet_reduction_ratio": 3,  # Reduction ratio for excitation bottleneck
     "senet_activation": "tanh",  # Options: sigmoid, tanh, relu, softmax
     
@@ -83,15 +83,15 @@ CONFIG: ConfigType = {
     "use_batch_norm": True,
     
     # === Training ===
-    "lr": 1e-4,  # Lower initial LR for better convergence
+    "lr": 1e-3,  # Lower initial LR for better convergence
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
     "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
     "epochs": 50,
-    "lr_warmup_epoch_ratio": 0.2,
+    "lr_warmup_epoch_ratio": 0.25,
     "early_stopping_patience": 50,
     "use_tensorboard": True,
     "tensorboard_logdir": "./runs",
-    "tensorboard_log_interval": 200,  # Log every N batches (reduces I/O overhead)
+    "tensorboard_log_interval": 1000,  # Log every N batches (reduces I/O overhead)
     
     # === Regularization ===
     "mlp_dropout": 0.1,
