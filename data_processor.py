@@ -57,10 +57,21 @@ CATEGORICAL_COLS = [
 # Feature Engineering Expressions
 # =============================================================================
 def get_time_feature_expressions() -> list[pl.Expr]:
-    """Returns Polars expressions for time-based feature extraction."""
+    """Returns Polars expressions for time-based feature extraction.
+    
+    The 'hour' column format is YYMMDDHH (e.g., 14102100 = 2014-10-21, hour 00).
+    """
     return [
+        # Extract year (positions 0-1, e.g., "14" -> 14)
+        pl.col("hour").str.slice(0, 2).cast(pl.UInt8).alias("year"),
+        # Extract month (positions 2-3, e.g., "10" -> 10)
+        pl.col("hour").str.slice(2, 2).cast(pl.UInt8).alias("month"),
+        # Extract day of month (positions 4-5, e.g., "21" -> 21)
+        pl.col("hour").str.slice(4, 2).cast(pl.UInt8).alias("day_of_month"),
+        # Extract hour of day (positions 6-7, e.g., "00" -> 0)
         pl.col("hour").str.slice(6, 2).cast(pl.UInt8).alias("hour_of_day"),
-        pl.col("hour").str.slice(4, 2).cast(pl.UInt8).alias("day_of_week"),
+        # Calculate actual day of week (0=Monday, 6=Sunday) by parsing as datetime
+        pl.col("hour").str.to_datetime("%y%m%d%H").dt.weekday().cast(pl.UInt8).alias("day_of_week"),
     ]
 
 
@@ -221,7 +232,7 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     lf_test = lf_test.with_columns(time_exprs)
     
     # Extended categorical columns including time features
-    cat_cols = CATEGORICAL_COLS + ['hour_of_day', 'day_of_week']
+    cat_cols = CATEGORICAL_COLS + ['year', 'month', 'day_of_month', 'hour_of_day', 'day_of_week']
     
     # Build vocabularies from training data
     vocab_sizes, feat_maps = build_vocabularies(
