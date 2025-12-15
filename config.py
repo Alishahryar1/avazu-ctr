@@ -89,7 +89,7 @@ CONFIG: ConfigType = {
     "epochs": 50,
     "lr_warmup_epoch_ratio": 0.25,
     "early_stopping_patience": 50,
-    "use_tensorboard": True,
+    "use_tensorboard": False,
     "tensorboard_logdir": "./runs",
     "tensorboard_log_interval": 1000,  # Log every N batches (reduces I/O overhead)
     
