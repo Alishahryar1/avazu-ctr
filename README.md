@@ -83,7 +83,7 @@ graph TD
 #### 1. Feature Gating (New standard)
 Inspired by Gated Linear Units, this layer applies a learned gate to suppress noisy features:
 $$y = x \odot \sigma(W x)$$
-This is computationally cheaper than Self-Attention ($O(N)$ vs $O(N^2)$) but highly effective for sparse data.
+This is computationally cheaper than Self-Attention (linear vs quadratic) but highly effective for sparse data.
 
 #### 2. DCNv2 (Deep Cross Network)
 Captures explicit feature interactions. We support **Low-Rank Decomposition** to reduce parameter count:
