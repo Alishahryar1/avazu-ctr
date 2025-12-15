@@ -24,6 +24,8 @@ class ConfigType(TypedDict):
     senet_squeeze_funcs: list[str]  # Options: 'mean', 'max' - can combine multiple
     senet_reduction_ratio: int
     senet_activation: str
+    use_feature_gating: bool  # Alternative to SENET (mutually exclusive)
+    feature_gating_activation: str  # Options: sigmoid, tanh, relu, etc.
     mlp_hidden_dims: list[int]
     mlp_activation: str
     use_layer_norm: bool
@@ -73,10 +75,13 @@ CONFIG: ConfigType = {
     "dcn_use_layernorm": False,  # LayerNorm for cross layer stability
     "dcn_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
-    "use_senet": True,  # Enable/disable SENET (Squeeze-and-Excitation) layer
+    "use_senet": False,  # Enable/disable SENET (Squeeze-and-Excitation) layer
     "senet_squeeze_funcs": ["mean", "max", "min"],  # Squeeze functions to combine
     "senet_reduction_ratio": 3,  # Reduction ratio for excitation bottleneck
     "senet_activation": "tanh",  # Options: sigmoid, tanh, relu, softmax
+    
+    "use_feature_gating": True,  # Alternative to SENET (mutually exclusive)
+    "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
     
     "mlp_hidden_dims": [1024, 512, 512],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
@@ -86,9 +91,9 @@ CONFIG: ConfigType = {
     "lr": 1e-3,  # Lower initial LR for better convergence
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
     "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
-    "epochs": 50,
+    "epochs": 2,
     "lr_warmup_epoch_ratio": 0.25,
-    "early_stopping_patience": 50,
+    "early_stopping_patience": 2,
     "use_tensorboard": False,
     "tensorboard_logdir": "./runs",
     "tensorboard_log_interval": 1000,  # Log every N batches (reduces I/O overhead)

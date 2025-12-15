@@ -13,7 +13,7 @@ import sys
 import torch
 import torch.nn as nn
 from config import CONFIG, ConfigType
-from model import GatedDCNModel, DCNv2, SENetLayer
+from model import GatedDCNModel, DCNv2, SENetLayer, FeatureGatingLayer
 
 
 def make_test_config(**overrides) -> ConfigType:
@@ -39,6 +39,8 @@ def make_test_config(**overrides) -> ConfigType:
         'senet_squeeze_funcs': ['mean'],
         'senet_reduction_ratio': 3,
         'senet_activation': 'sigmoid',
+        'use_feature_gating': False,
+        'feature_gating_activation': 'sigmoid',
         'mlp_hidden_dims': [32, 16],
         'mlp_activation': 'relu',
         'use_layer_norm': True,
@@ -371,6 +373,84 @@ class TestSENetLayer(unittest.TestCase):
             x = torch.randn(4, 80)
             out = senet(x)
             self.assertEqual(out.shape, x.shape, f"Failed for activation: {activation}")
+
+
+class TestFeatureGatingLayer(unittest.TestCase):
+    """Tests for FeatureGatingLayer."""
+    
+    def test_feature_gating_forward(self):
+        """Test Feature Gating forward pass."""
+        input_dim = 80
+        gating = FeatureGatingLayer(input_dim=input_dim, gating_activation='sigmoid')
+        x = torch.randn(4, input_dim)
+        out = gating(x)
+        self.assertEqual(out.shape, x.shape)
+    
+    def test_feature_gating_numerical_stability(self):
+        """Verify no NaN/Inf in Feature Gating output."""
+        gating = FeatureGatingLayer(input_dim=320, gating_activation='sigmoid')
+        for _ in range(10):
+            x = torch.randn(32, 320)
+            out = gating(x)
+            self.assertFalse(torch.isnan(out).any(), "NaN in output")
+            self.assertFalse(torch.isinf(out).any(), "Inf in output")
+    
+    def test_feature_gating_gradient_flow(self):
+        """Verify gradients flow through FeatureGatingLayer."""
+        gating = FeatureGatingLayer(input_dim=80, gating_activation='sigmoid')
+        x = torch.randn(4, 80, requires_grad=True)
+        out = gating(x)
+        loss = out.sum()
+        loss.backward()
+        
+        for name, param in gating.named_parameters():
+            self.assertIsNotNone(param.grad, f"No gradient for {name}")
+            self.assertFalse(torch.isnan(param.grad).any(), f"NaN gradient for {name}")
+    
+    def test_feature_gating_activations(self):
+        """Test Feature Gating with different activation functions."""
+        for activation in ['sigmoid', 'tanh', 'relu', 'gelu', 'silu']:
+            gating = FeatureGatingLayer(input_dim=80, gating_activation=activation)
+            x = torch.randn(4, 80)
+            out = gating(x)
+            self.assertEqual(out.shape, x.shape, f"Failed for activation: {activation}")
+
+
+class TestMutualExclusivity(unittest.TestCase):
+    """Tests for mutual exclusivity between SENET and Feature Gating."""
+    
+    def test_both_senet_and_feature_gating_raises_error(self):
+        """Verify that enabling both SENET and Feature Gating raises ValueError."""
+        config = make_test_config(use_senet=True, use_feature_gating=True)
+        with self.assertRaises(ValueError) as context:
+            GatedDCNModel({'f1': 100}, ['f1'], config)
+        self.assertIn("Cannot enable both SENET and Feature Gating", str(context.exception))
+    
+    def test_model_with_feature_gating_only(self):
+        """Test model with Feature Gating enabled and SENET disabled."""
+        config = make_test_config(use_senet=False, use_feature_gating=True)
+        model = GatedDCNModel({'f1': 100}, ['f1'], config)
+        x = torch.randint(0, 100, (4, 1))
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1))
+        self.assertTrue(hasattr(model, 'feature_gating'), "Model should have feature_gating layer")
+    
+    def test_model_with_neither_senet_nor_feature_gating(self):
+        """Test model with both SENET and Feature Gating disabled."""
+        config = make_test_config(use_senet=False, use_feature_gating=False)
+        model = GatedDCNModel({'f1': 100}, ['f1'], config)
+        x = torch.randint(0, 100, (4, 1))
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1))
+    
+    def test_model_with_senet_only(self):
+        """Test model with SENET enabled and Feature Gating disabled (default)."""
+        config = make_test_config(use_senet=True, use_feature_gating=False)
+        model = GatedDCNModel({'f1': 100}, ['f1'], config)
+        x = torch.randint(0, 100, (4, 1))
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1))
+        self.assertTrue(hasattr(model, 'senet'), "Model should have senet layer")
 
 
 def list_tests():

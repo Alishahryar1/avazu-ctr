@@ -3,16 +3,19 @@ import torch.nn as nn
 
 from config import ConfigType
 
-def get_senet_activation(name: str) -> nn.Module:
-    """Get activation function for SENET excitation layer by name."""
+def get_activation(name: str) -> nn.Module:
+    """Get activation function by name."""
     activations = {
-        "sigmoid": nn.Sigmoid(),
-        "tanh": nn.Tanh(),
         "relu": nn.ReLU(),
+        "gelu": nn.GELU(),
+        "silu": nn.SiLU(),
+        "leaky_relu": nn.LeakyReLU(0.1),
+        "tanh": nn.Tanh(),
+        "sigmoid": nn.Sigmoid(),
         "softmax": nn.Softmax(dim=-1),
     }
     if name not in activations:
-        raise ValueError(f"Unknown SENET activation: {name}. Choose from {list(activations.keys())}")
+        raise ValueError(f"Unknown activation: {name}. Choose from {list(activations.keys())}")
     return activations[name]
 
 
@@ -68,7 +71,7 @@ class SENetLayer(nn.Module):
             nn.Linear(squeeze_output_dim, reduced_dim, bias=False),
             nn.ReLU(),
             nn.Linear(reduced_dim, num_fields, bias=False),
-            get_senet_activation(excitation_activation)
+            get_activation(excitation_activation)
         )
     
     def forward(self, x):
@@ -98,6 +101,28 @@ class SENetLayer(nn.Module):
         
         # Flatten back to [Batch, Num_Fields * Embed_Dim]
         return x_reweighted.view(batch_size, -1)
+
+
+class FeatureGatingLayer(nn.Module):
+    """
+    The 'Fast' implementation of the Gated Attention paper.
+    Instead of O(N^2) Self-Attention, we use O(N) Element-wise Gating.
+    It learns to suppress noise (sparsity) and adds non-linearity.
+    """
+    def __init__(self, input_dim, gating_activation: str = "sigmoid"):
+        super().__init__()
+        self.gate_linear = nn.Linear(input_dim, input_dim)
+        self.activation = get_activation(gating_activation)
+
+    def forward(self, x):
+        # x shape: [Batch, Num_Features * Embed_Dim]
+        
+        # Calculate Gate Score
+        gate_score = self.activation(self.gate_linear(x))
+        
+        # Apply Gate
+        return x * gate_score
+
 
 class DCNv2(nn.Module):
     """
@@ -163,19 +188,6 @@ class DCNv2(nn.Module):
             
         return xi
 
-def get_activation(name: str) -> nn.Module:
-    """Get activation function by name."""
-    activations = {
-        "relu": nn.ReLU(),
-        "gelu": nn.GELU(),
-        "silu": nn.SiLU(),
-        "leaky_relu": nn.LeakyReLU(0.1),
-        "tanh": nn.Tanh(),
-    }
-    if name not in activations:
-        raise ValueError(f"Unknown activation: {name}. Choose from {list(activations.keys())}")
-    return activations[name]
-
 
 class GatedDCNModel(nn.Module):
     """
@@ -200,14 +212,24 @@ class GatedDCNModel(nn.Module):
         senet_squeeze_funcs = config['senet_squeeze_funcs']
         senet_reduction_ratio = config['senet_reduction_ratio']
         senet_activation = config['senet_activation']
+        use_feature_gating = config['use_feature_gating']
+        feature_gating_activation = config['feature_gating_activation']
         mlp_hidden_dims = config['mlp_hidden_dims']
         mlp_dropout = config['mlp_dropout']
         use_layer_norm = config['use_layer_norm']
         mlp_activation = config['mlp_activation']
         
+        # Validate mutual exclusivity
+        if use_senet and use_feature_gating:
+            raise ValueError(
+                "Cannot enable both SENET and Feature Gating. "
+                "Set either 'use_senet' or 'use_feature_gating' to False."
+            )
+        
         self.use_layer_norm = use_layer_norm
         self.use_dcn = use_dcn
         self.use_senet = use_senet
+        self.use_feature_gating = use_feature_gating
         self.num_fields = len(feature_names)
         self.embedding_dim = embedding_dim
 
@@ -233,6 +255,13 @@ class GatedDCNModel(nn.Module):
                 squeeze_funcs=senet_squeeze_funcs,
                 reduction_ratio=senet_reduction_ratio,
                 excitation_activation=senet_activation
+            )
+
+        # 2b. Feature Gating Layer - Optional (alternative to SENET)
+        if use_feature_gating:
+            self.feature_gating = FeatureGatingLayer(
+                input_dim=total_dim,
+                gating_activation=feature_gating_activation
             )
 
         # 3. DCNv2 - Optional (supports low-rank decomposition)
@@ -279,6 +308,10 @@ class GatedDCNModel(nn.Module):
         # Apply SENET (Feature Importance Reweighting) - Optional
         if self.use_senet:
             dnn_input = self.senet(dnn_input)
+
+        # Apply Feature Gating - Optional (alternative to SENET)
+        if self.use_feature_gating:
+            dnn_input = self.feature_gating(dnn_input)
 
         # Apply Cross Network (Interactions) - Optional
         if self.use_dcn:
