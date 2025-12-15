@@ -93,14 +93,18 @@ def process_data_polars():
     # --- 3. Transformation Function ---
     def map_and_convert(df_lazy, is_test=False):
         # Select only necessary columns to save RAM
-        cols_to_select = cat_cols + (['id'] if is_test else ['click'])
+        # Include 'hour' for temporal splitting (train only)
+        cols_to_select = cat_cols + (['id'] if is_test else ['click', 'hour'])
         
-        # Materialize the dataframe now. 
-        # With 30GB RAM, we can load the full dataset (subset of columns) into memory.
-        df = df_lazy.select(cols_to_select).collect()
+        # Materialize the dataframe using streaming mode.
+        # streaming=True processes data in batches, reducing peak memory from ~10GB to ~4GB.
+        df = df_lazy.select(cols_to_select).collect(streaming=True)
         
         # Extract ID or Target before mapping
         extra_data = df['id'].to_numpy() if is_test else df['click'].to_numpy().astype(np.float32)
+        
+        # Extract raw hour for temporal splitting (train only)
+        hour_data = None if is_test else df['hour'].to_numpy()
         
         # Perform mapping in-place (or close to it)
         # We loop through columns to map them to integers
@@ -122,25 +126,26 @@ def process_data_polars():
         del df
         gc.collect()
         
-        return X_data, extra_data
+        return X_data, extra_data, hour_data
 
-    # Process Train
-    X_train, y_train = map_and_convert(q_train, is_test=False)
+    # Process Train (returns hour data for temporal splitting)
+    X_train, y_train, train_hours = map_and_convert(q_train, is_test=False)
     print(f"Train processed. Shape: {X_train.shape}")
     
-    # Process Test
-    X_test, test_ids = map_and_convert(q_test, is_test=True)
+    # Process Test (hour_data is None for test)
+    X_test, test_ids, _ = map_and_convert(q_test, is_test=True)
     print(f"Test processed. Shape: {X_test.shape}")
     
-    return X_train, y_train, X_test, test_ids, vocab_sizes, cat_cols
+    return X_train, y_train, train_hours, X_test, test_ids, vocab_sizes, cat_cols
 
-def save_processed_data(X_train, y_train, X_test, test_ids, vocab_sizes, feature_names):
-    """Saves processed data to disk."""
+def save_processed_data(X_train, y_train, train_hours, X_test, test_ids, vocab_sizes, feature_names):
+    """Saves processed data to disk including hour data for temporal splitting."""
     print(f"Saving processed data to {CONFIG['processed_path']}...")
     os.makedirs(CONFIG['processed_path'], exist_ok=True)
     
     np.save(os.path.join(CONFIG['processed_path'], "X_train.npy"), X_train)
     np.save(os.path.join(CONFIG['processed_path'], "y_train.npy"), y_train)
+    np.save(os.path.join(CONFIG['processed_path'], "train_hours.npy"), train_hours)  # For temporal split
     np.save(os.path.join(CONFIG['processed_path'], "X_test.npy"), X_test)
     np.save(os.path.join(CONFIG['processed_path'], "test_ids.npy"), test_ids)
     
@@ -156,6 +161,7 @@ def save_processed_data(X_train, y_train, X_test, test_ids, vocab_sizes, feature
 def load_processed_data(mode: str = 'train') -> tuple[
     np.ndarray | None,  # X_train
     np.ndarray | None,  # y_train
+    np.ndarray | None,  # train_hours (for temporal split)
     np.ndarray,         # X_test
     np.ndarray,         # test_ids
     dict,               # vocab_sizes
@@ -163,7 +169,7 @@ def load_processed_data(mode: str = 'train') -> tuple[
 ]:
     """
     Loads processed data from disk.
-    mode: 'train' (loads everything), 'inference' (loads only test data and metadata)
+    mode: 'train' (loads everything including hours for temporal split), 'inference' (loads only test data and metadata)
     """
     path = CONFIG['processed_path']
     print(f"Loading processed data from {path} for {mode}...")
@@ -177,14 +183,15 @@ def load_processed_data(mode: str = 'train') -> tuple[
         if mode == 'train':
             X_train = np.load(os.path.join(path, "X_train.npy"), allow_pickle=True)
             y_train = np.load(os.path.join(path, "y_train.npy"), allow_pickle=True)
-            X_test = np.load(os.path.join(path, "X_test.npy"), allow_pickle=True) # Optional if you only validate on split of train
+            train_hours = np.load(os.path.join(path, "train_hours.npy"), allow_pickle=True)
+            X_test = np.load(os.path.join(path, "X_test.npy"), allow_pickle=True)
             test_ids = np.load(os.path.join(path, "test_ids.npy"), allow_pickle=True)
-            return X_train, y_train, X_test, test_ids, vocab_sizes, feature_names
+            return X_train, y_train, train_hours, X_test, test_ids, vocab_sizes, feature_names
         
         elif mode == 'inference':
             X_test = np.load(os.path.join(path, "X_test.npy"), allow_pickle=True)
             test_ids = np.load(os.path.join(path, "test_ids.npy"), allow_pickle=True)
-            return None, None, X_test, test_ids, vocab_sizes, feature_names
+            return None, None, None, X_test, test_ids, vocab_sizes, feature_names
         else:
             raise ValueError(f"Invalid mode: {mode}. Must be 'train' or 'inference'.")
             
@@ -192,6 +199,6 @@ def load_processed_data(mode: str = 'train') -> tuple[
         raise FileNotFoundError(f"Processed data not found in {path}. Please run 'python data_processor.py' first.") from e
 
 if __name__ == "__main__":
-    X_train, y_train, X_test, test_ids, vocab_sizes, cat_cols = process_data_polars()
-    save_processed_data(X_train, y_train, X_test, test_ids, vocab_sizes, cat_cols)
+    X_train, y_train, train_hours, X_test, test_ids, vocab_sizes, cat_cols = process_data_polars()
+    save_processed_data(X_train, y_train, train_hours, X_test, test_ids, vocab_sizes, cat_cols)
 

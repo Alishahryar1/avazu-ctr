@@ -17,7 +17,7 @@ def inference():
     # 1. Load and Process Data (Need to get vocab_sizes and feature_names)
     print("Step 1: Loading Processed Data (for Inference)...")
     try:
-        _, _, X_test, test_ids, vocab_sizes, feature_names = load_processed_data(mode='inference')
+        _, _, _, X_test, test_ids, vocab_sizes, feature_names = load_processed_data(mode='inference')
     except FileNotFoundError:
         print("Processed data not found. Please run 'python data_processor.py' to generate it.")
         return

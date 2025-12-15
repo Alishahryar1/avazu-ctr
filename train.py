@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader
 from sklearn.metrics import roc_auc_score, log_loss
 from tqdm import tqdm
 import time
@@ -119,29 +119,39 @@ def train():
     print("=" * 80)
     print("\nStep 1: Loading Processed Data...")
     try:
-        X_train, y_train, X_test, test_ids, vocab_sizes, feature_names = load_processed_data(mode='train')
+        X_train, y_train, train_hours, X_test, test_ids, vocab_sizes, feature_names = load_processed_data(mode='train')
     except FileNotFoundError:
         print("Processed data not found. Please run 'python data_processor.py' to generate it.")
         return
 
     # Type assertions for train mode - these are always non-None
-    assert X_train is not None and y_train is not None
+    assert X_train is not None and y_train is not None and train_hours is not None
 
     print(f"Train samples: {len(X_train):,}")
     print(f"Positive rate: {y_train.mean():.4f}")
 
-    # 2. Train/Validation Split
-    print("\nStep 2: Creating Train/Validation Split...")
-    full_dataset = AvazuDataset(X_train, y_train)
-
-    val_size = int(len(full_dataset) * CONFIG['validation_split'])
-    train_size = len(full_dataset) - val_size
-
-    train_dataset, val_dataset = random_split(
-        full_dataset,
-        [train_size, val_size],
-        generator=torch.Generator().manual_seed(CONFIG['seed'])
-    )
+    # 2. Temporal Train/Validation Split (prevents data leakage from future to past)
+    print("\nStep 2: Creating Temporal Train/Validation Split...")
+    
+    # Sort indices by hour to enable temporal split
+    # Hour format is YYMMDDHH (e.g., "14102100" for 2014-10-21 00:00)
+    sorted_indices = np.argsort(train_hours)
+    
+    # Calculate split point: use last N% of data (chronologically) for validation
+    val_size = int(len(sorted_indices) * CONFIG['validation_split'])
+    train_size = len(sorted_indices) - val_size
+    
+    train_indices = sorted_indices[:train_size]
+    val_indices = sorted_indices[train_size:]
+    
+    # Get the hour boundary for logging
+    train_max_hour = train_hours[train_indices[-1]]
+    val_min_hour = train_hours[val_indices[0]]
+    print(f"Temporal split: Train ends at hour {train_max_hour}, Val starts at hour {val_min_hour}")
+    
+    # Create datasets using the temporal indices
+    train_dataset = AvazuDataset(X_train[train_indices], y_train[train_indices])
+    val_dataset = AvazuDataset(X_train[val_indices], y_train[val_indices])
 
     print(f"Training samples: {len(train_dataset):,}")
     print(f"Validation samples: {len(val_dataset):,}")
@@ -149,7 +159,7 @@ def train():
     train_loader = DataLoader(
         train_dataset,
         batch_size=CONFIG['batch_size'],
-        shuffle=True,
+        shuffle=True,  # Shuffle within training set is fine
         num_workers=CONFIG['num_workers'],
         pin_memory=True
     )
@@ -163,7 +173,7 @@ def train():
     )
 
     # Free memory
-    del X_train, y_train, X_test, full_dataset
+    del X_train, y_train, train_hours, X_test, train_indices, val_indices
     gc.collect()
 
     # 3. Model Initialization
@@ -205,19 +215,21 @@ def train():
     print(f"Other parameters: {sum(p.numel() for p in other_params):,}")
     
     # Adagrad for embeddings (commonly used for sparse/categorical features)
+    # Separate weight decay for embeddings (usually lower or zero)
     embedding_optimizer = optim.Adagrad(
         embedding_params,
-        lr=CONFIG['embedding_lr']
+        lr=CONFIG['embedding_lr'],
+        weight_decay=CONFIG['embedding_weight_decay']
     )
-    print(f"Embedding optimizer: Adagrad (lr={CONFIG['embedding_lr']})")
+    print(f"Embedding optimizer: Adagrad (lr={CONFIG['embedding_lr']}, weight_decay={CONFIG['embedding_weight_decay']})")
     
-    # AdamW for other parameters
+    # AdamW for other parameters (MLP, DCN, etc.)
     other_optimizer = optim.AdamW(
         other_params,
         lr=CONFIG['lr'],
         weight_decay=CONFIG['weight_decay']
     )
-    print(f"Other optimizer: AdamW (lr={CONFIG['lr']})")
+    print(f"Other optimizer: AdamW (lr={CONFIG['lr']}, weight_decay={CONFIG['weight_decay']})")
 
     # Learning rate scheduler (only for non-embedding params)
     steps_per_epoch = len(train_loader)
