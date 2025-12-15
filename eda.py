@@ -240,8 +240,12 @@ def analyze_count_features(lf: pl.LazyFrame, count_cols: list[str]) -> dict:
     
     print(f"Based on aggregated percentiles across all count features:")
     print(f"  Suggested boundaries: {suggested_bins}")
-    print(f"\nExample Polars expression:")
-    print("""
+    p25 = round_nice(all_p25) if all_p25 > 2 else 5
+    p50 = round_nice(all_p50) if all_p50 > 5 else 10
+    p75 = round_nice(all_p75)
+    p90 = round_nice(all_p90)
+    
+    print(f"""
     pl.when(pl.col(count_col) == 0).then(pl.lit("0"))
     .when(pl.col(count_col) == 1).then(pl.lit("1"))
     .when(pl.col(count_col) <= {p25}).then(pl.lit("2-{p25}"))
@@ -249,12 +253,7 @@ def analyze_count_features(lf: pl.LazyFrame, count_cols: list[str]) -> dict:
     .when(pl.col(count_col) <= {p75}).then(pl.lit("{p50+1}-{p75}"))
     .when(pl.col(count_col) <= {p90}).then(pl.lit("{p75+1}-{p90}"))
     .otherwise(pl.lit("{p90}+"))
-    """.format(
-        p25=round_nice(all_p25) if all_p25 > 2 else 5,
-        p50=round_nice(all_p50) if all_p50 > 5 else 10,
-        p75=round_nice(all_p75),
-        p90=round_nice(all_p90),
-    ))
+    """)
     
     return all_stats
 
