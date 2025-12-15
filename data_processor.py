@@ -72,10 +72,9 @@ def get_time_feature_expressions() -> list[pl.Expr]:
     """Returns Polars expressions for time-based feature extraction.
     
     The 'hour' column format is YYMMDDHH (e.g., 14102100 = 2014-10-21, hour 00).
+    Note: 'year' is not extracted as dataset is entirely from 2014 (zero variance).
     """
     return [
-        # Extract year (positions 0-1, e.g., "14" -> 14)
-        pl.col("hour").str.slice(0, 2).cast(pl.UInt8).alias("year"),
         # Extract month (positions 2-3, e.g., "10" -> 10)
         pl.col("hour").str.slice(2, 2).cast(pl.UInt8).alias("month"),
         # Extract day of month (positions 4-5, e.g., "21" -> 21)
@@ -124,7 +123,8 @@ def get_interaction_feature_expressions() -> list[pl.Expr]:
 COUNT_FEATURE_COLS = ["device_ip", "device_id", "C14", "C17", "C21", "user_proxy"]
 
 # Columns to compute cumulative count features for (captures user "maturity")
-CUMCOUNT_COLS = ["device_ip", "user_proxy", "device_id"]
+# Note: user_proxy excluded as it's redundant with user_proxy_prev_clicks
+CUMCOUNT_COLS = ["device_ip", "device_id"]
 
 
 def get_cumulative_count_expressions(cols: list[str]) -> list[pl.Expr]:
@@ -673,7 +673,7 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     cumcount_bin_cols = [f"{col}_cumcount_bin" for col in CUMCOUNT_COLS]
     cat_cols = (
         CATEGORICAL_COLS 
-        + ['year', 'month', 'day_of_month', 'hour_of_day', 'day_of_week'] 
+        + ['month', 'day_of_month', 'hour_of_day', 'day_of_week'] 
         + count_bin_cols 
         + cumcount_bin_cols 
         + ['user_hourly_impressions_bin']

@@ -1033,8 +1033,7 @@ class TestDataProcessorTimeFeatures(unittest.TestCase):
         time_exprs = get_time_feature_expressions()
         result = test_data.lazy().with_columns(time_exprs).collect()
         
-        # Verify extracted values
-        self.assertEqual(result['year'].to_list(), [14, 14, 14])
+        # Verify extracted values (year removed as it has zero variance)
         self.assertEqual(result['month'].to_list(), [10, 10, 11])
         self.assertEqual(result['day_of_month'].to_list(), [21, 22, 1])
         self.assertEqual(result['hour_of_day'].to_list(), [0, 23, 5])
@@ -1067,7 +1066,7 @@ class TestDataProcessorTimeFeatures(unittest.TestCase):
         time_exprs = get_time_feature_expressions()
         result = test_data.lazy().with_columns(time_exprs).collect()
         
-        self.assertEqual(result['year'].dtype, pl.UInt8)
+        # year removed as it has zero variance in the dataset
         self.assertEqual(result['month'].dtype, pl.UInt8)
         self.assertEqual(result['day_of_month'].dtype, pl.UInt8)
         self.assertEqual(result['hour_of_day'].dtype, pl.UInt8)
