@@ -55,6 +55,7 @@ def make_test_config(**overrides) -> ConfigType:
         'feature_gating_low_rank': None,
         'mlp_hidden_dims': [32, 16],
         'mlp_activation': 'relu',
+        'mlp_use_skip_connections': False,
         'use_layer_norm': True,
         
         # Training
@@ -122,13 +123,19 @@ class TestModelStructure(unittest.TestCase):
         MLP typically contains Linear, BatchNorm/ReLU, Dropout layers.
         The exact structure depends on use_layer_norm config.
         """
-        # Just verify MLP has more than 0 layers and ends with Linear(*, 1)
-        self.assertGreater(len(self.model.mlp), 0, "MLP should have layers")
+        # Import ResidualMLP to check type
+        from model import ResidualMLP
         
-        # Check final layer outputs single value
-        final_layer = self.model.mlp[-1]
-        self.assertIsInstance(final_layer, nn.Linear, "Final layer should be Linear")
-        self.assertEqual(final_layer.out_features, 1, "Final layer should output 1")
+        # Check MLP is a ResidualMLP
+        self.assertIsInstance(self.model.mlp, ResidualMLP, "MLP should be ResidualMLP")
+        
+        # Check it has layers (at least one hidden layer)
+        self.assertGreater(len(self.model.mlp.layers), 0, "MLP should have layers")
+        
+        # Check final output layer exists and outputs single value
+        output_layer = self.model.mlp.output_layer
+        self.assertIsInstance(output_layer, nn.Linear, "Output layer should be Linear")
+        self.assertEqual(output_layer.out_features, 1, "Output layer should output 1")
     
     def test_model_forward_pass(self):
         """Verify model can perform a forward pass."""

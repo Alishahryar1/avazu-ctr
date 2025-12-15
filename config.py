@@ -41,6 +41,7 @@ class ConfigType(TypedDict):
     feature_gating_low_rank: int | None  # None = full-rank, int = low-rank dimension
     mlp_hidden_dims: list[int]
     mlp_activation: str
+    mlp_use_skip_connections: bool  # Add residual/skip connections to MLP layers
     use_layer_norm: bool
     
     # Training
@@ -82,8 +83,8 @@ CONFIG: ConfigType = {
     "validation_split": 0.001,  # Hold out 1% for validation
     
     # === Model Architecture - Embeddings ===
-    "embedding_dim": 64,  # Default/fallback embedding dimension
-    "use_variable_embeddings": True,  # Enable cardinality-based embedding dimensions
+    "embedding_dim": 128,  # Default/fallback embedding dimension
+    "use_variable_embeddings": False,  # Enable cardinality-based embedding dimensions
     # Cardinality rules: (max_vocab_size, embedding_dim) - sorted ascending
     # e.g., vocab <= 10 -> dim 8, vocab <= 100 -> dim 16, etc.
     "embedding_dim_rules": [
@@ -101,17 +102,18 @@ CONFIG: ConfigType = {
     "dcn_use_layernorm": False,  # LayerNorm for cross layer stability
     "dcn_low_rank": 128,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
-    "use_senet": False,  # Enable/disable SENET (Squeeze-and-Excitation) layer
+    "use_senet": True,  # Enable/disable SENET (Squeeze-and-Excitation) layer
     "senet_squeeze_funcs": ["mean", "max", "min"],  # Squeeze functions to combine
-    "senet_reduction_ratio": 3,  # Reduction ratio for excitation bottleneck
+    "senet_reduction_ratio": 4,  # Reduction ratio for excitation bottleneck
     "senet_activation": "tanh",  # Options: sigmoid, tanh, relu, softmax
     
     "use_feature_gating": False,  # Alternative to SENET (mutually exclusive)
-    "feature_gating_activation": "gelu",  # Options: sigmoid, tanh, relu, etc.
-    "feature_gating_low_rank": None,  # None = full-rank, int (e.g. 32) = low-rank decomposition
+    "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
+    "feature_gating_low_rank": 128,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
-    "mlp_hidden_dims": [8192, 4096, 2048, 1024, 512],  # Deeper network
+    "mlp_hidden_dims": [2048, 1024, 512],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
+    "mlp_use_skip_connections": False,  # Add residual/skip connections to MLP
     "use_layer_norm": True,
     
     # === Training ===
@@ -126,7 +128,7 @@ CONFIG: ConfigType = {
     
     # === Regularization ===
     "lr_warmup_epoch_ratio": 0.25,
-    "mlp_dropout": 0.1,
+    "mlp_dropout": 0.0,
     "grad_clip": 10.0,
     "weight_decay": 1e-5,  # L2 regularization for MLP/DCN params
     "embedding_weight_decay": 0.0,  # L2 regularization for embeddings (usually 0)
