@@ -15,12 +15,6 @@ import gc
 from pathlib import Path
 from config import CONFIG
 import pickle
-import os
-
-# Configure Polars for maximum performance
-# Use all available CPU cores for parallel processing
-pl.Config.set_streaming_chunk_size(500_000)  # Optimize chunk size for streaming
-os.environ["POLARS_MAX_THREADS"] = str(os.cpu_count() or 24)
 
 
 # =============================================================================
