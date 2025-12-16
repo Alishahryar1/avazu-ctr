@@ -69,6 +69,10 @@ def make_test_config(**overrides) -> ConfigType:
         'tensorboard_logdir': './runs',
         'tensorboard_log_interval': 1000,
         
+        # Automatic Mixed Precision (AMP)
+        'auto_amp': False,  # Disabled for tests (CPU)
+        'amp_dtype': 'float16',
+        
         # Regularization
         'mlp_dropout': 0.1,
         'grad_clip': 1.0,
