@@ -526,16 +526,21 @@ def transform_dataframe(
     lf: pl.LazyFrame,
     feat_maps: dict,
     cat_cols: list[str],
-    is_test: bool = False
+    is_test: bool = False,
+    chunk_size: int = 1_000_000
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """
-    Transform a lazy frame into numpy arrays using vectorized operations.
+    Transform a lazy frame into numpy arrays using chunked processing to avoid OOM.
+    
+    Uses streaming collection to process data in chunks, significantly reducing
+    peak memory usage compared to collecting the entire dataset at once.
     
     Args:
         lf: Input LazyFrame
         feat_maps: Feature value to ID mappings
         cat_cols: List of categorical column names
         is_test: Whether this is test data
+        chunk_size: Number of rows to process at once (default 1M)
         
     Returns:
         X: Feature matrix (n_samples, n_features)
@@ -551,28 +556,61 @@ def transform_dataframe(
     else:
         select_cols = ['click', 'hour'] + cat_cols
     
-    # Apply all transformations in a single expression chain
-    df = (
+    # Apply all transformations and add row index for chunking
+    transformed_lf = (
         lf
         .select(select_cols)
         .with_columns(mapping_exprs)
-        .collect()
+        .with_row_index("_row_idx")
     )
     
-    # Extract arrays
+    # First pass: get total row count efficiently
+    total_rows = transformed_lf.select(pl.len()).collect().item()
+    print(f"  Total rows to process: {total_rows:,} in chunks of {chunk_size:,}")
+    
+    # Pre-allocate output arrays to avoid repeated concatenation
+    X = np.empty((total_rows, len(cat_cols)), dtype=np.int32)
+    
     if is_test:
-        extra = df['id'].to_numpy()
+        extra = np.empty(total_rows, dtype=object)
         hour_data = None
     else:
-        extra = df['click'].to_numpy().astype(np.float32)
-        hour_data = df['hour'].to_numpy()
+        extra = np.empty(total_rows, dtype=np.float32)
+        hour_data = np.empty(total_rows, dtype=object)
     
-    # Extract feature matrix (all mapped categorical columns)
-    X = df.select(cat_cols).to_numpy().astype(np.int32)
-    
-    # Explicit cleanup
-    del df
-    gc.collect()
+    # Process in chunks
+    n_chunks = (total_rows + chunk_size - 1) // chunk_size
+    for chunk_idx in range(n_chunks):
+        start_idx = chunk_idx * chunk_size
+        end_idx = min(start_idx + chunk_size, total_rows)
+        
+        # Filter to current chunk and collect
+        chunk_df = (
+            transformed_lf
+            .filter(
+                (pl.col("_row_idx") >= start_idx) & 
+                (pl.col("_row_idx") < end_idx)
+            )
+            .drop("_row_idx")
+            .collect()
+        )
+        
+        # Extract data from chunk
+        if is_test:
+            extra[start_idx:end_idx] = chunk_df['id'].to_numpy()
+        else:
+            extra[start_idx:end_idx] = chunk_df['click'].to_numpy().astype(np.float32)
+            hour_data[start_idx:end_idx] = chunk_df['hour'].to_numpy()
+        
+        # Extract features - use struct to avoid memory spike from to_numpy on many columns
+        X[start_idx:end_idx, :] = chunk_df.select(cat_cols).to_numpy().astype(np.int32)
+        
+        # Explicit cleanup after each chunk
+        del chunk_df
+        gc.collect()
+        
+        if (chunk_idx + 1) % 5 == 0 or chunk_idx == n_chunks - 1:
+            print(f"  Processed chunk {chunk_idx + 1}/{n_chunks}")
     
     return X, extra, hour_data
 
