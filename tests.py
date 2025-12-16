@@ -1765,27 +1765,34 @@ class TestHourlyImpressionsBinning(unittest.TestCase):
     """Tests for hourly impressions binning."""
     
     def test_bin_hourly_impressions_basic(self):
-        """Test basic hourly impressions binning."""
+        """Test basic hourly impressions binning.
+        
+        EDA-optimized bins:
+        - 'single' (1): Most common
+        - '2' (2): Returning within hour
+        - '3-4' (3-4): Up to P90
+        - '5+': High-frequency users
+        """
         import polars as pl
         from data_processor import bin_hourly_impressions
         
         test_data = pl.DataFrame({
-            'user_hourly_impressions': [1, 2, 5, 15, 75]
+            'user_hourly_impressions': [1, 2, 3, 4, 5]
         })
         
         bin_expr = bin_hourly_impressions()
         result = test_data.with_columns(bin_expr)
         
-        expected = ['single', '2-3', '4-10', '11-50', '50+']
+        expected = ['single', '2', '3-4', '3-4', '5+']
         self.assertEqual(result['user_hourly_impressions_bin'].to_list(), expected)
     
     def test_bin_hourly_impressions_boundaries(self):
-        """Test binning at exact boundaries."""
+        """Test binning at exact EDA-optimized boundaries."""
         import polars as pl
         from data_processor import bin_hourly_impressions
         
         test_data = pl.DataFrame({
-            'user_hourly_impressions': [1, 3, 4, 10, 11, 50, 51]
+            'user_hourly_impressions': [1, 2, 3, 4, 5, 10]
         })
         
         bin_expr = bin_hourly_impressions()
@@ -1793,12 +1800,11 @@ class TestHourlyImpressionsBinning(unittest.TestCase):
         
         bins = result['user_hourly_impressions_bin'].to_list()
         self.assertEqual(bins[0], 'single')  # 1
-        self.assertEqual(bins[1], '2-3')     # 3
-        self.assertEqual(bins[2], '4-10')    # 4
-        self.assertEqual(bins[3], '4-10')    # 10
-        self.assertEqual(bins[4], '11-50')   # 11
-        self.assertEqual(bins[5], '11-50')   # 50
-        self.assertEqual(bins[6], '50+')     # 51
+        self.assertEqual(bins[1], '2')       # 2
+        self.assertEqual(bins[2], '3-4')     # 3
+        self.assertEqual(bins[3], '3-4')     # 4
+        self.assertEqual(bins[4], '5+')      # 5
+        self.assertEqual(bins[5], '5+')      # 10
     
     def test_bin_hourly_impressions_output_type(self):
         """Verify binned feature is string type."""
@@ -1884,12 +1890,20 @@ class TestTimeDeltaBinning(unittest.TestCase):
     """Tests for time delta binning."""
     
     def test_bin_time_delta_basic(self):
-        """Test basic time delta binning."""
+        """Test basic time delta binning.
+        
+        EDA-optimized bins:
+        - 'first': First click (0 hours)
+        - '1-4h': Short interval (<=4)
+        - '5-19h': Medium interval (<=19)
+        - '20-53h': Long interval (<=53)
+        - '>53h': Re-engagement
+        """
         import polars as pl
         from data_processor import bin_time_delta_features
         
         test_data = pl.DataFrame({
-            'hours_since_last_click': [0, 3, 15, 100, 200]
+            'hours_since_last_click': [0, 3, 15, 50, 100]
         })
         
         bin_expr = bin_time_delta_features()
@@ -1897,18 +1911,18 @@ class TestTimeDeltaBinning(unittest.TestCase):
         
         bins = result['hours_since_last_click_bin'].to_list()
         self.assertEqual(bins[0], 'first')   # 0
-        self.assertEqual(bins[1], '1-6h')    # 3
-        self.assertEqual(bins[2], '6-24h')   # 15
-        self.assertEqual(bins[3], '1-7d')    # 100 (< 168)
-        self.assertEqual(bins[4], '>7d')     # 200 (> 168)
+        self.assertEqual(bins[1], '1-4h')    # 3 (<=4)
+        self.assertEqual(bins[2], '5-19h')   # 15 (<=19)
+        self.assertEqual(bins[3], '20-53h')  # 50 (<=53)
+        self.assertEqual(bins[4], '>53h')    # 100 (>53)
     
     def test_bin_time_delta_boundaries(self):
-        """Test binning at exact boundaries."""
+        """Test binning at exact EDA-optimized boundaries."""
         import polars as pl
         from data_processor import bin_time_delta_features
         
         test_data = pl.DataFrame({
-            'hours_since_last_click': [0, 1, 5, 6, 23, 24, 167, 168]
+            'hours_since_last_click': [0, 4, 5, 19, 20, 53, 54]
         })
         
         bin_expr = bin_time_delta_features()
@@ -1916,13 +1930,12 @@ class TestTimeDeltaBinning(unittest.TestCase):
         
         bins = result['hours_since_last_click_bin'].to_list()
         self.assertEqual(bins[0], 'first')   # 0
-        self.assertEqual(bins[1], '1-6h')    # 1
-        self.assertEqual(bins[2], '1-6h')    # 5
-        self.assertEqual(bins[3], '6-24h')   # 6
-        self.assertEqual(bins[4], '6-24h')   # 23
-        self.assertEqual(bins[5], '1-7d')    # 24
-        self.assertEqual(bins[6], '1-7d')    # 167
-        self.assertEqual(bins[7], '>7d')     # 168
+        self.assertEqual(bins[1], '1-4h')    # 4 (boundary)
+        self.assertEqual(bins[2], '5-19h')   # 5 (boundary)
+        self.assertEqual(bins[3], '5-19h')   # 19 (boundary)
+        self.assertEqual(bins[4], '20-53h')  # 20 (boundary)
+        self.assertEqual(bins[5], '20-53h')  # 53 (boundary)
+        self.assertEqual(bins[6], '>53h')    # 54
 
 
 # =============================================================================
@@ -1988,12 +2001,20 @@ class TestPreviousClicksBinning(unittest.TestCase):
     """Tests for previous clicks binning."""
     
     def test_bin_prev_clicks_basic(self):
-        """Test basic previous clicks binning."""
+        """Test basic previous clicks binning.
+        
+        EDA-optimized bins:
+        - 'new' (0): First-time user
+        - 'returning' (1-7): Up to P50
+        - 'regular' (8-32): P50 to P75
+        - 'heavy' (33-224): P75 to P90
+        - 'power' (>224): Top 10% most active
+        """
         import polars as pl
         from data_processor import bin_prev_clicks
         
         test_data = pl.DataFrame({
-            'user_proxy_prev_clicks': [0, 3, 15, 75, 150]
+            'user_proxy_prev_clicks': [0, 3, 15, 75, 250]
         })
         
         bin_expr = bin_prev_clicks('user_proxy')
@@ -2001,18 +2022,18 @@ class TestPreviousClicksBinning(unittest.TestCase):
         
         bins = result['user_proxy_prev_clicks_bin'].to_list()
         self.assertEqual(bins[0], 'new')       # 0
-        self.assertEqual(bins[1], 'returning') # 3
-        self.assertEqual(bins[2], 'regular')   # 15
-        self.assertEqual(bins[3], 'heavy')     # 75
-        self.assertEqual(bins[4], 'power')     # 150
+        self.assertEqual(bins[1], 'returning') # 3 (<=7)
+        self.assertEqual(bins[2], 'regular')   # 15 (<=32)
+        self.assertEqual(bins[3], 'heavy')     # 75 (<=224)
+        self.assertEqual(bins[4], 'power')     # 250 (>224)
     
     def test_bin_prev_clicks_boundaries(self):
-        """Test binning at exact boundaries."""
+        """Test binning at exact EDA-optimized boundaries."""
         import polars as pl
         from data_processor import bin_prev_clicks
         
         test_data = pl.DataFrame({
-            'user_proxy_prev_clicks': [0, 5, 6, 20, 21, 100, 101]
+            'user_proxy_prev_clicks': [0, 7, 8, 32, 33, 224, 225]
         })
         
         bin_expr = bin_prev_clicks('user_proxy')
@@ -2020,12 +2041,12 @@ class TestPreviousClicksBinning(unittest.TestCase):
         
         bins = result['user_proxy_prev_clicks_bin'].to_list()
         self.assertEqual(bins[0], 'new')       # 0
-        self.assertEqual(bins[1], 'returning') # 5
-        self.assertEqual(bins[2], 'regular')   # 6
-        self.assertEqual(bins[3], 'regular')   # 20
-        self.assertEqual(bins[4], 'heavy')     # 21
-        self.assertEqual(bins[5], 'heavy')     # 100
-        self.assertEqual(bins[6], 'power')     # 101
+        self.assertEqual(bins[1], 'returning') # 7 (boundary)
+        self.assertEqual(bins[2], 'regular')   # 8 (boundary)
+        self.assertEqual(bins[3], 'regular')   # 32 (boundary)
+        self.assertEqual(bins[4], 'heavy')     # 33 (boundary)
+        self.assertEqual(bins[5], 'heavy')     # 224 (boundary)
+        self.assertEqual(bins[6], 'power')     # 225
     
     def test_bin_prev_clicks_output_type(self):
         """Verify binned feature is string type."""

@@ -14,6 +14,12 @@ import gc
 from pathlib import Path
 from config import CONFIG
 import pickle
+import os
+
+# Configure Polars for maximum performance
+# Use all available CPU cores for parallel processing
+pl.Config.set_streaming_chunk_size(500_000)  # Optimize chunk size for streaming
+os.environ["POLARS_MAX_THREADS"] = str(os.cpu_count() or 24)
 
 
 # =============================================================================
@@ -309,9 +315,7 @@ def compute_count_features_from_train(
     """
     Compute count/frequency features based on training data statistics.
     
-    For each column in count_cols, adds a new column '{col}_count' representing
-    how many times that value appears in the training set. This helps the model
-    distinguish between rare and frequent values.
+    OPTIMIZED: Uses parallel collection for all count columns at once.
     
     Args:
         lf_train: Training LazyFrame
@@ -321,37 +325,34 @@ def compute_count_features_from_train(
     Returns:
         Updated train and test LazyFrames with count features
     """
-    print(f"Computing count features for: {count_cols}")
+    print(f"Computing count features for: {count_cols} (parallel)")
     
-    # Compute counts from training data only (to avoid leakage)
-    for col in count_cols:
-        # Get value counts from training data
-        count_df = (
-            lf_train
-            .select(pl.col(col).cast(pl.String))
-            .group_by(col)
-            .len()
-            .rename({"len": f"{col}_count"})
-            .collect()
-            .lazy()
-        )
-        
-        # Join counts to both train and test
-        # Use left join so missing values get null (which we'll fill with 0)
-        lf_train = (
-            lf_train
-            .join(count_df, on=col, how="left")
-            .with_columns(
-                pl.col(f"{col}_count").fill_null(0).cast(pl.UInt32)
-            )
-        )
-        lf_test = (
-            lf_test
-            .join(count_df, on=col, how="left")
-            .with_columns(
-                pl.col(f"{col}_count").fill_null(0).cast(pl.UInt32)
-            )
-        )
+    # Build all count queries at once for parallel execution
+    count_queries = [
+        lf_train
+        .select(pl.col(col).cast(pl.String))
+        .group_by(col)
+        .len()
+        .rename({"len": f"{col}_count"})
+        for col in count_cols
+    ]
+    
+    # Execute all count queries in parallel
+    count_dfs = pl.collect_all(count_queries)
+    
+    # Apply all joins in a batched manner
+    for col, count_df in zip(count_cols, count_dfs):
+        count_lf = count_df.lazy()
+        lf_train = lf_train.join(count_lf, on=col, how="left")
+        lf_test = lf_test.join(count_lf, on=col, how="left")
+    
+    # Apply all fill_null operations in a single with_columns call
+    fill_exprs = [
+        pl.col(f"{col}_count").fill_null(0).cast(pl.UInt32)
+        for col in count_cols
+    ]
+    lf_train = lf_train.with_columns(fill_exprs)
+    lf_test = lf_test.with_columns(fill_exprs)
     
     return lf_train, lf_test
 
@@ -461,35 +462,33 @@ def build_vocabularies(lf_train: pl.LazyFrame, cat_cols: list[str], min_freq: in
     """
     Build vocabularies using vectorized Polars operations.
     
+    OPTIMIZED: Uses parallel collection for all vocabulary queries.
+    
     Returns:
         vocab_sizes: dict mapping column names to vocabulary sizes
         feat_maps: dict mapping column names to value->id dictionaries
     """
-    print("Building vocabularies (vectorized)...")
+    print("Building vocabularies (parallel)...")
     
-    # Build all frequency counts in a single pass using unpivot + group_by
-    # This is more efficient than iterating column by column
-    freq_expressions = [
-        pl.col(col).cast(pl.String).value_counts(sort=True).alias(col)
+    # Build all vocabulary queries at once for parallel execution
+    vocab_queries = [
+        lf_train
+        .select(pl.col(col).cast(pl.String))
+        .group_by(col)
+        .len()
+        .filter(pl.col("len") >= min_freq)
+        .sort(col)  # Deterministic ordering
         for col in cat_cols
     ]
+    
+    # Execute all queries in parallel
+    vocab_dfs = pl.collect_all(vocab_queries)
     
     vocab_sizes = {}
     feat_maps = {}
     
-    # Collect frequencies for each column
-    # Using select + explode pattern for vectorized counting
-    for col in cat_cols:
-        counts = (
-            lf_train
-            .select(pl.col(col).cast(pl.String))
-            .group_by(col)
-            .len()
-            .filter(pl.col("len") >= min_freq)
-            .sort(col)  # Deterministic ordering
-            .collect()
-        )
-        
+    # Build mappings from collected results
+    for col, counts in zip(cat_cols, vocab_dfs):
         # Build mapping: value -> sequential ID (starting at 1, 0 = <UNK>)
         values = counts[col].to_list()
         mapping = {val: idx + 1 for idx, val in enumerate(values)}
@@ -585,95 +584,127 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     """
     Main data processing pipeline using Polars best practices.
     
+    OPTIMIZED: Minimizes materializations to only 2 required points:
+    1. Count features (train stats -> join to both)
+    2. Hourly features (train stats -> join to both)
+    
+    Everything else stays fully lazy until final collection.
+    
     Returns:
         X_train: Training feature matrix
-        y_train: Training labels
+        y_train: Training labels  
         train_hours: Hour strings for temporal splitting
         X_test: Test feature matrix
         test_ids: Test IDs
         vocab_sizes: Vocabulary sizes per column
         cat_cols: List of categorical column names
     """
-    print("Loading data with Polars...")
+    print("Loading data with Polars (optimized single-query pipeline)...")
     
     # Lazy load with explicit schema
     lf_train = pl.scan_csv(CONFIG['train_path'], schema_overrides=SCHEMA)
     lf_test = pl.scan_csv(CONFIG['test_path'], schema_overrides=SCHEMA)
     
-    # === Step 1: Create user proxy (must come before interactions that use it) ===
-    print("Creating user proxy feature...")
-    user_proxy_expr = get_user_proxy_expression()
-    lf_train = lf_train.with_columns(user_proxy_expr)
-    lf_test = lf_test.with_columns(user_proxy_expr)
+    # ==========================================================================
+    # PHASE 1: All independent base features (stays lazy)
+    # ==========================================================================
+    print("Building base feature expressions...")
     
-    # === Step 2: Create interaction features ===
-    print("Creating interaction features...")
-    interaction_exprs = get_interaction_feature_expressions()
-    lf_train = lf_train.with_columns(interaction_exprs)
-    lf_test = lf_test.with_columns(interaction_exprs)
+    # Combine ALL base expressions into a single expression list
+    base_exprs = [
+        # User proxy
+        get_user_proxy_expression(),
+        # Interaction features
+        *get_interaction_feature_expressions(),
+        # Time features
+        *get_time_feature_expressions(),
+    ]
     
-    # === Step 3: Apply time feature extraction ===
-    print("Extracting time features...")
-    time_exprs = get_time_feature_expressions()
-    lf_train = lf_train.with_columns(time_exprs)
-    lf_test = lf_test.with_columns(time_exprs)
+    lf_train = lf_train.with_columns(base_exprs)
+    lf_test = lf_test.with_columns(base_exprs)
     
-    # === Step 4: Compute count features (based on train stats) ===
+    # ==========================================================================
+    # PHASE 2: Count features (REQUIRED materialization - train stats to both)
+    # ==========================================================================
+    print("Computing count features (parallel)...")
     lf_train, lf_test = compute_count_features_from_train(
         lf_train, lf_test, COUNT_FEATURE_COLS
     )
     
-    # === Step 5: Bin count features for categorical encoding ===
-    print("Binning count features...")
+    # Immediately add count binning (stays lazy)
     bin_exprs = bin_count_features(COUNT_FEATURE_COLS)
     lf_train = lf_train.with_columns(bin_exprs)
     lf_test = lf_test.with_columns(bin_exprs)
     
-    # === Step 6: Compute cumulative count features (user maturity) ===
-    print("Computing cumulative count features...")
-    # Sort by hour for chronological order, then compute cumulative counts
+    # ==========================================================================
+    # PHASE 3: Hourly features (REQUIRED materialization - train stats to both)
+    # ==========================================================================
+    print("Computing hourly aggregated features...")
+    lf_train, lf_test = compute_hourly_aggregated_features(lf_train, lf_test)
+    
+    # ==========================================================================
+    # PHASE 4: All remaining features in a SINGLE expression batch (stays lazy)
+    # ==========================================================================
+    print("Computing sequential/window features (batched)...")
+    
+    # Sort for chronological operations (lazy - just adds to query plan)
     lf_train = lf_train.sort("hour")
     lf_test = lf_test.sort("hour")
     
-    cumcount_exprs = get_cumulative_count_expressions(CUMCOUNT_COLS)
-    lf_train = lf_train.with_columns(cumcount_exprs)
-    lf_test = lf_test.with_columns(cumcount_exprs)
+    # Build ALL remaining expressions as a single batch
+    # These are window/sequential ops that can be computed together after sort
+    sequential_exprs = [
+        # Cumulative counts (window over sorted data)
+        *get_cumulative_count_expressions(CUMCOUNT_COLS),
+        # Time delta (window over sorted data)
+        # Inlined from compute_time_delta_features for single expression batch
+        (pl.col("hour") + "00").str.to_datetime("%y%m%d%H%M").alias("_timestamp"),
+    ]
     
-    # Bin cumulative counts
-    cumcount_bin_exprs = bin_cumcount_features(CUMCOUNT_COLS)
-    lf_train = lf_train.with_columns(cumcount_bin_exprs)
-    lf_test = lf_test.with_columns(cumcount_bin_exprs)
+    lf_train = lf_train.with_columns(sequential_exprs)
+    lf_test = lf_test.with_columns(sequential_exprs)
     
-    # === Step 7: Compute hourly aggregated features ===
-    lf_train, lf_test = compute_hourly_aggregated_features(lf_train, lf_test)
+    # Time delta computation (needs _timestamp column)
+    time_delta_exprs = [
+        (
+            pl.col("_timestamp") - pl.col("_timestamp").shift(1).over("user_proxy")
+        )
+        .dt.total_hours()
+        .fill_null(0)
+        .cast(pl.UInt32)
+        .alias("hours_since_last_click"),
+        # Previous click count
+        (pl.col("user_proxy").cum_count().over("user_proxy") - 1)
+        .clip(lower_bound=0)
+        .cast(pl.UInt32)
+        .alias("user_proxy_prev_clicks"),
+    ]
     
-    # Bin hourly impressions
-    hourly_bin_expr = bin_hourly_impressions()
-    lf_train = lf_train.with_columns(hourly_bin_expr)
-    lf_test = lf_test.with_columns(hourly_bin_expr)
+    lf_train = lf_train.with_columns(time_delta_exprs).drop("_timestamp")
+    lf_test = lf_test.with_columns(time_delta_exprs).drop("_timestamp")
     
-    # === Step 8: Compute time-delta features (hours since last click) ===
-    print("Computing time-delta features...")
-    lf_train = compute_time_delta_features(lf_train, group_col="user_proxy")
-    lf_test = compute_time_delta_features(lf_test, group_col="user_proxy")
+    # ==========================================================================  
+    # PHASE 5: ALL binning in one shot (stays lazy until collect)
+    # ==========================================================================
+    print("Binning all features (single batch)...")
     
-    # Bin time delta
-    time_delta_bin_expr = bin_time_delta_features()
-    lf_train = lf_train.with_columns(time_delta_bin_expr)
-    lf_test = lf_test.with_columns(time_delta_bin_expr)
+    all_bin_exprs = [
+        # Cumcount bins
+        *bin_cumcount_features(CUMCOUNT_COLS),
+        # Hourly impressions bin
+        bin_hourly_impressions(),
+        # Time delta bin
+        bin_time_delta_features(),
+        # Previous clicks bin
+        bin_prev_clicks("user_proxy"),
+    ]
     
-    # === Step 9: Compute previous click count features ===
-    print("Computing previous click count features...")
-    lf_train = compute_previous_click_count(lf_train, group_col="user_proxy")
-    lf_test = compute_previous_click_count(lf_test, group_col="user_proxy")
+    lf_train = lf_train.with_columns(all_bin_exprs)
+    lf_test = lf_test.with_columns(all_bin_exprs)
     
-    # Bin previous clicks
-    prev_clicks_bin_expr = bin_prev_clicks("user_proxy")
-    lf_train = lf_train.with_columns(prev_clicks_bin_expr)
-    lf_test = lf_test.with_columns(prev_clicks_bin_expr)
-    
-    # === Build final feature list ===
-    # Categorical columns: base + engineered + time + count bins + cumcount bins + hourly bins + time delta + prev clicks
+    # ==========================================================================
+    # Build final feature list
+    # ==========================================================================
     count_bin_cols = [f"{col}_count_bin" for col in COUNT_FEATURE_COLS]
     cumcount_bin_cols = [f"{col}_cumcount_bin" for col in CUMCOUNT_COLS]
     cat_cols = (
@@ -687,9 +718,10 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     )
     
     print(f"Total categorical features: {len(cat_cols)}")
-
     
-    # Build vocabularies from training data
+    # ==========================================================================
+    # PHASE 6: Vocabulary building + final transformation (parallel collect)
+    # ==========================================================================
     vocab_sizes, feat_maps = build_vocabularies(
         lf_train, 
         cat_cols, 
@@ -702,7 +734,6 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     X_train, y_train, train_hours_raw = transform_dataframe(
         lf_train, feat_maps, cat_cols, is_test=False
     )
-    # train_hours is guaranteed to be non-None when is_test=False
     assert train_hours_raw is not None
     train_hours = train_hours_raw
     print(f"Train processed: {X_train.shape}")

@@ -93,10 +93,10 @@ CONFIG: ConfigType = {
     # Based on EDA analysis of actual feature cardinalities
     "embedding_dim_rules": [
         (10, 8),       # 10 features: device_type, C18, C1, banner_pos, day_of_week, C15, C16, month, day_of_month, device_conn_type
-        (100, 16),     # 5 features: site_category, hour_of_day, app_category, C21, C19
-        (500, 24),     # 3 features: C20, app_domain, C17
-        (5000, 32),    # 3 features: C14, site_id, site_domain
-        (20000, 48),   # 2 features: app_id, device_model
+        (100, 32),     # 5 features: site_category, hour_of_day, app_category, C21, C19
+        (500, 48),     # 3 features: C20, app_domain, C17
+        (5000, 64),    # 3 features: C14, site_id, site_domain
+        (20000, 96),   # 2 features: app_id, device_model
         # Anything above 20000 uses embedding_dim (128): device_id, device_id_x_app_id, device_ip_x_C14, device_ip, user_proxy
     ],
     "embedding_projection_dim": None,  # None = no projection, int = project to uniform dim
@@ -122,7 +122,7 @@ CONFIG: ConfigType = {
     "use_layer_norm": True,
     
     # === Training ===
-    "lr": 1e-4,  # Lower initial LR for better convergence
+    "lr": 1e-3,  # Lower initial LR for better convergence
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
     "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
     "epochs": 50,
