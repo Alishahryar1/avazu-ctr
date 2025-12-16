@@ -1,7 +1,6 @@
 """Utility functions for model components."""
 import torch.nn as nn
-
-from src.config.config import ConfigType
+from typing import Any, Mapping
 
 
 def get_activation(name: str) -> nn.Module:
@@ -20,7 +19,7 @@ def get_activation(name: str) -> nn.Module:
     return activations[name]
 
 
-def compute_embedding_dim(vocab_size: int, config: ConfigType) -> int:
+def compute_embedding_dim(vocab_size: int, config: Mapping[str, Any]) -> int:
     """
     Compute optimal embedding dimension based on vocabulary size.
 

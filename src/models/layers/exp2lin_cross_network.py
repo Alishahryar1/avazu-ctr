@@ -75,7 +75,8 @@ class Exponential2LinearCrossNetwork(nn.Module):
     def _init_weights(self):
         """Initialize weights."""
         for w in self.w:
-            nn.init.xavier_uniform_(w.weight)
+            if isinstance(w, nn.Linear):
+                nn.init.xavier_uniform_(w.weight)
         nn.init.xavier_uniform_(self.fc.weight)
 
     def _cross_layer(

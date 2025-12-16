@@ -1,8 +1,8 @@
 """FCNv2 (Feature Cross Network v2) model for CTR prediction."""
 import torch
 import torch.nn as nn
+from typing import Any, Mapping, Optional
 
-from src.config.config import ConfigType
 from src.models.utils import compute_embedding_dim
 from src.models.layers.multihead_embedding import MultiHeadFeatureEmbedding
 from src.models.layers.exp2lin_cross_network import Exponential2LinearCrossNetwork
@@ -25,11 +25,13 @@ class FCNv2Model(nn.Module):
         feature_names: List of feature names in order.
         config: Configuration dictionary with model hyperparameters.
     """
+    pad_projection: Optional[nn.Linear]
+    
     def __init__(
         self, 
         vocab_sizes: dict[str, int], 
         feature_names: list[str], 
-        config: ConfigType
+        config: Mapping[str, Any]
     ):
         super().__init__()
         self.feature_names = feature_names

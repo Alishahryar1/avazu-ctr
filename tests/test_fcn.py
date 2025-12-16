@@ -248,6 +248,7 @@ class TestFCNv2Model(unittest.TestCase):
         cls.vocab_sizes = {'f1': 100, 'f2': 200, 'f3': 50}
         cls.feature_names = ['f1', 'f2', 'f3']
         cls.config = {
+            'seed': 42,
             'embedding_dim': 16,
             'fcnv2_num_heads': 2,
             'fcnv2_exp_num_layers': 2,

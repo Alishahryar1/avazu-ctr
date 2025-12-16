@@ -153,8 +153,8 @@ CONFIG: ConfigType = {
     "use_layer_norm": False,
     
     # === Training ===
-    "lr": 1e-3,  # Lower initial LR for better convergence
-    "embedding_lr": 1e-3,  # Higher LR for embeddings (Adagrad style)
+    "lr": 1e-4,  # Lower initial LR for better convergence
+    "embedding_lr": 1e-4,  # Higher LR for embeddings (Adagrad style)
     "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
     "epochs": 500,
     "early_stopping_patience": 50,
@@ -176,9 +176,9 @@ CONFIG: ConfigType = {
     
     # === Regularization ===
     "lr_warmup_epoch_ratio": 0.0,
-    "mlp_dropout": 0.1,
+    "mlp_dropout": 0.0,
     "grad_clip": 1.0,
-    "weight_decay": 1e-4,  # L2 regularization for MLP/DCN params
+    "weight_decay": 1e-5,  # L2 regularization for MLP/DCN params
     "embedding_weight_decay": 0.0,  # L2 regularization for embeddings (usually 0)
     "focal_loss_gamma": 0.0,  # Focal loss for imbalance
     "label_smoothing": 0.0,  # Optional label smoothing
