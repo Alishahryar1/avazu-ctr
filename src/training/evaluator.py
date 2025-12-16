@@ -30,8 +30,17 @@ def evaluate(model, data_loader, criterion, device, use_amp=False, amp_dtype=tor
 
             # Use autocast for mixed precision inference
             with torch.amp.autocast(device_type='cuda', dtype=amp_dtype, enabled=use_amp):
-                logits = model(X_batch)
-                loss = criterion(logits, y_batch)
+                output = model(X_batch)
+                
+                # Handle FCNv2 dict output vs standard tensor output
+                if isinstance(output, dict):
+                    # FCNv2 model returns dict with y_pred, y_d, y_s
+                    logits = output['y_pred']
+                    # For FCNv2, criterion is TriBCELoss which needs all three outputs
+                    loss = criterion(output['y_pred'], output['y_d'], output['y_s'], y_batch)
+                else:
+                    logits = output
+                    loss = criterion(logits, y_batch)
 
             total_loss += loss.item()
 

@@ -15,7 +15,8 @@ from src.processing.data_processor import load_metadata, get_parquet_path, get_p
 from src.processing.dataset import ParquetFullDataset
 from src.models.architectures.base_model import GatedDCNModel
 from src.models.architectures.ensemble import EnsembleModel
-from src.training.losses import FocalLoss
+from src.models.architectures.fcnv2 import FCNv2Model
+from src.training.losses import FocalLoss, TriBCELoss
 from src.training.schedulers import LRSchedulerWithWarmup
 from src.training.evaluator import evaluate
 
@@ -104,11 +105,17 @@ def train():
     # 3. Model Initialization
     print("\nStep 3: Initializing Model...")
     use_ensemble = CONFIG['use_ensemble']
-    if use_ensemble:
+    use_fcnv2 = CONFIG.get('use_fcnv2', False)
+    
+    if use_fcnv2:
+        model = FCNv2Model(vocab_sizes, feature_names, CONFIG)
+        print("Using FCNv2 model (dual-path cross network)")
+    elif use_ensemble:
         model = EnsembleModel(vocab_sizes, feature_names, CONFIG)
         print(f"Using ensemble of {CONFIG['ensemble_k']} models (aggregation={CONFIG['ensemble_aggregation']})")
     else:
         model = GatedDCNModel(vocab_sizes, feature_names, CONFIG)
+        print("Using GatedDCNModel")
     model.to(CONFIG['device'])
     if CONFIG['compile_model']:
         model = torch.compile(model, mode="reduce-overhead")
@@ -126,8 +133,11 @@ def train():
     # 4. Loss, Optimizer, Scheduler
     print("\nStep 4: Setting up Training Components...")
 
-    # Use Focal Loss to handle class imbalance
-    if CONFIG['focal_loss_gamma'] > 0:
+    # Use appropriate loss function
+    if use_fcnv2:
+        criterion = TriBCELoss()
+        print("Using TriBCELoss for FCNv2")
+    elif CONFIG['focal_loss_gamma'] > 0:
         criterion = FocalLoss(gamma=CONFIG['focal_loss_gamma'])
         print(f"Using Focal Loss (gamma={CONFIG['focal_loss_gamma']})")
     else:
@@ -257,8 +267,17 @@ def train():
 
                         # Total Loss = Ensemble Loss + Sum(Individual Losses)
                         loss = loss_ensemble + loss_individual
+                    elif isinstance(model, FCNv2Model):
+                        # FCNv2 returns dict with y_pred, y_d, y_s
+                        output = model(X_batch)
+                        loss = criterion(
+                            output['y_pred'],
+                            output['y_d'],
+                            output['y_s'],
+                            y_batch
+                        )
                     else:
-                        # Standard single model
+                        # Standard single model (GatedDCNModel)
                         logits = model(X_batch)
                         loss = criterion(logits, y_batch)
 

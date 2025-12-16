@@ -27,3 +27,59 @@ class FocalLoss(nn.Module):
             loss = alpha_t * loss
 
         return loss.mean()
+
+
+class TriBCELoss(nn.Module):
+    """
+    Triple BCE Loss for FCNv2 dual-path architecture.
+    
+    Computes weighted loss from three predictions:
+    - y_pred: Combined prediction (average of both paths)
+    - y_d: E2L path prediction (Exponential-to-Linear)
+    - y_s: L2E path prediction (Linear-to-Exponential)
+    
+    Loss = BCE(y_pred) + weight_d * BCE(y_d) + weight_s * BCE(y_s)
+    
+    Weights are dynamically computed based on relative performance:
+    - weight_d = max(0, loss_d - loss)  
+    - weight_s = max(0, loss_s - loss)
+    
+    This encourages the weaker branch to improve while not penalizing
+    the stronger branch.
+    """
+    def __init__(self):
+        super().__init__()
+        self.bce = nn.BCEWithLogitsLoss(reduction='mean')
+    
+    def forward(
+        self, 
+        y_pred: torch.Tensor, 
+        y_d: torch.Tensor, 
+        y_s: torch.Tensor, 
+        y_true: torch.Tensor
+    ) -> torch.Tensor:
+        """
+        Compute the triple BCE loss.
+        
+        Args:
+            y_pred: Combined logits [B, 1]
+            y_d: E2L path logits [B, 1]
+            y_s: L2E path logits [B, 1]
+            y_true: Ground truth labels [B, 1]
+            
+        Returns:
+            Weighted combined loss
+        """
+        # Compute individual losses
+        loss = self.bce(y_pred, y_true)
+        loss_d = self.bce(y_d, y_true)
+        loss_s = self.bce(y_s, y_true)
+        
+        # Compute dynamic weights (penalize branches that perform worse than combined)
+        weight_d = (loss_d - loss).clamp(min=0)
+        weight_s = (loss_s - loss).clamp(min=0)
+        
+        # Combined weighted loss
+        total_loss = loss + loss_d * weight_d + loss_s * weight_s
+        
+        return total_loss
