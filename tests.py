@@ -19,7 +19,7 @@ from model import GatedDCNModel, DCNv2, SENetLayer, FeatureGatingLayer
 
 def make_test_config(**overrides) -> ConfigType:
     """Create a test config with optional overrides."""
-    test_config: ConfigType = {
+    test_config: dict[str, object] = {
         # General
         'seed': 42,
         'device': 'cpu',
@@ -90,8 +90,8 @@ def make_test_config(**overrides) -> ConfigType:
     }
     # Apply overrides
     for key, value in overrides.items():
-        test_config[key] = value  # type: ignore
-    return test_config
+        test_config[key] = value
+    return test_config  # type: ignore[return-value]
 
 
 class TestModelStructure(unittest.TestCase):
@@ -2196,7 +2196,7 @@ def list_tests():
     print("Available tests:")
     print("-" * 50)
     for test_group in suite:
-        for test in iter(test_group):  # type: ignore[arg-type]
+        for test in test_group:  # type: ignore[union-attr]
             print(f"  {test}")
     print("-" * 50)
     print("\nUsage examples:")

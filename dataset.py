@@ -252,6 +252,10 @@ class ParquetFullDataset(Dataset):
         self.parquet_path = Path(parquet_path)
         self.feature_cols = feature_cols
         self.label_col = label_col
+        
+        # Type declarations for attributes
+        self.X: torch.Tensor
+        self.y: torch.Tensor | None
 
         print(f"Loading full dataset from {self.parquet_path} into memory...")
         
@@ -273,7 +277,7 @@ class ParquetFullDataset(Dataset):
                 dtype=torch.float32
             )
         else:
-            self.y: torch.Tensor | None = None
+            self.y = None
             
         self.n_samples = len(self.X)
         print(f"Loaded {self.n_samples:,} samples.")
