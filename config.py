@@ -105,20 +105,24 @@ CONFIG: ConfigType = {
     "embedding_projection_dim": None,  # None = no projection, int = project to uniform dim
     "feature_embedding_overrides": {},  # Per-feature overrides, e.g., {"device_id": {"embedding_dim": 128}}
     
+    # === Model Architecture - DCN ===
     "use_dcn": True,  # Enable/disable DCNv2 cross network
     "dcn_num_layers": 6,  # Increased for more feature interactions
     "dcn_use_layernorm": False,  # LayerNorm for cross layer stability
     "dcn_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
+    # === Model Architecture - SENET ===
     "use_senet": False,  # Enable/disable SENET (Squeeze-and-Excitation) layer
     "senet_squeeze_funcs": ["mean", "max", "min"],  # Squeeze functions to combine
     "senet_reduction_ratio": 4,  # Reduction ratio for excitation bottleneck
     "senet_activation": "tanh",  # Options: sigmoid, tanh, relu, softmax
     
+    # === Model Architecture - Feature Gating ===   
     "use_feature_gating": True,  # Alternative to SENET (mutually exclusive)
     "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
     "feature_gating_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
+    # === Model Architecture - MLP ===
     "mlp_hidden_dims": [1024, 512],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
     "mlp_use_skip_connections": True,  # Add residual/skip connections to MLP
@@ -142,10 +146,10 @@ CONFIG: ConfigType = {
     "compile_model": False,  # Enable torch.compile for faster training (requires PyTorch 2.0+)
     
     # === Regularization ===
-    "lr_warmup_epoch_ratio": 0.1,
-    "mlp_dropout": 0.1,
+    "lr_warmup_epoch_ratio": 0.0,
+    "mlp_dropout": 0.4,
     "grad_clip": 1.0,
-    "weight_decay": 1e-5,  # L2 regularization for MLP/DCN params
+    "weight_decay": 1e-4,  # L2 regularization for MLP/DCN params
     "embedding_weight_decay": 0.0,  # L2 regularization for embeddings (usually 0)
     "focal_loss_gamma": 0.0,  # Focal loss for imbalance
     "label_smoothing": 0.0,  # Optional label smoothing
