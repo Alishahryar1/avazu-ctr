@@ -816,7 +816,7 @@ def load_metadata() -> tuple[dict, list]:
     """
     Load metadata (vocab sizes and feature names) from disk.
 
-    The actual data stays in parquet files and is read on-demand by ParquetDataset.
+    The actual data stays in parquet files and is read by ParquetFullDataset.
 
     Returns:
         vocab_sizes: Vocabulary sizes per column

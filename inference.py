@@ -7,7 +7,7 @@ import polars as pl
 
 from config import CONFIG, seed_everything
 from data_processor import load_metadata, get_parquet_path
-from dataset import ParquetBatchDataset
+from dataset import ParquetFullDataset
 from model import GatedDCNModel
 
 
@@ -27,23 +27,20 @@ def inference():
 
     # 2. Dataset and DataLoader
     print("Step 2: Preparing Test DataLoader...")
-    test_dataset = ParquetBatchDataset(
+    test_dataset = ParquetFullDataset(
         parquet_path=test_parquet,
         feature_cols=feature_names,
-        label_col=None,  # No labels for test data
-        batch_size=CONFIG['batch_size'],
-        shuffle=False  # Must be False for inference to maintain order
+        label_col=None  # No labels for test data
     )
 
-    print(f"Test batches: {test_dataset.n_batches:,} (~{test_dataset.n_samples:,} samples)")
+    print(f"Test samples: {len(test_dataset):,}")
 
     test_loader = DataLoader(
         test_dataset,
-        batch_size=1,  # Each item is already a batch
+        batch_size=CONFIG['batch_size'],
         shuffle=False,
-        num_workers=0,  # Parquet reading not compatible with multiprocessing
-        pin_memory=False,
-        collate_fn=lambda x: x[0]  # Unwrap the single batch
+        num_workers=CONFIG['num_workers'],
+        pin_memory=True
     )
 
     # 3. Model Initialization and Loading
@@ -74,8 +71,7 @@ def inference():
     predictions = []
 
     with torch.no_grad():
-        for batch_data in tqdm(test_loader, desc="Predicting"):
-            X_batch, _ = batch_data  # _ is None for test data
+        for X_batch in tqdm(test_loader, desc="Predicting"):
             X_batch = X_batch.to(CONFIG['device'])
 
             logits = model(X_batch)

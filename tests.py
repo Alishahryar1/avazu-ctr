@@ -861,25 +861,25 @@ class TestLRSchedulerWithWarmup(unittest.TestCase):
 # =============================================================================
 # Tests for dataset.py - Parquet Datasets
 # =============================================================================
-class TestParquetDataset(unittest.TestCase):
-    """Tests for ParquetDataset."""
+class TestParquetFullDataset(unittest.TestCase):
+    """Tests for ParquetFullDataset."""
 
     @classmethod
     def setUpClass(cls):
         """Create a temporary parquet file for testing."""
         import polars as pl
-        from dataset import ParquetDataset
+        from dataset import ParquetFullDataset
         import tempfile
         import os
         
-        cls.ParquetDataset = ParquetDataset
+        cls.ParquetFullDataset = ParquetFullDataset
         
         # Create temp directory and file
         cls.temp_dir = tempfile.TemporaryDirectory()
         cls.parquet_path = os.path.join(cls.temp_dir.name, 'test_data.parquet')
         
         # Create dummy data
-        # 100 rows, 5 features, 1 binary label
+        # 100 rows, 2 features, 1 binary label
         data = {
             'feat1': np.random.randint(0, 10, 100),
             'feat2': np.random.randint(0, 10, 100),
@@ -898,7 +898,7 @@ class TestParquetDataset(unittest.TestCase):
 
     def test_dataset_initialization(self):
         """Test dataset loading and length."""
-        dataset = self.ParquetDataset(
+        dataset = self.ParquetFullDataset(
             self.parquet_path,
             self.feature_cols,
             self.label_col
@@ -907,7 +907,7 @@ class TestParquetDataset(unittest.TestCase):
 
     def test_getitem_single_row(self):
         """Test retrieving a single row."""
-        dataset = self.ParquetDataset(
+        dataset = self.ParquetFullDataset(
             self.parquet_path,
             self.feature_cols,
             self.label_col
@@ -924,7 +924,7 @@ class TestParquetDataset(unittest.TestCase):
 
     def test_getitem_inference_mode(self):
         """Test retrieving without labels."""
-        dataset = self.ParquetDataset(
+        dataset = self.ParquetFullDataset(
             self.parquet_path,
             self.feature_cols,
             label_col=None
@@ -935,134 +935,39 @@ class TestParquetDataset(unittest.TestCase):
         self.assertIsInstance(X, torch.Tensor)
         self.assertEqual(X.shape, (2,))
 
-    def test_get_batch(self):
-        """Test efficient batch retrieval."""
-        dataset = self.ParquetDataset(
+    def test_data_loaded_in_memory(self):
+        """Test that data is fully loaded into memory as tensors."""
+        dataset = self.ParquetFullDataset(
             self.parquet_path,
             self.feature_cols,
             self.label_col
         )
         
-        # Get batch of 10
-        X_batch, y_batch = dataset.get_batch(start_idx=0, batch_size=10)
-        
-        self.assertEqual(X_batch.shape, (10, 2))
-        self.assertIsNotNone(y_batch)
-        self.assertEqual(y_batch.shape, (10,))
-        
-        # Test batch at end of file (partial batch)
-        X_batch, y_batch = dataset.get_batch(start_idx=95, batch_size=10)
-        self.assertEqual(X_batch.shape, (5, 2))  # Only 5 rows left
-
-
-class TestParquetBatchDataset(unittest.TestCase):
-    """Tests for ParquetBatchDataset."""
-
-    @classmethod
-    def setUpClass(cls):
-        """Create a temporary parquet file for testing."""
-        import polars as pl
-        from dataset import ParquetBatchDataset
-        import tempfile
-        import os
-        
-        cls.ParquetBatchDataset = ParquetBatchDataset
-        
-        cls.temp_dir = tempfile.TemporaryDirectory()
-        cls.parquet_path = os.path.join(cls.temp_dir.name, 'test_batch_data.parquet')
-        
-        # Create dummy data (100 rows)
-        data = {
-            'feat1': np.random.randint(0, 10, 100),
-            'click': np.random.randint(0, 2, 100).astype(np.float32)
-        }
-        df = pl.DataFrame(data)
-        df.write_parquet(cls.parquet_path)
-        
-        cls.feature_cols = ['feat1']
-        cls.label_col = 'click'
-
-    @classmethod
-    def tearDownClass(cls):
-        cls.temp_dir.cleanup()
-
-    def test_batch_dataset_initialization(self):
-        """Test initialization and batch calculation."""
-        batch_size = 32
-        dataset = self.ParquetBatchDataset(
-            self.parquet_path,
-            self.feature_cols,
-            self.label_col,
-            batch_size=batch_size,
-            shuffle=False
-        )
-        
-        # 100 samples / 32 batch_size = 3 full batches + 1 partial = 4 batches
-        self.assertEqual(len(dataset), 4)
-        self.assertEqual(dataset.total_samples, 100)
-
-    def test_getitem_returns_batch(self):
-        """Test that __getitem__ returns a full batch."""
-        dataset = self.ParquetBatchDataset(
-            self.parquet_path,
-            self.feature_cols,
-            self.label_col,
-            batch_size=10,
-            shuffle=False
-        )
-        
-        # First batch
-        X_batch, y_batch = dataset[0]
-        self.assertEqual(X_batch.shape, (10, 1))
-        self.assertIsNotNone(y_batch)
-        self.assertEqual(y_batch.shape, (10,))
-        
-        # Check types
-        self.assertEqual(X_batch.dtype, torch.long)
-        self.assertEqual(y_batch.dtype, torch.float32)
-
-    def test_shuffle_resets_order(self):
-        """Test that reset() changes the batch order."""
-        dataset = self.ParquetBatchDataset(
-            self.parquet_path,
-            self.feature_cols,
-            self.label_col,
-            batch_size=10,
-            shuffle=True
-        )
-        
-        order1 = dataset._order.copy()
-        dataset.reset()
-        order2 = dataset._order.copy()
-        
-        # With high probability, order should change
-        # (Technically there's a tiny chance it's the same, but with 10 batches it's negligible)
-        if len(order1) > 1:
-            # We can't guarantee they are different, but we can check if they are capable of being different
-            # If they happen to be same, we just assume it works to avoid flaky tests
-            pass 
+        # X and y should be full tensors in memory
+        self.assertIsInstance(dataset.X, torch.Tensor)
+        self.assertIsInstance(dataset.y, torch.Tensor)
+        self.assertEqual(dataset.X.shape, (100, 2))
+        self.assertEqual(dataset.y.shape, (100,))
 
     def test_dataloader_integration(self):
-        """Test that it works with PyTorch DataLoader (batch_size=None)."""
+        """Test that it works with PyTorch DataLoader."""
         from torch.utils.data import DataLoader
         
-        dataset = self.ParquetBatchDataset(
+        dataset = self.ParquetFullDataset(
             self.parquet_path,
             self.feature_cols,
-            self.label_col,
-            batch_size=20
+            self.label_col
         )
         
-        # IMPORTANT: When using ParquetBatchDataset, DataLoader batch_size must be None
-        # because the dataset already returns batches.
-        loader = DataLoader(dataset, batch_size=None)
+        loader = DataLoader(dataset, batch_size=20, shuffle=False)
         
         batches = list(loader)
         self.assertEqual(len(batches), 5)  # 100 / 20 = 5 batches
         
         # Verify first batch shape
         X, y = batches[0]
-        self.assertEqual(X.shape, (20, 1))
+        self.assertEqual(X.shape, (20, 2))
+        self.assertEqual(y.shape, (20,))
 
 
 # =============================================================================

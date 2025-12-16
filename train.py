@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from config import CONFIG, seed_everything
 from data_processor import load_metadata, get_parquet_path, get_parquet_row_count
-from dataset import ParquetBatchDataset, ParquetFullDataset
+from dataset import ParquetFullDataset
 from model import GatedDCNModel
 
 
