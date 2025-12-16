@@ -97,8 +97,8 @@ CONFIG: ConfigType = {
     "validation_split": 0.0,  # Hold out 1% for validation
     
     # === Model Architecture - Embeddings ===
-    "embedding_dim": 16,  # Default/fallback embedding dimension
-    "use_variable_embeddings": False,  # Enable cardinality-based embedding dimensions
+    "embedding_dim": 64,  # Default/fallback embedding dimension
+    "use_variable_embeddings": True,  # Enable cardinality-based embedding dimensions
     # Cardinality rules: (max_vocab_size, embedding_dim) - sorted ascending
     # Based on EDA analysis of actual feature cardinalities
     "embedding_dim_rules": [
@@ -113,7 +113,7 @@ CONFIG: ConfigType = {
     "feature_embedding_overrides": {},  # Per-feature overrides, e.g., {"device_id": {"embedding_dim": 128}}
     
     # === Model Architecture - DCN ===
-    "use_dcn": False,  # Enable/disable DCNv2 cross network
+    "use_dcn": True,  # Enable/disable DCNv2 cross network
     "dcn_num_layers": 6,  # Increased for more feature interactions
     "dcn_use_layernorm": False,  # LayerNorm for cross layer stability
     "dcn_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
@@ -125,7 +125,7 @@ CONFIG: ConfigType = {
     "senet_activation": "tanh",  # Options: sigmoid, tanh, relu, softmax
     
     # === Model Architecture - Feature Gating ===   
-    "use_feature_gating": False,  # Alternative to SENET (mutually exclusive)
+    "use_feature_gating": True,  # Alternative to SENET (mutually exclusive)
     "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
     "feature_gating_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
@@ -134,11 +134,11 @@ CONFIG: ConfigType = {
     "mlp_hidden_dims": [1024, 512],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
     "mlp_use_skip_connections": True,  # Add residual/skip connections to MLP
-    "use_layer_norm": False,
+    "use_layer_norm": True,
     
     # === Training ===
-    "lr": 1e-4,  # Lower initial LR for better convergence
-    "embedding_lr": 1e-4,  # Higher LR for embeddings (Adagrad style)
+    "lr": 1e-3,  # Lower initial LR for better convergence
+    "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
     "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
     "epochs": 500,
     "early_stopping_patience": 50,
@@ -160,9 +160,9 @@ CONFIG: ConfigType = {
     
     # === Regularization ===
     "lr_warmup_epoch_ratio": 0.0,
-    "mlp_dropout": 0.0,
+    "mlp_dropout": 0.1,
     "grad_clip": 1.0,
-    "weight_decay": 1e-5,  # L2 regularization for MLP/DCN params
+    "weight_decay": 1e-4,  # L2 regularization for MLP/DCN params
     "embedding_weight_decay": 0.0,  # L2 regularization for embeddings (usually 0)
     "focal_loss_gamma": 0.0,  # Focal loss for imbalance
     "label_smoothing": 0.0,  # Optional label smoothing
