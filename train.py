@@ -2,7 +2,7 @@ import os
 import torch
 import torch.nn as nn
 import torch.optim as optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from sklearn.metrics import roc_auc_score, log_loss
 from tqdm import tqdm
 import time
@@ -11,7 +11,7 @@ from torch.utils.tensorboard import SummaryWriter
 
 from config import CONFIG, seed_everything
 from data_processor import load_metadata, get_parquet_path, get_parquet_row_count
-from dataset import ParquetBatchDataset
+from dataset import ParquetBatchDataset, ParquetFullDataset
 from model import GatedDCNModel
 
 
@@ -148,73 +148,50 @@ def train():
     print("\nStep 2: Creating Train/Validation Split...")
 
     # Calculate split at batch level
-    val_samples = int(total_samples * CONFIG['validation_split'])
-    train_samples = total_samples - val_samples
+    # Create dataset - Loads entire file into memory
+    full_dataset = ParquetFullDataset(
+        parquet_path=train_parquet,
+        feature_cols=feature_names,
+        label_col='click'
+    )
 
-    # Note: Data in parquet is sorted by hour, so we take last portion as validation
-    # This is a temporal split which is more realistic for CTR prediction
+    # 2. Create Train/Validation Split
+    print("\nStep 2: Creating Train/Validation Split...")
+    
+    # Calculate split index
+    # Data is temporally sorted, so we split by index
+    split_idx = int(len(full_dataset) * (1 - CONFIG['validation_split']))
+    
     print(f"Temporal split: last {CONFIG['validation_split']*100:.1f}% as validation")
+    print(f"Split index: {split_idx:,} / {len(full_dataset):,}")
 
-    # Create datasets - ParquetBatchDataset handles batching internally
-    # For training: use first train_samples rows
-    # For validation: use last val_samples rows (we'll create a separate parquet view)
+    # Create subsets
+    indices = list(range(len(full_dataset)))
+    train_indices = indices[:split_idx]
+    val_indices = indices[split_idx:]
+    
+    train_dataset = Subset(full_dataset, train_indices)
+    val_dataset = Subset(full_dataset, val_indices)
 
-    # Create train dataset (batches from first portion)
-    train_dataset = ParquetBatchDataset(
-        parquet_path=train_parquet,
-        feature_cols=feature_names,
-        label_col='click',
-        batch_size=CONFIG['batch_size'],
-        shuffle=True
-    )
+    print(f"Training samples: {len(train_dataset):,}")
+    print(f"Validation samples: {len(val_dataset):,}")
 
-    # For validation, we'll use the same parquet but read from the end
-    # We create a simple wrapper that offsets the slice
-    val_dataset = ParquetBatchDataset(
-        parquet_path=train_parquet,
-        feature_cols=feature_names,
-        label_col='click',
-        batch_size=CONFIG['batch_size'] * 2,  # Larger batch for validation
-        shuffle=False
-    )
-
-    # Adjust batch starts for train/val split
-    # Train uses batches from rows [0, train_samples)
-    # Val uses batches from rows [train_samples, total_samples)
-    train_batch_starts = [s for s in train_dataset.batch_starts if s < train_samples]
-    val_batch_starts = [s for s in range(train_samples, total_samples, CONFIG['batch_size'] * 2)]
-
-    train_dataset.batch_starts = train_batch_starts
-    train_dataset.n_batches = len(train_batch_starts)
-    train_dataset._order = list(range(train_dataset.n_batches))
-    if train_dataset.shuffle:
-        np.random.shuffle(train_dataset._order)
-
-    val_dataset.batch_starts = val_batch_starts
-    val_dataset.n_batches = len(val_batch_starts)
-    val_dataset._order = list(range(val_dataset.n_batches))
-
-    print(f"Training batches: {train_dataset.n_batches:,} (~{train_samples:,} samples)")
-    print(f"Validation batches: {val_dataset.n_batches:,} (~{val_samples:,} samples)")
-
-    # Use simple iteration (ParquetBatchDataset handles batching internally)
-    # DataLoader with batch_size=1 since each "item" is already a batch
+    # Standard DataLoaders
+    # Pin memory for faster transfer to GPU
     train_loader = DataLoader(
         train_dataset,
-        batch_size=1,  # Each item is already a batch
-        shuffle=False,  # Shuffling handled by dataset
-        num_workers=0,  # Parquet reading not compatible with multiprocessing
-        pin_memory=False,
-        collate_fn=lambda x: x[0]  # Unwrap the single batch
+        batch_size=CONFIG['batch_size'],
+        shuffle=True,  # Shuffle row-by-row now possible in memory
+        num_workers=CONFIG['num_workers'],
+        pin_memory=True
     )
 
     val_loader = DataLoader(
         val_dataset,
-        batch_size=1,
+        batch_size=CONFIG['batch_size'],
         shuffle=False,
-        num_workers=0,
-        pin_memory=False,
-        collate_fn=lambda x: x[0]
+        num_workers=CONFIG['num_workers'],
+        pin_memory=True
     )
 
     # 3. Model Initialization
@@ -327,7 +304,7 @@ def train():
             start_time = time.time()
 
             # Reset dataset shuffle order at start of each epoch
-            train_dataset.reset()
+            # train_dataset.reset()
 
             pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{CONFIG['epochs']}")
             for batch_idx, batch_data in enumerate(pbar):
