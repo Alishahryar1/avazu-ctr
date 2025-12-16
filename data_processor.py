@@ -1,16 +1,20 @@
 """
-Avazu CTR Data Processor - Polars Best Practices Implementation
+Avazu CTR Data Processor - Memory-Efficient Polars Implementation
 
-This module uses idiomatic Polars patterns:
+This module is optimized for running on memory-constrained systems (e.g., laptops):
+- Sequential processing of vocabulary building to avoid memory spikes
+- Streaming sink to temporary parquet for transformation to avoid OOM
+- Explicit garbage collection between processing phases
+- Chunked reading from parquet for numpy conversion
 - Expression-based transformations (no Python loops in hot paths)
 - Lazy evaluation with streaming for memory efficiency
-- Vectorized vocabulary building and mapping
-- Proper use of chained expressions
 """
 
 import polars as pl
 import numpy as np
 import gc
+import shutil
+import tempfile
 from pathlib import Path
 from config import CONFIG
 import pickle
@@ -314,38 +318,48 @@ def compute_count_features_from_train(
 ) -> tuple[pl.LazyFrame, pl.LazyFrame]:
     """
     Compute count/frequency features based on training data statistics.
-    
-    OPTIMIZED: Uses parallel collection for all count columns at once.
-    
+
+    MEMORY-OPTIMIZED: Processes columns sequentially with streaming collection
+    to avoid holding all count DataFrames in memory simultaneously.
+
     Args:
         lf_train: Training LazyFrame
-        lf_test: Test LazyFrame  
+        lf_test: Test LazyFrame
         count_cols: Columns to compute counts for
-        
+
     Returns:
         Updated train and test LazyFrames with count features
     """
-    print(f"Computing count features for: {count_cols} (parallel)")
-    
-    # Build all count queries at once for parallel execution
-    count_queries = [
-        lf_train
-        .select(pl.col(col).cast(pl.String))
-        .group_by(col)
-        .len()
-        .rename({"len": f"{col}_count"})
-        for col in count_cols
-    ]
-    
-    # Execute all count queries in parallel
-    count_dfs = pl.collect_all(count_queries)
-    
-    # Apply all joins in a batched manner
-    for col, count_df in zip(count_cols, count_dfs):
+    print(f"Computing count features for: {count_cols} (sequential, memory-efficient)")
+
+    # Process columns one at a time to minimize peak memory
+    for i, col in enumerate(count_cols):
+        count_query = (
+            lf_train
+            .select(pl.col(col).cast(pl.String))
+            .group_by(col)
+            .len()
+            .rename({"len": f"{col}_count"})
+        )
+
+        # Collect with streaming to reduce memory pressure
+        try:
+            count_df = count_query.collect(streaming=True)
+        except Exception:
+            count_df = count_query.collect()
+
+        # Join to both train and test
         count_lf = count_df.lazy()
         lf_train = lf_train.join(count_lf, on=col, how="left")
         lf_test = lf_test.join(count_lf, on=col, how="left")
-    
+
+        # Explicitly free memory
+        del count_df, count_lf
+        gc.collect()
+
+        if (i + 1) % 3 == 0 or i == len(count_cols) - 1:
+            print(f"  Computed count feature {i + 1}/{len(count_cols)}: {col}")
+
     # Apply all fill_null operations in a single with_columns call
     fill_exprs = [
         pl.col(f"{col}_count").fill_null(0).cast(pl.UInt32)
@@ -353,7 +367,7 @@ def compute_count_features_from_train(
     ]
     lf_train = lf_train.with_columns(fill_exprs)
     lf_test = lf_test.with_columns(fill_exprs)
-    
+
     return lf_train, lf_test
 
 
@@ -390,32 +404,41 @@ def compute_hourly_aggregated_features(
 ) -> tuple[pl.LazyFrame, pl.LazyFrame]:
     """
     Compute hourly aggregated features for user activity.
-    
+
+    MEMORY-OPTIMIZED: Uses streaming collection.
+
     This is an efficient alternative to rolling window features.
     For each row, adds the count of impressions this user had in the same hour.
-    
+
     Features added:
     - user_hourly_impressions: Number of impressions for this user_proxy in this hour
-    
+
     Args:
         lf_train: Training LazyFrame
         lf_test: Test LazyFrame
-        
+
     Returns:
         Updated train and test LazyFrames with hourly features
     """
-    
+    print("  Computing hourly aggregated features...")
+
     # Compute user impressions per hour from training data
-    hourly_counts = (
+    hourly_query = (
         lf_train
         .select(["user_proxy", "hour"])
         .group_by(["user_proxy", "hour"])
         .len()
         .rename({"len": "user_hourly_impressions"})
-        .collect()
-        .lazy()
     )
-    
+
+    # Collect with streaming
+    try:
+        hourly_counts_df = hourly_query.collect(streaming=True)
+    except Exception:
+        hourly_counts_df = hourly_query.collect()
+
+    hourly_counts = hourly_counts_df.lazy()
+
     # Join to both train and test
     lf_train = (
         lf_train
@@ -431,7 +454,11 @@ def compute_hourly_aggregated_features(
             pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32)
         )
     )
-    
+
+    # Cleanup
+    del hourly_counts_df, hourly_counts
+    gc.collect()
+
     return lf_train, lf_test
 
 
@@ -455,52 +482,63 @@ def bin_hourly_impressions() -> pl.Expr:
 
 
 # =============================================================================
-# Vocabulary Building (Vectorized)
+# Vocabulary Building (Memory-Efficient Sequential)
 # =============================================================================
 def build_vocabularies(lf_train: pl.LazyFrame, cat_cols: list[str], min_freq: int) -> tuple[dict, dict]:
     """
-    Build vocabularies using vectorized Polars operations.
-    
-    OPTIMIZED: Uses parallel collection for all vocabulary queries.
-    
+    Build vocabularies using memory-efficient sequential processing.
+
+    MEMORY-OPTIMIZED: Processes one column at a time with streaming collection
+    to avoid holding all vocabulary DataFrames in memory simultaneously.
+
     Returns:
         vocab_sizes: dict mapping column names to vocabulary sizes
         feat_maps: dict mapping column names to value->id dictionaries
     """
-    print("Building vocabularies (parallel)...")
-    
-    # Build all vocabulary queries at once for parallel execution
-    vocab_queries = [
-        lf_train
-        .select(pl.col(col).cast(pl.String))
-        .group_by(col)
-        .len()
-        .filter(pl.col("len") >= min_freq)
-        .sort(col)  # Deterministic ordering
-        for col in cat_cols
-    ]
-    
-    # Execute all queries in parallel
-    vocab_dfs = pl.collect_all(vocab_queries)
-    
+    print("Building vocabularies (sequential, memory-efficient)...")
+
     vocab_sizes = {}
     feat_maps = {}
-    
-    # Build mappings from collected results
-    for col, counts in zip(cat_cols, vocab_dfs):
+
+    # Process columns one at a time to minimize peak memory
+    for i, col in enumerate(cat_cols):
+        # Build vocabulary query for single column
+        vocab_query = (
+            lf_train
+            .select(pl.col(col).cast(pl.String))
+            .group_by(col)
+            .len()
+            .filter(pl.col("len") >= min_freq)
+            .sort(col)  # Deterministic ordering
+        )
+
+        # Collect with streaming to reduce memory pressure
+        try:
+            counts = vocab_query.collect(streaming=True)
+        except Exception:
+            # Fallback if streaming not supported for this query
+            counts = vocab_query.collect()
+
         # Build mapping: value -> sequential ID (starting at 1, 0 = <UNK>)
         values = counts[col].to_list()
         mapping = {val: idx + 1 for idx, val in enumerate(values)}
-        
+
         feat_maps[col] = mapping
         vocab_sizes[col] = len(mapping) + 1  # +1 for <UNK> token
-    
+
+        # Explicitly free memory
+        del counts, values
+        gc.collect()
+
+        if (i + 1) % 10 == 0 or i == len(cat_cols) - 1:
+            print(f"  Built vocabulary for {i + 1}/{len(cat_cols)} columns")
+
     print(f"Built vocabularies for {len(cat_cols)} columns")
     return vocab_sizes, feat_maps
 
 
 # =============================================================================
-# Data Transformation (Expression-Based)
+# Data Transformation (Memory-Efficient with Streaming Sink)
 # =============================================================================
 def create_mapping_expressions(feat_maps: dict, cat_cols: list[str]) -> list[pl.Expr]:
     """
@@ -526,21 +564,22 @@ def transform_dataframe(
     feat_maps: dict,
     cat_cols: list[str],
     is_test: bool = False,
-    chunk_size: int = 1_000_000
+    chunk_size: int = 500_000
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
     """
-    Transform a lazy frame into numpy arrays using chunked processing to avoid OOM.
-    
-    Uses streaming collection to process data in chunks, significantly reducing
-    peak memory usage compared to collecting the entire dataset at once.
-    
+    Transform a lazy frame into numpy arrays using streaming sink to parquet.
+
+    MEMORY-OPTIMIZED: Uses streaming sink to write transformed data to a temporary
+    parquet file, then reads it back in chunks. This avoids holding the entire
+    transformed LazyFrame in memory and prevents re-evaluation per chunk.
+
     Args:
         lf: Input LazyFrame
         feat_maps: Feature value to ID mappings
         cat_cols: List of categorical column names
         is_test: Whether this is test data
-        chunk_size: Number of rows to process at once (default 1M)
-        
+        chunk_size: Number of rows to process at once (default 500K)
+
     Returns:
         X: Feature matrix (n_samples, n_features)
         extra: Labels (train) or IDs (test)
@@ -548,69 +587,87 @@ def transform_dataframe(
     """
     # Build all mapping expressions
     mapping_exprs = create_mapping_expressions(feat_maps, cat_cols)
-    
+
     # Select columns based on train/test
     if is_test:
         select_cols = ['id'] + cat_cols
     else:
         select_cols = ['click', 'hour'] + cat_cols
-    
-    # Apply all transformations and add row index for chunking
+
+    # Apply all transformations
     transformed_lf = (
         lf
         .select(select_cols)
         .with_columns(mapping_exprs)
-        .with_row_index("_row_idx")
     )
-    
-    # First pass: get total row count efficiently
-    total_rows = transformed_lf.select(pl.len()).collect().item()
-    print(f"  Total rows to process: {total_rows:,} in chunks of {chunk_size:,}")
-    
-    # Pre-allocate output arrays to avoid repeated concatenation
-    X = np.empty((total_rows, len(cat_cols)), dtype=np.int32)
-    
-    if is_test:
-        extra = np.empty(total_rows, dtype=object)
-        hour_data = None
-    else:
-        extra = np.empty(total_rows, dtype=np.float32)
-        hour_data = np.empty(total_rows, dtype=object)
-    
-    # Process in chunks
-    n_chunks = (total_rows + chunk_size - 1) // chunk_size
-    for chunk_idx in range(n_chunks):
-        start_idx = chunk_idx * chunk_size
-        end_idx = min(start_idx + chunk_size, total_rows)
-        
-        # Filter to current chunk and collect
-        chunk_df = (
-            transformed_lf
-            .filter(
-                (pl.col("_row_idx") >= start_idx) & 
-                (pl.col("_row_idx") < end_idx)
-            )
-            .drop("_row_idx")
-            .collect()
-        )
-        
-        # Extract data from chunk
+
+    # Create temp directory for intermediate parquet
+    temp_dir = tempfile.mkdtemp(prefix="polars_transform_")
+    temp_parquet = Path(temp_dir) / "transformed.parquet"
+
+    try:
+        print(f"  Streaming transformed data to temporary parquet...")
+
+        # Use streaming sink to write to parquet - this is memory-efficient
+        try:
+            transformed_lf.sink_parquet(temp_parquet)
+        except Exception as e:
+            # Fallback: collect with streaming and write
+            print(f"  Sink failed ({e}), using streaming collect fallback...")
+            df = transformed_lf.collect(streaming=True)
+            df.write_parquet(temp_parquet)
+            del df
+            gc.collect()
+
+        # Now read the parquet file in chunks using scan + slice
+        # First get total row count
+        total_rows = pl.scan_parquet(temp_parquet).select(pl.len()).collect().item()
+        print(f"  Total rows to process: {total_rows:,} in chunks of {chunk_size:,}")
+
+        # Pre-allocate output arrays
+        X = np.empty((total_rows, len(cat_cols)), dtype=np.int32)
+
         if is_test:
-            extra[start_idx:end_idx] = chunk_df['id'].to_numpy()
+            extra = np.empty(total_rows, dtype=object)
+            hour_data = None
         else:
-            extra[start_idx:end_idx] = chunk_df['click'].to_numpy().astype(np.float32)
-            hour_data[start_idx:end_idx] = chunk_df['hour'].to_numpy()
-        
-        # Extract features - use struct to avoid memory spike from to_numpy on many columns
-        X[start_idx:end_idx, :] = chunk_df.select(cat_cols).to_numpy().astype(np.int32)
-        
-        # Explicit cleanup after each chunk
-        del chunk_df
-        gc.collect()
-        
-        if (chunk_idx + 1) % 5 == 0 or chunk_idx == n_chunks - 1:
-            print(f"  Processed chunk {chunk_idx + 1}/{n_chunks}")
-    
+            extra = np.empty(total_rows, dtype=np.float32)
+            hour_data = np.empty(total_rows, dtype=object)
+
+        # Process in chunks by reading slices from parquet
+        n_chunks = (total_rows + chunk_size - 1) // chunk_size
+        for chunk_idx in range(n_chunks):
+            start_idx = chunk_idx * chunk_size
+            rows_in_chunk = min(chunk_size, total_rows - start_idx)
+
+            # Read chunk using slice (very efficient on parquet)
+            chunk_df = (
+                pl.scan_parquet(temp_parquet)
+                .slice(start_idx, rows_in_chunk)
+                .collect()
+            )
+
+            # Extract data from chunk
+            if is_test:
+                extra[start_idx:start_idx + rows_in_chunk] = chunk_df['id'].to_numpy()
+            else:
+                extra[start_idx:start_idx + rows_in_chunk] = chunk_df['click'].to_numpy().astype(np.float32)
+                hour_data[start_idx:start_idx + rows_in_chunk] = chunk_df['hour'].to_numpy()
+
+            # Extract features
+            X[start_idx:start_idx + rows_in_chunk, :] = chunk_df.select(cat_cols).to_numpy().astype(np.int32)
+
+            # Cleanup
+            del chunk_df
+            gc.collect()
+
+            if (chunk_idx + 1) % 10 == 0 or chunk_idx == n_chunks - 1:
+                print(f"  Processed chunk {chunk_idx + 1}/{n_chunks}")
+
+    finally:
+        # Clean up temp directory
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
     return X, extra, hour_data
 
 
@@ -619,24 +676,30 @@ def transform_dataframe(
 # =============================================================================
 def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict, list]:
     """
-    Main data processing pipeline using Polars best practices.
-    
-    OPTIMIZED: Minimizes materializations to only 2 required points:
+    Main data processing pipeline using memory-efficient Polars patterns.
+
+    MEMORY-OPTIMIZED for laptops and constrained environments:
+    - Sequential processing of count/vocabulary features (avoids parallel memory spike)
+    - Streaming collection where possible
+    - Explicit garbage collection between phases
+    - Streaming sink to parquet for final transformation
+
+    Materializations occur at:
     1. Count features (train stats -> join to both)
     2. Hourly features (train stats -> join to both)
-    
-    Everything else stays fully lazy until final collection.
-    
+    3. Vocabulary building (one column at a time)
+    4. Final transformation (via streaming parquet sink)
+
     Returns:
         X_train: Training feature matrix
-        y_train: Training labels  
+        y_train: Training labels
         train_hours: Hour strings for temporal splitting
         X_test: Test feature matrix
         test_ids: Test IDs
         vocab_sizes: Vocabulary sizes per column
         cat_cols: List of categorical column names
     """
-    print("Loading data with Polars (optimized single-query pipeline)...")
+    print("Loading data with Polars (memory-efficient pipeline)...")
     
     # Lazy load with explicit schema
     lf_train = pl.scan_csv(CONFIG['train_path'], schema_overrides=SCHEMA)
@@ -663,21 +726,23 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     # ==========================================================================
     # PHASE 2: Count features (REQUIRED materialization - train stats to both)
     # ==========================================================================
-    print("Computing count features (parallel)...")
+    print("Computing count features (memory-efficient)...")
     lf_train, lf_test = compute_count_features_from_train(
         lf_train, lf_test, COUNT_FEATURE_COLS
     )
-    
+    gc.collect()  # Free memory after materialization
+
     # Immediately add count binning (stays lazy)
     bin_exprs = bin_count_features(COUNT_FEATURE_COLS)
     lf_train = lf_train.with_columns(bin_exprs)
     lf_test = lf_test.with_columns(bin_exprs)
-    
+
     # ==========================================================================
     # PHASE 3: Hourly features (REQUIRED materialization - train stats to both)
     # ==========================================================================
-    print("Computing hourly aggregated features...")
+    print("Computing hourly aggregated features (memory-efficient)...")
     lf_train, lf_test = compute_hourly_aggregated_features(lf_train, lf_test)
+    gc.collect()  # Free memory after materialization
     
     # ==========================================================================
     # PHASE 4: All remaining features in a SINGLE expression batch (stays lazy)
@@ -757,29 +822,40 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     print(f"Total categorical features: {len(cat_cols)}")
     
     # ==========================================================================
-    # PHASE 6: Vocabulary building + final transformation (parallel collect)
+    # PHASE 6: Vocabulary building + final transformation (memory-efficient)
     # ==========================================================================
     vocab_sizes, feat_maps = build_vocabularies(
-        lf_train, 
-        cat_cols, 
+        lf_train,
+        cat_cols,
         CONFIG['min_freq']
     )
-    
-    print("Transforming data to numpy arrays...")
-    
+    gc.collect()  # Free memory after vocabulary building
+
+    print("Transforming data to numpy arrays (memory-efficient)...")
+
     # Transform train data
+    print("Processing training data...")
     X_train, y_train, train_hours_raw = transform_dataframe(
         lf_train, feat_maps, cat_cols, is_test=False
     )
     assert train_hours_raw is not None
     train_hours = train_hours_raw
     print(f"Train processed: {X_train.shape}")
-    
+
+    # Free train LazyFrame reference and collect garbage before test
+    del lf_train
+    gc.collect()
+
     # Transform test data
+    print("Processing test data...")
     X_test, test_ids, _ = transform_dataframe(
         lf_test, feat_maps, cat_cols, is_test=True
     )
     print(f"Test processed: {X_test.shape}")
+
+    # Free test LazyFrame reference
+    del lf_test
+    gc.collect()
     
     return X_train, y_train, train_hours, X_test, test_ids, vocab_sizes, cat_cols
 
