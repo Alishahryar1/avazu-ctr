@@ -597,7 +597,7 @@ def sink_to_parquet(
 
     # Use streaming sink to write to parquet - this is memory-efficient
     try:
-        raise Exception("Not supported")
+        transformed_lf.sink_parquet(output_path, row_group_size=row_group_size)
     except Exception as e:
         # Fallback: collect with streaming and write
         print(f"  Sink failed ({e}), using streaming collect fallback...")
