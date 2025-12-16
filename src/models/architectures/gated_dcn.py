@@ -6,7 +6,7 @@ from src.config.config import ConfigType
 from src.models.utils import compute_embedding_dim
 from src.models.architectures.base import BaseCTRModel, ModelOutput
 from src.models.losses import FocalLoss
-from src.models.layers.attention import SENetLayer
+from src.models.layers.senet import SENetLayer
 from src.models.layers.gating import FeatureGatingLayer
 from src.models.layers.cross_network import DCNv2
 from src.models.layers.mlp import ResidualMLP
