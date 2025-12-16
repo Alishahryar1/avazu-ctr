@@ -59,6 +59,9 @@ class ConfigType(TypedDict):
     auto_amp: bool  # Enable automatic mixed precision for faster training
     amp_dtype: str  # Options: 'float16' or 'bfloat16'
     
+    # Model Compilation
+    compile_model: bool  # Enable torch.compile for faster training
+    
     # Regularization
     mlp_dropout: float
     grad_clip: float
@@ -134,6 +137,9 @@ CONFIG: ConfigType = {
     # === Automatic Mixed Precision (AMP) ===
     "auto_amp": True,  # Enable AMP for faster training on CUDA (uses float16/bfloat16)
     "amp_dtype": "float16",  # Options: 'float16' (more compatible), 'bfloat16' (better numerics)
+    
+    # === Model Compilation ===
+    "compile_model": False,  # Enable torch.compile for faster training (requires PyTorch 2.0+)
     
     # === Regularization ===
     "lr_warmup_epoch_ratio": 0.1,

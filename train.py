@@ -200,8 +200,11 @@ def train():
     print("\nStep 3: Initializing Model...")
     model = GatedDCNModel(vocab_sizes, feature_names, CONFIG)
     model.to(CONFIG['device'])
-    model = torch.compile(model, mode="reduce-overhead")
-    print("Model compiled with torch.compile (mode='reduce-overhead')")
+    if CONFIG['compile_model']:
+        model = torch.compile(model, mode="reduce-overhead")
+        print("Model compiled with torch.compile (mode='reduce-overhead')")
+    else:
+        print("Model compilation disabled (compile_model=False)")
 
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
