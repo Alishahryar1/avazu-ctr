@@ -3,7 +3,8 @@ import torch
 import torch.nn as nn
 
 from src.config.config import ConfigType
-from src.models.architectures.base import BaseCTRModel, ModelOutput
+from src.models.types import ModelOutput
+from src.models.architectures.base import BaseCTRModel
 from src.models.architectures.gated_dcn import GatedDCNModel
 from src.models.losses import KBCELoss
 

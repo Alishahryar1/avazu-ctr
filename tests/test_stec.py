@@ -3,7 +3,10 @@ import unittest
 import torch
 import torch.nn as nn
 from src.config.config import CONFIG, ConfigType
-from src.models.layers.stec_block import STECBlock, MultiHeadSTEC, PositionWiseFFN, STECEncoderLayer
+from src.models.layers.stec_block import STECBlock
+from src.models.layers.multi_head_stec import MultiHeadSTEC
+from src.models.layers.position_wise_ffn import PositionWiseFFN
+from src.models.layers.stec_encoder import STECEncoderLayer
 from src.models.architectures.stec import STECModel, BilinearInteractionLayer
 from tests.test_models import make_test_config
 

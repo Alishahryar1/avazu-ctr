@@ -4,7 +4,8 @@ import torch.nn as nn
 
 from src.config.config import ConfigType
 from src.models.utils import compute_embedding_dim
-from src.models.architectures.base import BaseCTRModel, ModelOutput
+from src.models.types import ModelOutput
+from src.models.architectures.base import BaseCTRModel
 from src.models.losses import FocalLoss
 from src.models.layers.senet import SENetLayer
 from src.models.layers.gating import FeatureGatingLayer

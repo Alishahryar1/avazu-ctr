@@ -1,17 +1,21 @@
-"""Model layers for CTR prediction."""
-from src.models.layers.senet import SENetLayer
-from src.models.layers.gating import FeatureGatingLayer
-from src.models.layers.cross_network import DCNv2
-from src.models.layers.mlp import ResidualMLP
-
-from src.models.layers.stec_block import STECBlock, MultiHeadSTEC
+from .cross_network import DCNv2
+from .gating import FeatureGatingLayer
+from .mlp import ResidualMLP
+from .senet import SENetLayer
+from .stec_block import STECBlock
+from .stec_encoder import STECEncoderLayer
+from .multi_head_stec import MultiHeadSTEC
+from .position_wise_ffn import PositionWiseFFN
+from .bilinear_interaction import BilinearInteractionLayer
 
 __all__ = [
-    'SENetLayer',
-    'FeatureGatingLayer',
     'DCNv2',
+    'FeatureGatingLayer',
     'ResidualMLP',
+    'SENetLayer',
     'STECBlock',
+    'STECEncoderLayer',
     'MultiHeadSTEC',
+    'PositionWiseFFN',
+    'BilinearInteractionLayer',
 ]
-
