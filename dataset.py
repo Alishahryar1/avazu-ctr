@@ -230,22 +230,4 @@ class ParquetBatchDataset(Dataset):
         return self.n_samples
 
 
-# Keep old class for backward compatibility (but it's memory-intensive)
-class AvazuDataset(Dataset):
-    """
-    Legacy in-memory dataset. Use ParquetDataset or ParquetBatchDataset instead.
 
-    This loads all data into memory, which may cause OOM on large datasets.
-    """
-
-    def __init__(self, X, y=None):
-        self.X = torch.tensor(X, dtype=torch.long)
-        self.y = torch.tensor(y, dtype=torch.float32) if y is not None else None
-
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, index):
-        if self.y is not None:
-            return self.X[index], self.y[index]
-        return self.X[index]

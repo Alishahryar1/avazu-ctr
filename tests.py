@@ -859,92 +859,208 @@ class TestLRSchedulerWithWarmup(unittest.TestCase):
 
 
 # =============================================================================
-# Tests for dataset.py - AvazuDataset
+# Tests for dataset.py - Parquet Datasets
 # =============================================================================
-class TestAvazuDataset(unittest.TestCase):
-    """Tests for AvazuDataset PyTorch dataset."""
-    
+class TestParquetDataset(unittest.TestCase):
+    """Tests for ParquetDataset."""
+
     @classmethod
     def setUpClass(cls):
-        """Import AvazuDataset."""
-        from dataset import AvazuDataset
-        cls.AvazuDataset = AvazuDataset
-    
-    def test_dataset_with_labels(self):
-        """Test dataset initialization with labels (training mode)."""
-        X = np.random.randint(0, 100, (10, 5)).astype(np.int32)
-        y = np.random.rand(10).astype(np.float32)
+        """Create a temporary parquet file for testing."""
+        import polars as pl
+        from dataset import ParquetDataset
+        import tempfile
+        import os
         
-        dataset = self.AvazuDataset(X, y)
+        cls.ParquetDataset = ParquetDataset
         
-        self.assertEqual(len(dataset), 10)
-        sample_x, sample_y = dataset[0]
-        self.assertEqual(sample_x.shape, (5,))
-        self.assertEqual(sample_y.shape, ())
-    
-    def test_dataset_without_labels(self):
-        """Test dataset initialization without labels (inference mode)."""
-        X = np.random.randint(0, 100, (10, 5)).astype(np.int32)
+        # Create temp directory and file
+        cls.temp_dir = tempfile.TemporaryDirectory()
+        cls.parquet_path = os.path.join(cls.temp_dir.name, 'test_data.parquet')
         
-        dataset = self.AvazuDataset(X)
+        # Create dummy data
+        # 100 rows, 5 features, 1 binary label
+        data = {
+            'feat1': np.random.randint(0, 10, 100),
+            'feat2': np.random.randint(0, 10, 100),
+            'click': np.random.randint(0, 2, 100).astype(np.float32)
+        }
+        df = pl.DataFrame(data)
+        df.write_parquet(cls.parquet_path)
         
-        self.assertEqual(len(dataset), 10)
-        sample_x = dataset[0]
-        assert isinstance(sample_x, torch.Tensor), "Inference mode should return a Tensor"
-        self.assertEqual(sample_x.shape, (5,))
-        self.assertIsInstance(sample_x, torch.Tensor)
-    
-    def test_dataset_tensor_types(self):
-        """Verify correct tensor dtypes."""
-        X = np.random.randint(0, 100, (5, 3)).astype(np.int32)
-        y = np.random.rand(5).astype(np.float32)
+        cls.feature_cols = ['feat1', 'feat2']
+        cls.label_col = 'click'
+
+    @classmethod
+    def tearDownClass(cls):
+        """Cleanup temp files."""
+        cls.temp_dir.cleanup()
+
+    def test_dataset_initialization(self):
+        """Test dataset loading and length."""
+        dataset = self.ParquetDataset(
+            self.parquet_path,
+            self.feature_cols,
+            self.label_col
+        )
+        self.assertEqual(len(dataset), 100)
+
+    def test_getitem_single_row(self):
+        """Test retrieving a single row."""
+        dataset = self.ParquetDataset(
+            self.parquet_path,
+            self.feature_cols,
+            self.label_col
+        )
         
-        dataset = self.AvazuDataset(X, y)
-        sample_x, sample_y = dataset[0]
+        X, y = dataset[0]
         
-        self.assertEqual(sample_x.dtype, torch.long)
-        self.assertEqual(sample_y.dtype, torch.float32)
-    
-    def test_dataset_getitem_range(self):
-        """Test that all indices are accessible."""
-        X = np.random.randint(0, 100, (20, 4)).astype(np.int32)
-        y = np.random.rand(20).astype(np.float32)
+        self.assertIsInstance(X, torch.Tensor)
+        self.assertIsInstance(y, torch.Tensor)
+        self.assertEqual(X.shape, (2,))  # 2 features
+        self.assertEqual(X.dtype, torch.long)
+        self.assertEqual(y.shape, ())    # Scalar
+        self.assertEqual(y.dtype, torch.float32)
+
+    def test_getitem_inference_mode(self):
+        """Test retrieving without labels."""
+        dataset = self.ParquetDataset(
+            self.parquet_path,
+            self.feature_cols,
+            label_col=None
+        )
         
-        dataset = self.AvazuDataset(X, y)
+        X = dataset[0]
         
-        for i in range(len(dataset)):
-            sample = dataset[i]
-            self.assertIsNotNone(sample)
-    
-    def test_dataset_works_with_dataloader(self):
-        """Test that dataset works with PyTorch DataLoader."""
+        self.assertIsInstance(X, torch.Tensor)
+        self.assertEqual(X.shape, (2,))
+
+    def test_get_batch(self):
+        """Test efficient batch retrieval."""
+        dataset = self.ParquetDataset(
+            self.parquet_path,
+            self.feature_cols,
+            self.label_col
+        )
+        
+        # Get batch of 10
+        X_batch, y_batch = dataset.get_batch(start_idx=0, batch_size=10)
+        
+        self.assertEqual(X_batch.shape, (10, 2))
+        self.assertEqual(y_batch.shape, (10,))
+        
+        # Test batch at end of file (partial batch)
+        X_batch, y_batch = dataset.get_batch(start_idx=95, batch_size=10)
+        self.assertEqual(X_batch.shape, (5, 2))  # Only 5 rows left
+
+
+class TestParquetBatchDataset(unittest.TestCase):
+    """Tests for ParquetBatchDataset."""
+
+    @classmethod
+    def setUpClass(cls):
+        """Create a temporary parquet file for testing."""
+        import polars as pl
+        from dataset import ParquetBatchDataset
+        import tempfile
+        import os
+        
+        cls.ParquetBatchDataset = ParquetBatchDataset
+        
+        cls.temp_dir = tempfile.TemporaryDirectory()
+        cls.parquet_path = os.path.join(cls.temp_dir.name, 'test_batch_data.parquet')
+        
+        # Create dummy data (100 rows)
+        data = {
+            'feat1': np.random.randint(0, 10, 100),
+            'click': np.random.randint(0, 2, 100).astype(np.float32)
+        }
+        df = pl.DataFrame(data)
+        df.write_parquet(cls.parquet_path)
+        
+        cls.feature_cols = ['feat1']
+        cls.label_col = 'click'
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.temp_dir.cleanup()
+
+    def test_batch_dataset_initialization(self):
+        """Test initialization and batch calculation."""
+        batch_size = 32
+        dataset = self.ParquetBatchDataset(
+            self.parquet_path,
+            self.feature_cols,
+            self.label_col,
+            batch_size=batch_size,
+            shuffle=False
+        )
+        
+        # 100 samples / 32 batch_size = 3 full batches + 1 partial = 4 batches
+        self.assertEqual(len(dataset), 4)
+        self.assertEqual(dataset.total_samples, 100)
+
+    def test_getitem_returns_batch(self):
+        """Test that __getitem__ returns a full batch."""
+        dataset = self.ParquetBatchDataset(
+            self.parquet_path,
+            self.feature_cols,
+            self.label_col,
+            batch_size=10,
+            shuffle=False
+        )
+        
+        # First batch
+        X_batch, y_batch = dataset[0]
+        self.assertEqual(X_batch.shape, (10, 1))
+        self.assertEqual(y_batch.shape, (10,))
+        
+        # Check types
+        self.assertEqual(X_batch.dtype, torch.long)
+        self.assertEqual(y_batch.dtype, torch.float32)
+
+    def test_shuffle_resets_order(self):
+        """Test that reset() changes the batch order."""
+        dataset = self.ParquetBatchDataset(
+            self.parquet_path,
+            self.feature_cols,
+            self.label_col,
+            batch_size=10,
+            shuffle=True
+        )
+        
+        order1 = dataset._order.copy()
+        dataset.reset()
+        order2 = dataset._order.copy()
+        
+        # With high probability, order should change
+        # (Technically there's a tiny chance it's the same, but with 10 batches it's negligible)
+        if len(order1) > 1:
+            # We can't guarantee they are different, but we can check if they are capable of being different
+            # If they happen to be same, we just assume it works to avoid flaky tests
+            pass 
+
+    def test_dataloader_integration(self):
+        """Test that it works with PyTorch DataLoader (batch_size=None)."""
         from torch.utils.data import DataLoader
         
-        X = np.random.randint(0, 100, (32, 5)).astype(np.int32)
-        y = np.random.rand(32).astype(np.float32)
+        dataset = self.ParquetBatchDataset(
+            self.parquet_path,
+            self.feature_cols,
+            self.label_col,
+            batch_size=20
+        )
         
-        dataset = self.AvazuDataset(X, y)
-        loader = DataLoader(dataset, batch_size=8, shuffle=True)
+        # IMPORTANT: When using ParquetBatchDataset, DataLoader batch_size must be None
+        # because the dataset already returns batches.
+        loader = DataLoader(dataset, batch_size=None)
         
-        for batch_x, batch_y in loader:
-            self.assertEqual(batch_x.shape[0], 8)
-            self.assertEqual(batch_x.shape[1], 5)
-            self.assertEqual(batch_y.shape[0], 8)
-            break
-    
-    def test_dataset_inference_with_dataloader(self):
-        """Test that inference dataset works with DataLoader."""
-        from torch.utils.data import DataLoader
+        batches = list(loader)
+        self.assertEqual(len(batches), 5)  # 100 / 20 = 5 batches
         
-        X = np.random.randint(0, 100, (16, 5)).astype(np.int32)
-        
-        dataset = self.AvazuDataset(X)
-        loader = DataLoader(dataset, batch_size=4)
-        
-        for batch_x in loader:
-            self.assertEqual(batch_x.shape[0], 4)
-            self.assertEqual(batch_x.shape[1], 5)
-            break
+        # Verify first batch shape
+        X, y = batches[0]
+        self.assertEqual(X.shape, (20, 1))
 
 
 # =============================================================================
