@@ -404,7 +404,6 @@ def compute_hourly_aggregated_features(
     Returns:
         Updated train and test LazyFrames with hourly features
     """
-    print("Computing hourly aggregated features...")
     
     # Compute user impressions per hour from training data
     hourly_counts = (
