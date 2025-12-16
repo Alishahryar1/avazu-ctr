@@ -106,8 +106,8 @@ CONFIG: ConfigType = {
     "validation_split": 0.0,  # Hold out 1% for validation
     
     # === Model Architecture - Embeddings ===
-    "embedding_dim": 64,  # Default/fallback embedding dimension
-    "use_variable_embeddings": True,  # Enable cardinality-based embedding dimensions
+    "embedding_dim": 16,  # Default/fallback embedding dimension
+    "use_variable_embeddings": False,  # Enable cardinality-based embedding dimensions
     # Cardinality rules: (max_vocab_size, embedding_dim) - sorted ascending
     # Based on EDA analysis of actual feature cardinalities
     "embedding_dim_rules": [
@@ -141,13 +141,12 @@ CONFIG: ConfigType = {
     # === Model Architecture - STEC ===
     "use_stec": True,
     "stec_num_layers": 2,
-    "stec_num_heads": 4,
+    "stec_num_heads": 2,
     "stec_hidden_dim": None,  # Defaults to 4 * embed_dim
     "stec_dropout": 0.1,
     "stec_use_ffn": True,
-    "stec_mlp_hidden_dims": [1024, 512, 256],
+    "stec_mlp_hidden_dims": [1024, 512],
     
-
     # === Model Architecture - MLP ===
     "mlp_hidden_dims": [1024, 512],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
