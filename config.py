@@ -152,7 +152,7 @@ CONFIG: ConfigType = {
     
     # === Ensemble ===
     "use_ensemble": True,  # Enable ensemble of k identical models
-    "ensemble_k": 4,  # Number of models in ensemble
+    "ensemble_k": 2,  # Number of models in ensemble
     "ensemble_aggregation": "mean",  # Aggregation method: 'mean' or 'median'
     
     # === Regularization ===

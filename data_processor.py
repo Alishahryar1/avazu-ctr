@@ -830,7 +830,7 @@ def load_metadata() -> tuple[dict, list]:
         with open(path / "feature_names.pkl", "rb") as f:
             feature_names = pickle.load(f)
 
-        return vocab_sizes, sorted(feature_names)
+        return vocab_sizes, feature_names
 
     except FileNotFoundError as e:
         raise FileNotFoundError(

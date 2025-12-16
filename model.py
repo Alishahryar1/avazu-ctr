@@ -508,84 +508,20 @@ class GatedDCNModel(nn.Module):
         return logits  # Return raw logits for numerical stability
 
 
-class EnsembleTower(nn.Module):
-    """
-    A single tower (DCN + Feature Gating + MLP) for the ensemble.
-    Does NOT include embeddings - receives embedded input directly.
-    """
-    def __init__(self, working_dim: int, config: ConfigType, seed: int):
-        super().__init__()
-        torch.manual_seed(seed)
-        
-        use_dcn = config['use_dcn']
-        dcn_num_layers = config['dcn_num_layers']
-        dcn_use_layernorm = config['dcn_use_layernorm']
-        dcn_low_rank = config['dcn_low_rank']
-        use_feature_gating = config['use_feature_gating']
-        feature_gating_activation = config['feature_gating_activation']
-        mlp_hidden_dims = config['mlp_hidden_dims']
-        mlp_dropout = config['mlp_dropout']
-        use_layer_norm = config['use_layer_norm']
-        mlp_activation = config['mlp_activation']
-        
-        self.use_dcn = use_dcn
-        self.use_feature_gating = use_feature_gating
-        
-        # Feature Gating Layer - Optional
-        if use_feature_gating:
-            feature_gating_low_rank = config['feature_gating_low_rank']
-            self.feature_gating = FeatureGatingLayer(
-                input_dim=working_dim,
-                gating_activation=feature_gating_activation,
-                low_rank=feature_gating_low_rank
-            )
-
-        # DCNv2 - Optional
-        if use_dcn:
-            self.dcn = DCNv2(working_dim, num_layers=dcn_num_layers, use_layernorm=dcn_use_layernorm, low_rank=dcn_low_rank)
-
-        # MLP with optional skip connections
-        mlp_use_skip_connections = config['mlp_use_skip_connections']
-        self.mlp = ResidualMLP(
-            input_dim=working_dim,
-            hidden_dims=mlp_hidden_dims,
-            output_dim=1,
-            activation=mlp_activation,
-            dropout=mlp_dropout,
-            use_layer_norm=use_layer_norm,
-            use_skip_connections=mlp_use_skip_connections
-        )
-
-    def forward(self, x):
-        # x shape: [Batch, Working_Dim] - already embedded and normalized
-        
-        # Apply Feature Gating - Optional
-        if self.use_feature_gating:
-            x = self.feature_gating(x)
-
-        # Apply Cross Network (Interactions) - Optional
-        if self.use_dcn:
-            x = self.dcn(x)
-
-        # Final Prediction
-        logits = self.mlp(x)
-        return logits
-
-
 class EnsembleModel(nn.Module):
     """
-    Ensemble of k towers with SHARED embeddings.
+    Ensemble of k identical GatedDCNModel instances.
     
-    The embedding layer is shared across all models to reduce memory usage
-    and allow the embeddings to learn from all towers. Each tower has its own
-    DCN/Feature Gating/MLP layers initialized with different random seeds.
+    Each model is initialized with a different random seed for diversity.
+    During inference, predictions are averaged across all models.
+    During training, each model can be trained independently or jointly.
     
     Args:
         vocab_sizes: Dictionary mapping feature names to vocabulary sizes.
         feature_names: List of feature names in order.
         config: Configuration dictionary with model hyperparameters.
-        k: Number of towers in the ensemble (default from config['ensemble_k']).
-        base_seed: Base seed for reproducibility. Tower i uses seed = base_seed + i.
+        k: Number of models in the ensemble (default from config['ensemble_k']).
+        base_seed: Base seed for reproducibility. Model i uses seed = base_seed + i.
     """
     def __init__(
         self,
@@ -597,107 +533,38 @@ class EnsembleModel(nn.Module):
     ):
         super().__init__()
         
+        # Get ensemble size from config or use provided k
         self.k: int = k if k is not None else config['ensemble_k']
         self.base_seed: int = base_seed if base_seed is not None else config['seed']
         self.ensemble_aggregation: str = config['ensemble_aggregation']
-        self.feature_names = feature_names
         
-        # Extract config values for embeddings
-        embedding_dim = config['embedding_dim']
-        use_layer_norm = config['use_layer_norm']
-        use_variable_embeddings = config.get('use_variable_embeddings', False)
-        feature_overrides = config.get('feature_embedding_overrides', {})
-        projection_dim = config.get('embedding_projection_dim', None)
-        
-        self.use_layer_norm = use_layer_norm
-        
-        # ========== SHARED EMBEDDING LAYER ==========
-        torch.manual_seed(self.base_seed)  # Use base seed for embeddings
-        
-        self.embeddings = nn.ModuleDict()
-        self.feature_dims: dict[str, int] = {}
-        total_embed_dim = 0
-        
-        for feat in feature_names:
-            if feat in feature_overrides and 'embedding_dim' in feature_overrides[feat]:
-                feat_dim = feature_overrides[feat]['embedding_dim']
-            elif use_variable_embeddings:
-                feat_dim = compute_embedding_dim(vocab_sizes[feat], config)
-            else:
-                feat_dim = embedding_dim
-            
-            self.feature_dims[feat] = feat_dim
-            emb = nn.Embedding(vocab_sizes[feat], feat_dim)
-            nn.init.xavier_uniform_(emb.weight)
-            self.embeddings[feat] = emb
-            total_embed_dim += feat_dim
-        
-        self.total_embed_dim = total_embed_dim
-        self.use_projection = projection_dim is not None
-        
-        # Optional Projection Layer (also shared)
-        if self.use_projection and projection_dim is not None:
-            self.projection = nn.Linear(total_embed_dim, projection_dim)
-            nn.init.xavier_uniform_(self.projection.weight)
-            nn.init.zeros_(self.projection.bias)
-            working_dim = projection_dim
-        else:
-            working_dim = total_embed_dim
-        
-        self.working_dim = working_dim
-        
-        # Layer norm after embeddings (shared)
-        if use_layer_norm:
-            self.embed_ln = nn.LayerNorm(working_dim)
-        
-        # ========== K SEPARATE TOWERS ==========
-        self.towers = nn.ModuleList()
+        # Create k models with different random initializations
+        self.models = nn.ModuleList()
         for i in range(self.k):
-            tower = EnsembleTower(working_dim, config, seed=self.base_seed + i)
-            self.towers.append(tower)
+            # Set unique seed for each model's initialization
+            torch.manual_seed(self.base_seed + i)
+            model = GatedDCNModel(vocab_sizes, feature_names, config)
+            self.models.append(model)
         
         # Reset to base seed after initialization
         torch.manual_seed(self.base_seed)
     
-    def _embed(self, x):
-        """Shared embedding computation."""
-        # x shape: [Batch, Num_Features]
-        embeds = []
-        for i, feat in enumerate(self.feature_names):
-            embeds.append(self.embeddings[feat](x[:, i]))
-        
-        # Concatenate: [Batch, Total_Embed_Dim]
-        dnn_input = torch.cat(embeds, dim=1)
-        
-        # Apply optional projection
-        if self.use_projection:
-            dnn_input = self.projection(dnn_input)
-        
-        # Apply layer norm
-        if self.use_layer_norm:
-            dnn_input = self.embed_ln(dnn_input)
-        
-        return dnn_input
-    
     def forward(self, x, return_all_logits: bool = False):
         """
-        Forward pass: shared embeddings -> k separate towers -> aggregate.
+        Forward pass through all models in the ensemble.
         
         Args:
             x: Input tensor of shape [Batch, Num_Features]
-            return_all_logits: If True, return logits from all towers instead of aggregated.
+            return_all_logits: If True, return logits from all models instead of aggregated.
+                               Useful for training individual models.
         
         Returns:
             If return_all_logits=False: Aggregated logits [Batch, 1]
             If return_all_logits=True: Stacked logits [K, Batch, 1]
         """
-        # Shared embedding computation (done once)
-        embedded = self._embed(x)
-        
-        # Pass through each tower
         all_logits = []
-        for tower in self.towers:
-            logits = tower(embedded)
+        for model in self.models:
+            logits = model(x)
             all_logits.append(logits)
         
         # Stack all logits: [K, Batch, 1]
@@ -708,25 +575,35 @@ class EnsembleModel(nn.Module):
         
         # Aggregate predictions
         if self.ensemble_aggregation == 'mean':
+            # Average logits (equivalent to geometric mean of probabilities in log-space)
             return stacked_logits.mean(dim=0)
         elif self.ensemble_aggregation == 'median':
             return stacked_logits.median(dim=0).values
         else:
             raise ValueError(f"Unknown aggregation method: {self.ensemble_aggregation}")
     
-    def forward_single(self, x, tower_idx: int):
-        """Forward pass through shared embeddings + a single tower."""
-        if tower_idx < 0 or tower_idx >= self.k:
-            raise ValueError(f"tower_idx must be in range [0, {self.k-1}], got {tower_idx}")
-        embedded = self._embed(x)
-        return self.towers[tower_idx](embedded)
+    def forward_single(self, x, model_idx: int):
+        """
+        Forward pass through a single model in the ensemble.
+        Useful for training individual models.
+        
+        Args:
+            x: Input tensor of shape [Batch, Num_Features]
+            model_idx: Index of the model to use (0 to k-1)
+        
+        Returns:
+            Logits from the specified model [Batch, 1]
+        """
+        if model_idx < 0 or model_idx >= self.k:
+            raise ValueError(f"model_idx must be in range [0, {self.k-1}], got {model_idx}")
+        return self.models[model_idx](x)
     
-    def get_tower(self, idx: int) -> EnsembleTower:
-        """Get a specific tower from the ensemble."""
-        tower = self.towers[idx]
-        assert isinstance(tower, EnsembleTower)
-        return tower
+    def get_model(self, idx: int) -> "GatedDCNModel":
+        """Get a specific model from the ensemble."""
+        model = self.models[idx]
+        assert isinstance(model, GatedDCNModel)
+        return model
     
-    def num_towers(self) -> int:
-        """Return the number of towers in the ensemble."""
+    def num_models(self) -> int:
+        """Return the number of models in the ensemble."""
         return self.k
