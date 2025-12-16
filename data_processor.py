@@ -605,7 +605,7 @@ def sink_to_parquet(
     except Exception as e:
         # Fallback: collect with streaming and write
         print(f"  Sink failed ({e}), using streaming collect fallback...")
-        df = transformed_lf.collect(streaming=True)
+        df = transformed_lf.collect(engine='streaming')
         df.write_parquet(output_path)
         del df
         gc.collect()
