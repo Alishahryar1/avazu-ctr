@@ -13,10 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 from src.config.config import CONFIG, seed_everything
 from src.processing.data_processor import load_metadata, get_parquet_path, get_parquet_row_count
 from src.processing.dataset import ParquetFullDataset
-from src.models.architectures.base_model import GatedDCNModel
-from src.models.architectures.ensemble import EnsembleModel
-from src.models.architectures.fcnv2 import FCNv2Model
-from src.training.losses import FocalLoss, KBCELoss
+from src.models.architectures import create_model
 from src.training.schedulers import LRSchedulerWithWarmup
 from src.training.evaluator import evaluate
 
@@ -104,18 +101,8 @@ def train():
 
     # 3. Model Initialization
     print("\nStep 3: Initializing Model...")
-    use_ensemble = CONFIG['use_ensemble']
-    use_fcnv2 = CONFIG.get('use_fcnv2', False)
-    
-    if use_fcnv2:
-        model = FCNv2Model(vocab_sizes, feature_names, CONFIG)
-        print("Using FCNv2 model (dual-path cross network)")
-    elif use_ensemble:
-        model = EnsembleModel(vocab_sizes, feature_names, CONFIG)
-        print(f"Using ensemble of {CONFIG['ensemble_k']} models (aggregation={CONFIG['ensemble_aggregation']})")
-    else:
-        model = GatedDCNModel(vocab_sizes, feature_names, CONFIG)
-        print("Using GatedDCNModel")
+    model = create_model(CONFIG, vocab_sizes, feature_names)
+    print(f"Using {model.model_name()} model")
     model.to(CONFIG['device'])
     if CONFIG['compile_model']:
         model = torch.compile(model, mode="reduce-overhead")
@@ -130,19 +117,8 @@ def train():
     print(f"Total parameters: {total_params:,}")
     print(f"Trainable parameters: {trainable_params:,}")
 
-    # 4. Loss, Optimizer, Scheduler
+    # 4. Optimizer, Scheduler (loss is now handled by model internally)
     print("\nStep 4: Setting up Training Components...")
-
-    # Use appropriate loss function
-    if use_fcnv2 or use_ensemble:
-        criterion = KBCELoss()
-        print("Using KBCELoss for multi-branch architecture")
-    elif CONFIG['focal_loss_gamma'] > 0:
-        criterion = FocalLoss(gamma=CONFIG['focal_loss_gamma'])
-        print(f"Using Focal Loss (gamma={CONFIG['focal_loss_gamma']})")
-    else:
-        criterion = nn.BCEWithLogitsLoss()
-        print("Using BCEWithLogits Loss")
 
     # Separate parameters for embeddings vs other layers
     embedding_params = []
@@ -244,36 +220,9 @@ def train():
 
                 # Forward pass with optional AMP
                 with torch.amp.autocast(device_type='cuda', dtype=amp_dtype, enabled=use_amp):
-                    if isinstance(model, EnsembleModel):
-                        # Get logits from all models: [K, Batch, 1]
-                        stacked_logits = model(X_batch, return_all_logits=True)
-
-                        # Aggregate logits for combined prediction
-                        if model.ensemble_aggregation == 'mean':
-                            ensemble_logits = stacked_logits.mean(dim=0)
-                        elif model.ensemble_aggregation == 'median':
-                            ensemble_logits = stacked_logits.median(dim=0).values
-                        else:
-                            raise ValueError(f"Unknown aggregation: {model.ensemble_aggregation}")
-
-                        # Convert stacked logits to list of branches for KBCELoss
-                        # stacked_logits shape: [K, Batch, 1] -> list of K tensors [Batch, 1]
-                        branch_logits = [stacked_logits[i] for i in range(model.k)]
-                        
-                        # Use same interface as FCNv2: combined output + list of branches
-                        loss = criterion(ensemble_logits, branch_logits, y_batch)
-                    elif isinstance(model, FCNv2Model):
-                        # FCNv2 returns dict with y_pred, y_d, y_s
-                        output = model(X_batch)
-                        loss = criterion(
-                            output['y_pred'],
-                            [output['y_d'], output['y_s']],  # k=2 branches for FCN
-                            y_batch
-                        )
-                    else:
-                        # Standard single model (GatedDCNModel)
-                        logits = model(X_batch)
-                        loss = criterion(logits, y_batch)
+                    # Unified interface: all models handle their own loss internally
+                    output = model(X_batch)
+                    loss = model.compute_loss(output, y_batch)
 
                 # Backward pass with gradient scaling for AMP
                 if use_amp and scaler is not None:
@@ -320,7 +269,7 @@ def train():
 
             # Validation (only if enabled)
             if use_validation and val_loader is not None:
-                val_loss, val_auc, val_logloss = evaluate(model, val_loader, criterion, CONFIG['device'], use_amp=use_amp, amp_dtype=amp_dtype)
+                val_loss, val_auc, val_logloss = evaluate(model, val_loader, CONFIG['device'], use_amp=use_amp, amp_dtype=amp_dtype)
 
                 # Log epoch metrics to TensorBoard
                 if writer is not None:

@@ -145,7 +145,7 @@ class TestModelStructure(unittest.TestCase):
         with torch.no_grad():
             output = self.model(x)
         
-        self.assertEqual(output.shape, (batch_size, 1), "Output shape mismatch")
+        self.assertEqual(output['logits'].shape, (batch_size, 1), "Output shape mismatch")
     
     def test_embedding_dim(self):
         """Verify embeddings have correct dimension."""
@@ -178,7 +178,7 @@ class TestModelWithProductionConfig(unittest.TestCase):
         with torch.no_grad():
             output = self.model(x)
         
-        self.assertEqual(output.shape, (batch_size, 1), "Output shape mismatch")
+        self.assertEqual(output['logits'].shape, (batch_size, 1), "Output shape mismatch")
     
     def test_production_config_dcn_layers(self):
         """Verify DCN layers match production config (if enabled)."""
@@ -268,7 +268,7 @@ class TestModelVariants(unittest.TestCase):
         model = GatedDCNModel({'f1': 100}, ['f1'], config)
         x = torch.randint(0, 100, (4, 1))
         out = model(x)
-        self.assertEqual(out.shape, (4, 1))
+        self.assertEqual(out['logits'].shape, (4, 1))
     
     def test_model_without_senet(self):
         """Test model with SENET disabled."""
@@ -276,7 +276,7 @@ class TestModelVariants(unittest.TestCase):
         model = GatedDCNModel({'f1': 100}, ['f1'], config)
         x = torch.randint(0, 100, (4, 1))
         out = model(x)
-        self.assertEqual(out.shape, (4, 1))
+        self.assertEqual(out['logits'].shape, (4, 1))
     
     def test_model_without_batch_norm(self):
         """Test model with batch norm disabled."""
@@ -284,7 +284,7 @@ class TestModelVariants(unittest.TestCase):
         model = GatedDCNModel({'f1': 100}, ['f1'], config)
         x = torch.randint(0, 100, (4, 1))
         out = model(x)
-        self.assertEqual(out.shape, (4, 1))
+        self.assertEqual(out['logits'].shape, (4, 1))
     
     def test_model_with_low_rank_dcn(self):
         """Test model with low-rank DCN."""
@@ -292,7 +292,7 @@ class TestModelVariants(unittest.TestCase):
         model = GatedDCNModel({'f1': 100}, ['f1'], config)
         x = torch.randint(0, 100, (4, 1))
         out = model(x)
-        self.assertEqual(out.shape, (4, 1))
+        self.assertEqual(out['logits'].shape, (4, 1))
     
     def test_model_minimal(self):
         """Test model with minimal config (no DCN, no SENET)."""
@@ -300,7 +300,7 @@ class TestModelVariants(unittest.TestCase):
         model = GatedDCNModel({'f1': 100}, ['f1'], config)
         x = torch.randint(0, 100, (4, 1))
         out = model(x)
-        self.assertEqual(out.shape, (4, 1))
+        self.assertEqual(out['logits'].shape, (4, 1))
 class TestMutualExclusivity(unittest.TestCase):
     """Tests for mutual exclusivity between SENET and Feature Gating."""
     
@@ -317,7 +317,7 @@ class TestMutualExclusivity(unittest.TestCase):
         model = GatedDCNModel({'f1': 100}, ['f1'], config)
         x = torch.randint(0, 100, (4, 1))
         out = model(x)
-        self.assertEqual(out.shape, (4, 1))
+        self.assertEqual(out['logits'].shape, (4, 1))
         self.assertTrue(hasattr(model, 'feature_gating'), "Model should have feature_gating layer")
     
     def test_model_with_neither_senet_nor_feature_gating(self):
@@ -326,7 +326,7 @@ class TestMutualExclusivity(unittest.TestCase):
         model = GatedDCNModel({'f1': 100}, ['f1'], config)
         x = torch.randint(0, 100, (4, 1))
         out = model(x)
-        self.assertEqual(out.shape, (4, 1))
+        self.assertEqual(out['logits'].shape, (4, 1))
     
     def test_model_with_senet_only(self):
         """Test model with SENET enabled and Feature Gating disabled (default)."""
@@ -334,7 +334,7 @@ class TestMutualExclusivity(unittest.TestCase):
         model = GatedDCNModel({'f1': 100}, ['f1'], config)
         x = torch.randint(0, 100, (4, 1))
         out = model(x)
-        self.assertEqual(out.shape, (4, 1))
+        self.assertEqual(out['logits'].shape, (4, 1))
         self.assertTrue(hasattr(model, 'senet'), "Model should have senet layer")
 
 
@@ -375,7 +375,7 @@ class TestVariableEmbeddings(unittest.TestCase):
         
         x = torch.randint(0, 5, (4, 3))  # Use min vocab size for safety
         out = model(x)
-        self.assertEqual(out.shape, (4, 1))
+        self.assertEqual(out['logits'].shape, (4, 1))
     
     def test_projection_layer(self):
         """Test that projection layer unifies variable embedding dimensions."""
@@ -394,7 +394,7 @@ class TestVariableEmbeddings(unittest.TestCase):
         # Forward pass should work
         x = torch.randint(0, 5, (4, 2))
         out = model(x)
-        self.assertEqual(out.shape, (4, 1))
+        self.assertEqual(out['logits'].shape, (4, 1))
     
     def test_projection_with_senet(self):
         """Test that SENET works with variable embeddings when projection is enabled."""
@@ -410,7 +410,7 @@ class TestVariableEmbeddings(unittest.TestCase):
         self.assertTrue(hasattr(model, 'senet'))
         x = torch.randint(0, 5, (4, 2))
         out = model(x)
-        self.assertEqual(out.shape, (4, 1))
+        self.assertEqual(out['logits'].shape, (4, 1))
     
     def test_senet_requires_uniform_or_projection(self):
         """Test that SENET raises error with variable embeddings and no projection."""

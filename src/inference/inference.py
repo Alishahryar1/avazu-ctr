@@ -8,9 +8,7 @@ import polars as pl
 from src.config.config import CONFIG, seed_everything
 from src.processing.data_processor import load_metadata, get_parquet_path
 from src.processing.dataset import ParquetFullDataset
-from src.models.architectures.base_model import GatedDCNModel
-from src.models.architectures.ensemble import EnsembleModel
-from src.models.architectures.fcnv2 import FCNv2Model
+from src.models.architectures import create_model
 
 
 def inference():
@@ -47,17 +45,8 @@ def inference():
 
     # 3. Model Initialization and Loading
     print("Step 3: Loading Model...")
-    use_ensemble = CONFIG['use_ensemble']
-    use_fcnv2 = CONFIG.get('use_fcnv2', False)
-    
-    if use_fcnv2:
-        model = FCNv2Model(vocab_sizes, feature_names, CONFIG)
-        print("Using FCNv2 model (dual-path cross network)")
-    elif use_ensemble:
-        model = EnsembleModel(vocab_sizes, feature_names, CONFIG)
-        print(f"Using ensemble of {CONFIG['ensemble_k']} models (aggregation={CONFIG['ensemble_aggregation']})")
-    else:
-        model = GatedDCNModel(vocab_sizes, feature_names, CONFIG)
+    model = create_model(CONFIG, vocab_sizes, feature_names)
+    print(f"Using {model.model_name()} model")
 
     # Try to load best model first, fall back to model.pth
     model_path = os.path.join(CONFIG['models_path'], "best_model.pth")
@@ -88,15 +77,8 @@ def inference():
         for X_batch in tqdm(test_loader, desc="Predicting"):
             X_batch = X_batch.to(CONFIG['device'])
 
-            output = model(X_batch)
-            
-            # Handle different model output formats
-            if isinstance(output, dict):
-                # FCNv2Model returns dict with 'y_pred' already as probabilities
-                preds = output['y_pred']
-            else:
-                # GatedDCNModel and EnsembleModel return logits
-                preds = torch.sigmoid(output)
+            # Unified interface: get_predictions returns probabilities for all models
+            preds = model.get_predictions(X_batch)
 
             predictions.append(preds.cpu().numpy())
 

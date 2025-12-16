@@ -4,13 +4,15 @@ import torch.nn as nn
 
 from src.config.config import ConfigType
 from src.models.utils import compute_embedding_dim
+from src.models.architectures.base import BaseCTRModel, ModelOutput
+from src.models.losses import FocalLoss
 from src.models.layers.attention import SENetLayer
 from src.models.layers.gating import FeatureGatingLayer
 from src.models.layers.cross_network import DCNv2
 from src.models.layers.mlp import ResidualMLP
 
 
-class GatedDCNModel(nn.Module):
+class GatedDCNModel(BaseCTRModel):
     """
     Gated DCN Model for CTR prediction.
 
@@ -147,7 +149,14 @@ class GatedDCNModel(nn.Module):
             use_skip_connections=mlp_use_skip_connections
         )
 
-    def forward(self, x):
+        # 6. Internal loss function
+        focal_gamma = config.get('focal_loss_gamma', 0)
+        if focal_gamma > 0:
+            self._loss_fn: nn.Module = FocalLoss(gamma=focal_gamma)
+        else:
+            self._loss_fn = nn.BCEWithLogitsLoss()
+
+    def forward(self, x: torch.Tensor) -> ModelOutput:
         # x shape: [Batch, Num_Features]
 
         # Flatten inputs into a single dense vector
@@ -180,4 +189,17 @@ class GatedDCNModel(nn.Module):
 
         # Final Prediction (no sigmoid here - we'll use BCEWithLogitsLoss)
         logits = self.mlp(dnn_input)
-        return logits  # Return raw logits for numerical stability
+        return {"logits": logits, "aux_logits": None}
+
+    def compute_loss(
+        self, 
+        output: ModelOutput, 
+        y_true: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute loss using internal loss function."""
+        return self._loss_fn(output["logits"], y_true)
+
+    @classmethod
+    def model_name(cls) -> str:
+        """Return model name for registry."""
+        return "gated_dcn"

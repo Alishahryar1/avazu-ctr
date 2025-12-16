@@ -3,10 +3,12 @@ import torch
 import torch.nn as nn
 
 from src.config.config import ConfigType
+from src.models.architectures.base import BaseCTRModel, ModelOutput
 from src.models.architectures.base_model import GatedDCNModel
+from src.models.losses import KBCELoss
 
 
-class EnsembleModel(nn.Module):
+class EnsembleModel(BaseCTRModel):
     """
     Ensemble of k identical GatedDCNModel instances.
 
@@ -46,57 +48,70 @@ class EnsembleModel(nn.Module):
 
         # Reset to base seed after initialization
         torch.manual_seed(self.base_seed)
+        
+        # Internal loss for multi-branch architecture
+        self._kbce_loss = KBCELoss()
 
-    def forward(self, x, return_all_logits: bool = False):
+    def forward(self, x: torch.Tensor) -> ModelOutput:
         """
         Forward pass through all models in the ensemble.
 
         Args:
             x: Input tensor of shape [Batch, Num_Features]
-            return_all_logits: If True, return logits from all models instead of aggregated.
-                               Useful for training individual models.
 
         Returns:
-            If return_all_logits=False: Aggregated logits [Batch, 1]
-            If return_all_logits=True: Stacked logits [K, Batch, 1]
+            ModelOutput with aggregated logits and list of branch logits
         """
         all_logits = []
         for model in self.models:
-            logits = model(x)
-            all_logits.append(logits)
+            output = model(x)
+            all_logits.append(output["logits"])
 
         # Stack all logits: [K, Batch, 1]
         stacked_logits = torch.stack(all_logits, dim=0)
 
-        if return_all_logits:
-            return stacked_logits
-
         # Aggregate predictions
         if self.ensemble_aggregation == 'mean':
-            # Average logits (equivalent to geometric mean of probabilities in log-space)
-            return stacked_logits.mean(dim=0)
+            aggregated = stacked_logits.mean(dim=0)
         elif self.ensemble_aggregation == 'median':
-            return stacked_logits.median(dim=0).values
+            aggregated = stacked_logits.median(dim=0).values
         else:
             raise ValueError(f"Unknown aggregation method: {self.ensemble_aggregation}")
 
-    def forward_single(self, x, model_idx: int):
+        return {
+            "logits": aggregated,
+            "aux_logits": all_logits  # List of k branch logits
+        }
+
+    def compute_loss(
+        self, 
+        output: ModelOutput, 
+        y_true: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute K-BCE loss for ensemble architecture."""
+        return self._kbce_loss(output["logits"], output["aux_logits"], y_true)
+
+    @classmethod
+    def model_name(cls) -> str:
+        """Return model name for registry."""
+        return "ensemble"
+
+    def forward_single(self, x: torch.Tensor, model_idx: int) -> ModelOutput:
         """
         Forward pass through a single model in the ensemble.
-        Useful for training individual models.
 
         Args:
             x: Input tensor of shape [Batch, Num_Features]
             model_idx: Index of the model to use (0 to k-1)
 
         Returns:
-            Logits from the specified model [Batch, 1]
+            ModelOutput from the specified model
         """
         if model_idx < 0 or model_idx >= self.k:
             raise ValueError(f"model_idx must be in range [0, {self.k-1}], got {model_idx}")
         return self.models[model_idx](x)
 
-    def get_model(self, idx: int) -> "GatedDCNModel":
+    def get_model(self, idx: int) -> GatedDCNModel:
         """Get a specific model from the ensemble."""
         model = self.models[idx]
         assert isinstance(model, GatedDCNModel)

@@ -4,12 +4,13 @@ import torch.nn as nn
 from typing import Any, Mapping, Optional
 
 from src.models.utils import compute_embedding_dim
+from src.models.architectures.base import BaseCTRModel, ModelOutput
+from src.models.losses import KBCELoss
 from src.models.layers.multihead_embedding import MultiHeadFeatureEmbedding
 from src.models.layers.exp2lin_cross_network import Exponential2LinearCrossNetwork
 from src.models.layers.lin2exp_cross_network import Linear2ExponentialCrossNetwork
 
-
-class FCNv2Model(nn.Module):
+class FCNv2Model(BaseCTRModel):
     """
     FCNv2 (Feature Cross Network v2) for CTR prediction.
     
@@ -116,8 +117,11 @@ class FCNv2Model(nn.Module):
             net_dropout=net_dropout,
             num_heads=num_heads
         )
+        
+        # Internal loss for multi-branch architecture
+        self._kbce_loss = KBCELoss()
     
-    def forward(self, x: torch.Tensor) -> dict[str, torch.Tensor]:
+    def forward(self, x: torch.Tensor) -> ModelOutput:
         """
         Forward pass.
         
@@ -125,10 +129,7 @@ class FCNv2Model(nn.Module):
             x: Input features [B, Num_Features]
             
         Returns:
-            Dictionary with:
-            - y_pred: Combined prediction (averaged)
-            - y_d: E2L path prediction
-            - y_s: L2E path prediction
+            ModelOutput with logits and aux_logits
         """
         # 1. Get embeddings for each feature
         embeds = []
@@ -159,19 +160,19 @@ class FCNv2Model(nn.Module):
         combined_logit = (E2L_logit + L2E_logit) * 0.5
         
         return {
-            "y_pred": combined_logit,
-            "y_d": E2L_logit,
-            "y_s": L2E_logit
+            "logits": combined_logit,
+            "aux_logits": [E2L_logit, L2E_logit]
         }
     
-    def get_logits(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Get only the combined logits (for inference compatibility).
-        
-        Args:
-            x: Input features [B, Num_Features]
-            
-        Returns:
-            Combined logits [B, 1]
-        """
-        return self.forward(x)["y_pred"]
+    def compute_loss(
+        self, 
+        output: ModelOutput, 
+        y_true: torch.Tensor
+    ) -> torch.Tensor:
+        """Compute K-BCE loss for dual-path architecture."""
+        return self._kbce_loss(output["logits"], output["aux_logits"], y_true)
+    
+    @classmethod
+    def model_name(cls) -> str:
+        """Return model name for registry."""
+        return "fcnv2"

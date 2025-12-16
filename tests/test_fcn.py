@@ -268,21 +268,21 @@ class TestFCNv2Model(unittest.TestCase):
         
         output = model(x)
         
-        self.assertIn('y_pred', output)
-        self.assertIn('y_d', output)
-        self.assertIn('y_s', output)
-        self.assertEqual(output['y_pred'].shape, (8, 1))
-        self.assertEqual(output['y_d'].shape, (8, 1))
-        self.assertEqual(output['y_s'].shape, (8, 1))
+        self.assertIn('logits', output)
+        self.assertIn('aux_logits', output)
+        self.assertEqual(output['logits'].shape, (8, 1))
+        self.assertEqual(len(output['aux_logits']), 2)  # E2L and L2E branches
+        self.assertEqual(output['aux_logits'][0].shape, (8, 1))
+        self.assertEqual(output['aux_logits'][1].shape, (8, 1))
 
-    def test_get_logits(self):
-        """Test get_logits convenience method."""
+    def test_get_predictions(self):
+        """Test get_predictions method from base class."""
         model = FCNv2Model(self.vocab_sizes, self.feature_names, self.config)
         x = torch.randint(0, 50, (8, 3))
         
-        logits = model.get_logits(x)
+        preds = model.get_predictions(x)
         
-        self.assertEqual(logits.shape, (8, 1))
+        self.assertEqual(preds.shape, (8, 1))
 
     def test_gradient_flow(self):
         """Verify gradients flow through the model."""
@@ -290,7 +290,7 @@ class TestFCNv2Model(unittest.TestCase):
         x = torch.randint(0, 50, (8, 3))
         
         output = model(x)
-        loss = output['y_pred'].sum()
+        loss = output['logits'].sum()
         loss.backward()
         
         # Check that embeddings receive gradients
@@ -306,9 +306,11 @@ class TestFCNv2Model(unittest.TestCase):
             x = torch.randint(0, 50, (16, 3))
             output = model(x)
             
-            for key in ['y_pred', 'y_d', 'y_s']:
-                self.assertFalse(torch.isnan(output[key]).any(), f"NaN in {key}")
-                self.assertFalse(torch.isinf(output[key]).any(), f"Inf in {key}")
+            self.assertFalse(torch.isnan(output['logits']).any(), "NaN in logits")
+            self.assertFalse(torch.isinf(output['logits']).any(), "Inf in logits")
+            for i, aux in enumerate(output['aux_logits']):
+                self.assertFalse(torch.isnan(aux).any(), f"NaN in aux_logits[{i}]")
+                self.assertFalse(torch.isinf(aux).any(), f"Inf in aux_logits[{i}]")
 
     def test_different_num_heads(self):
         """Test model with different number of heads."""
@@ -320,7 +322,7 @@ class TestFCNv2Model(unittest.TestCase):
             x = torch.randint(0, 50, (4, 3))
             output = model(x)
             
-            self.assertEqual(output['y_pred'].shape, (4, 1))
+            self.assertEqual(output['logits'].shape, (4, 1))
 
     def test_with_layer_norm(self):
         """Test model with layer normalization."""
@@ -332,7 +334,7 @@ class TestFCNv2Model(unittest.TestCase):
         x = torch.randint(0, 50, (4, 3))
         output = model(x)
         
-        self.assertEqual(output['y_pred'].shape, (4, 1))
+        self.assertEqual(output['logits'].shape, (4, 1))
 
 
 if __name__ == "__main__":
