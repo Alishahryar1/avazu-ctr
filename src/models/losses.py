@@ -49,7 +49,7 @@ class KBCELoss(nn.Module):
     This encourages weaker branches to improve while not penalizing
     stronger branches.
     
-    Works with any number of branches (FCN uses 2, Ensemble uses k models).
+    Works with any number of branches (Ensemble uses k models).
     """
     def __init__(self):
         super().__init__()

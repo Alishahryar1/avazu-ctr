@@ -40,15 +40,7 @@ class ConfigType(TypedDict):
     feature_gating_activation: str  # Options: sigmoid, tanh, relu, etc.
     feature_gating_low_rank: int | None  # None = full-rank, int = low-rank dimension
     
-    # Model Architecture - FCNv2
-    use_fcnv2: bool  # Enable FCNv2 model instead of GatedDCNModel
-    fcnv2_num_heads: int  # Number of multi-head attention heads
-    fcnv2_exp_num_layers: int  # Number of exponential cross layers
-    fcnv2_lin_num_layers: int  # Number of linear cross layers
-    fcnv2_batch_norm: bool  # Use batch normalization in cross layers
-    fcnv2_layer_norm: bool  # Use layer normalization in cross layers
-    fcnv2_dropout: float  # Dropout rate for cross layers
-    
+
     mlp_hidden_dims: list[int]
     mlp_activation: str
     mlp_use_skip_connections: bool  # Add residual/skip connections to MLP layers
@@ -137,15 +129,7 @@ CONFIG: ConfigType = {
     "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
     "feature_gating_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
-    # === Model True - FCNv2 ===
-    "use_fcnv2": True,  # Enable FCNv2 model (dual-path cross network)
-    "fcnv2_num_heads": 4,  # Number of multi-head attention heads
-    "fcnv2_exp_num_layers": 6,  # Number of exponential cross layers
-    "fcnv2_lin_num_layers": 6,  # Number of linear cross layers
-    "fcnv2_batch_norm": False,  # Use batch normalization in cross layers
-    "fcnv2_layer_norm": True,  # Use layer normalization (mutually exclusive with batch_norm)
-    "fcnv2_dropout": 0.0,  # Dropout rate for cross layers
-    
+
     # === Model Architecture - MLP ===
     "mlp_hidden_dims": [1024, 512],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
