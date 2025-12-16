@@ -87,7 +87,7 @@ CONFIG: ConfigType = {
     "batch_size": 4096,  # Increased for faster training
     "num_workers": 4,  # Increased for faster data loading
     "min_freq": 10,
-    "validation_split": 0.001,  # Hold out 1% for validation
+    "validation_split": 0.0,  # Hold out 1% for validation
     
     # === Model Architecture - Embeddings ===
     "embedding_dim": 64,  # Default/fallback embedding dimension
@@ -132,7 +132,7 @@ CONFIG: ConfigType = {
     "lr": 1e-3,  # Lower initial LR for better convergence
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
     "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
-    "epochs": 50,
+    "epochs": 1,
     "early_stopping_patience": 50,
     "use_tensorboard": False,
     "tensorboard_logdir": "./runs",
