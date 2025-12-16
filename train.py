@@ -336,8 +336,33 @@ def train():
 
                 # Forward pass with optional AMP
                 with torch.amp.autocast(device_type='cuda', dtype=amp_dtype, enabled=use_amp):
-                    logits = model(X_batch)
-                    loss = criterion(logits, y_batch)
+                    if isinstance(model, EnsembleModel):
+                        # Get logits from all models: [K, Batch, 1]
+                        stacked_logits = model(X_batch, return_all_logits=True)
+                        
+                        # 1. Ensemble Loss
+                        # Aggregate logits based on strategy
+                        if model.ensemble_aggregation == 'mean':
+                            ensemble_logits = stacked_logits.mean(dim=0)
+                        elif model.ensemble_aggregation == 'median':
+                            ensemble_logits = stacked_logits.median(dim=0).values
+                        else:
+                            raise ValueError(f"Unknown aggregation: {model.ensemble_aggregation}")
+                            
+                        # Loss for the ensemble prediction
+                        loss_ensemble = criterion(ensemble_logits, y_batch)
+                        
+                        # 2. Individual Losses (k-BCE)
+                        loss_individual = 0
+                        for k in range(model.k):
+                            loss_individual += criterion(stacked_logits[k], y_batch)
+                            
+                        # Total Loss = Ensemble Loss + Sum(Individual Losses)
+                        loss = loss_ensemble + loss_individual
+                    else:
+                        # Standard single model
+                        logits = model(X_batch)
+                        loss = criterion(logits, y_batch)
 
                 # Backward pass with gradient scaling for AMP
                 if use_amp and scaler is not None:
