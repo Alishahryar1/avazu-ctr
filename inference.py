@@ -8,7 +8,7 @@ import polars as pl
 from config import CONFIG, seed_everything
 from data_processor import load_metadata, get_parquet_path
 from dataset import ParquetFullDataset
-from model import GatedDCNModel
+from model import GatedDCNModel, EnsembleModel
 
 
 def inference():
@@ -45,7 +45,12 @@ def inference():
 
     # 3. Model Initialization and Loading
     print("Step 3: Loading Model...")
-    model = GatedDCNModel(vocab_sizes, feature_names, CONFIG)
+    use_ensemble = CONFIG['use_ensemble']
+    if use_ensemble:
+        model = EnsembleModel(vocab_sizes, feature_names, CONFIG)
+        print(f"Using ensemble of {CONFIG['ensemble_k']} models (aggregation={CONFIG['ensemble_aggregation']})")
+    else:
+        model = GatedDCNModel(vocab_sizes, feature_names, CONFIG)
 
     # Try to load best model first, fall back to model.pth
     model_path = os.path.join(CONFIG['models_path'], "best_model.pth")
@@ -54,11 +59,13 @@ def inference():
         model.load_state_dict(checkpoint['model_state_dict'])
         model.to(CONFIG['device'])
         print(f"Best model loaded successfully (epoch {checkpoint['epoch']+1})")
-        print(f"  Val AUC: {checkpoint['val_auc']:.5f}, Val LogLoss: {checkpoint['val_logloss']:.5f}")
+        if 'val_auc' in checkpoint:
+            print(f"  Val AUC: {checkpoint['val_auc']:.5f}, Val LogLoss: {checkpoint['val_logloss']:.5f}")
     except FileNotFoundError:
         try:
             model_path = os.path.join(CONFIG['models_path'], "model.pth")
-            model.load_state_dict(torch.load(model_path, map_location=CONFIG['device'], weights_only=False))
+            checkpoint = torch.load(model_path, map_location=CONFIG['device'], weights_only=False)
+            model.load_state_dict(checkpoint['model_state_dict'])
             model.to(CONFIG['device'])
             print(f"Model loaded from {model_path}")
         except FileNotFoundError:

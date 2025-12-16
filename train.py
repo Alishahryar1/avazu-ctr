@@ -13,7 +13,7 @@ from torch.utils.tensorboard import SummaryWriter
 from config import CONFIG, seed_everything
 from data_processor import load_metadata, get_parquet_path, get_parquet_row_count
 from dataset import ParquetFullDataset
-from model import GatedDCNModel
+from model import GatedDCNModel, EnsembleModel
 
 
 class FocalLoss(nn.Module):
@@ -205,7 +205,12 @@ def train():
 
     # 3. Model Initialization
     print("\nStep 3: Initializing Model...")
-    model = GatedDCNModel(vocab_sizes, feature_names, CONFIG)
+    use_ensemble = CONFIG['use_ensemble']
+    if use_ensemble:
+        model = EnsembleModel(vocab_sizes, feature_names, CONFIG)
+        print(f"Using ensemble of {CONFIG['ensemble_k']} models (aggregation={CONFIG['ensemble_aggregation']})")
+    else:
+        model = GatedDCNModel(vocab_sizes, feature_names, CONFIG)
     model.to(CONFIG['device'])
     if CONFIG['compile_model']:
         model = torch.compile(model, mode="reduce-overhead")
