@@ -183,7 +183,8 @@ def train():
         batch_size=CONFIG['batch_size'],
         shuffle=True,  # Shuffle row-by-row now possible in memory
         num_workers=CONFIG['num_workers'],
-        pin_memory=True
+        pin_memory=True,
+        persistent_workers=True
     )
 
     val_loader = DataLoader(
@@ -191,7 +192,8 @@ def train():
         batch_size=CONFIG['batch_size'],
         shuffle=False,
         num_workers=CONFIG['num_workers'],
-        pin_memory=True
+        pin_memory=True,
+        persistent_workers=True
     )
 
     # 3. Model Initialization
