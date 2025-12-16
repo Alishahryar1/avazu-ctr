@@ -652,6 +652,7 @@ def transform_dataframe(
                 extra[start_idx:start_idx + rows_in_chunk] = chunk_df['id'].to_numpy()
             else:
                 extra[start_idx:start_idx + rows_in_chunk] = chunk_df['click'].to_numpy().astype(np.float32)
+                assert isinstance(hour_data, np.ndarray)
                 hour_data[start_idx:start_idx + rows_in_chunk] = chunk_df['hour'].to_numpy()
 
             # Extract features
