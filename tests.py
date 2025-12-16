@@ -14,7 +14,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from config import CONFIG, ConfigType
-from model import GatedDCNModel, DCNv2, SENetLayer, FeatureGatingLayer
+from model import GatedDCNModel, DCNv2, SENetLayer, FeatureGatingLayer, EnsembleModel, EnsembleTower
 
 
 def make_test_config(**overrides) -> ConfigType:
@@ -87,6 +87,14 @@ def make_test_config(**overrides) -> ConfigType:
         'sub_path': 'submission.csv',
         'processed_path': './data',
         'models_path': './models',
+        
+        # Model Compilation
+        'compile_model': False,
+        
+        # Ensemble
+        'use_ensemble': False,
+        'ensemble_k': 3,
+        'ensemble_aggregation': 'mean',
     }
     # Apply overrides
     for key, value in overrides.items():
@@ -2109,6 +2117,315 @@ def list_tests():
     print("  Run one:      python tests.py TestModelStructure.test_dcn_layers")
     print("  Run class:    python tests.py TestModelStructure")
     print("  List tests:   python tests.py --list")
+
+
+# =============================================================================
+# Tests for EnsembleModel and EnsembleTower
+# =============================================================================
+class TestEnsembleTower(unittest.TestCase):
+    """Tests for EnsembleTower (individual tower in ensemble)."""
+    
+    def test_tower_forward_pass(self):
+        """Test EnsembleTower forward pass."""
+        config = make_test_config(use_senet=False, use_feature_gating=True)
+        tower = EnsembleTower(working_dim=64, config=config, seed=42)
+        x = torch.randn(4, 64)
+        out = tower(x)
+        self.assertEqual(out.shape, (4, 1))
+    
+    def test_tower_with_dcn(self):
+        """Test tower with DCN enabled."""
+        config = make_test_config(use_dcn=True, use_senet=False, use_feature_gating=False)
+        tower = EnsembleTower(working_dim=64, config=config, seed=42)
+        x = torch.randn(4, 64)
+        out = tower(x)
+        self.assertEqual(out.shape, (4, 1))
+        self.assertTrue(hasattr(tower, 'dcn'))
+    
+    def test_tower_without_dcn(self):
+        """Test tower with DCN disabled."""
+        config = make_test_config(use_dcn=False, use_senet=False, use_feature_gating=False)
+        tower = EnsembleTower(working_dim=64, config=config, seed=42)
+        x = torch.randn(4, 64)
+        out = tower(x)
+        self.assertEqual(out.shape, (4, 1))
+    
+    def test_tower_gradient_flow(self):
+        """Verify gradients flow through EnsembleTower."""
+        config = make_test_config(use_senet=False, use_feature_gating=True)
+        tower = EnsembleTower(working_dim=64, config=config, seed=42)
+        x = torch.randn(4, 64, requires_grad=True)
+        out = tower(x)
+        loss = out.sum()
+        loss.backward()
+        
+        for name, param in tower.named_parameters():
+            self.assertIsNotNone(param.grad, f"No gradient for {name}")
+            self.assertFalse(torch.isnan(param.grad).any(), f"NaN gradient for {name}")
+    
+    def test_different_seeds_produce_different_weights(self):
+        """Test that different seeds produce different tower initializations."""
+        config = make_test_config(use_senet=False, use_feature_gating=True)
+        tower1 = EnsembleTower(working_dim=64, config=config, seed=42)
+        tower2 = EnsembleTower(working_dim=64, config=config, seed=43)
+        
+        # Check that at least some parameters are different
+        params1 = list(tower1.parameters())
+        params2 = list(tower2.parameters())
+        
+        different = False
+        for p1, p2 in zip(params1, params2):
+            if not torch.allclose(p1, p2):
+                different = True
+                break
+        self.assertTrue(different, "Different seeds should produce different weights")
+
+
+class TestEnsembleModel(unittest.TestCase):
+    """Tests for EnsembleModel with shared embeddings."""
+    
+    @classmethod
+    def setUpClass(cls):
+        """Set up mock data used across all tests."""
+        cls.vocab_sizes = {'f1': 100, 'f2': 50, 'f3': 200}
+        cls.feature_names = ['f1', 'f2', 'f3']
+        cls.config = make_test_config(
+            use_ensemble=True,
+            ensemble_k=3,
+            ensemble_aggregation='mean',
+            use_senet=False,
+            use_feature_gating=True
+        )
+        cls.model = EnsembleModel(cls.vocab_sizes, cls.feature_names, cls.config)
+    
+    def test_ensemble_forward_pass(self):
+        """Test EnsembleModel forward pass."""
+        batch_size = 8
+        num_features = len(self.feature_names)
+        x = torch.randint(0, 50, (batch_size, num_features))
+        
+        with torch.no_grad():
+            output = self.model(x)
+        
+        self.assertEqual(output.shape, (batch_size, 1))
+    
+    def test_ensemble_returns_all_logits(self):
+        """Test that return_all_logits returns stacked logits from all towers."""
+        batch_size = 4
+        x = torch.randint(0, 50, (batch_size, len(self.feature_names)))
+        
+        with torch.no_grad():
+            all_logits = self.model(x, return_all_logits=True)
+        
+        expected_shape = (self.config['ensemble_k'], batch_size, 1)
+        self.assertEqual(all_logits.shape, expected_shape)
+    
+    def test_ensemble_has_correct_number_of_towers(self):
+        """Test that ensemble has the correct number of towers."""
+        self.assertEqual(len(self.model.towers), self.config['ensemble_k'])
+        self.assertEqual(self.model.num_towers(), self.config['ensemble_k'])
+    
+    def test_ensemble_shared_embeddings(self):
+        """Test that embeddings are shared (single embedding layer)."""
+        # There should be only one set of embeddings
+        self.assertTrue(hasattr(self.model, 'embeddings'))
+        self.assertEqual(len(self.model.embeddings), len(self.feature_names))
+        
+        # Towers should NOT have embeddings
+        for tower in self.model.towers:
+            self.assertFalse(hasattr(tower, 'embeddings'))
+    
+    def test_ensemble_embedding_dimensions(self):
+        """Test that shared embeddings have correct dimensions."""
+        expected_dim = self.config['embedding_dim']
+        for feat, emb in self.model.embeddings.items():
+            self.assertEqual(emb.embedding_dim, expected_dim,
+                           f"Embedding {feat} has wrong dim")
+    
+    def test_ensemble_forward_single_tower(self):
+        """Test forward_single method."""
+        batch_size = 4
+        x = torch.randint(0, 50, (batch_size, len(self.feature_names)))
+        
+        for i in range(self.config['ensemble_k']):
+            with torch.no_grad():
+                out = self.model.forward_single(x, tower_idx=i)
+            self.assertEqual(out.shape, (batch_size, 1))
+    
+    def test_ensemble_forward_single_invalid_index(self):
+        """Test that forward_single raises error for invalid tower index."""
+        x = torch.randint(0, 50, (4, len(self.feature_names)))
+        
+        with self.assertRaises(ValueError):
+            self.model.forward_single(x, tower_idx=-1)
+        
+        with self.assertRaises(ValueError):
+            self.model.forward_single(x, tower_idx=self.config['ensemble_k'])
+    
+    def test_ensemble_gradient_flow(self):
+        """Verify gradients flow through EnsembleModel."""
+        model = EnsembleModel(self.vocab_sizes, self.feature_names, self.config)
+        x = torch.randint(0, 50, (4, len(self.feature_names)))
+        
+        out = model(x)
+        loss = out.sum()
+        loss.backward()
+        
+        # Check embeddings have gradients
+        for name, emb in model.embeddings.items():
+            self.assertIsNotNone(emb.weight.grad, f"No gradient for embedding {name}")
+        
+        # Check towers have gradients
+        for i, tower in enumerate(model.towers):
+            for name, param in tower.named_parameters():
+                self.assertIsNotNone(param.grad, f"No gradient for tower {i} param {name}")
+    
+    def test_ensemble_embedding_gradients_from_all_towers(self):
+        """Verify that embeddings receive gradients from all towers."""
+        model = EnsembleModel(self.vocab_sizes, self.feature_names, self.config)
+        x = torch.randint(0, 50, (4, len(self.feature_names)))
+        
+        # Forward through all towers and sum losses
+        all_logits = model(x, return_all_logits=True)
+        loss = all_logits.sum()
+        loss.backward()
+        
+        # Embeddings should have non-zero gradients
+        for name, emb in model.embeddings.items():
+            grad = emb.weight.grad
+            self.assertIsNotNone(grad, f"No gradient for embedding {name}")
+            self.assertFalse((grad == 0).all(), f"All-zero gradient for embedding {name}")
+    
+    def test_ensemble_mean_aggregation(self):
+        """Test that mean aggregation averages logits correctly."""
+        config = make_test_config(
+            use_ensemble=True,
+            ensemble_k=2,
+            ensemble_aggregation='mean',
+            use_senet=False
+        )
+        model = EnsembleModel(self.vocab_sizes, self.feature_names, config)
+        torch.manual_seed(42)
+        x = torch.randint(0, 50, (4, len(self.feature_names)))
+        
+        with torch.no_grad():
+            # Get all individual tower outputs
+            all_logits = model(x, return_all_logits=True)
+            # Manually compute mean
+            expected = all_logits.mean(dim=0)
+            # Verify stacked output aggregates to mean
+            self.assertEqual(all_logits.shape[0], 2)  # 2 towers
+            # Re-run to get aggregated (same input since we're in no_grad)
+            torch.manual_seed(42)
+            x2 = torch.randint(0, 50, (4, len(self.feature_names)))
+            aggregated = model(x2)
+        
+        self.assertTrue(torch.allclose(aggregated, expected))
+    
+    def test_ensemble_median_aggregation(self):
+        """Test median aggregation."""
+        config = make_test_config(
+            use_ensemble=True,
+            ensemble_k=3,
+            ensemble_aggregation='median',
+            use_senet=False
+        )
+        model = EnsembleModel(self.vocab_sizes, self.feature_names, config)
+        torch.manual_seed(42)
+        x = torch.randint(0, 50, (4, len(self.feature_names)))
+        
+        with torch.no_grad():
+            all_logits = model(x, return_all_logits=True)
+            expected = all_logits.median(dim=0).values
+            torch.manual_seed(42)
+            x2 = torch.randint(0, 50, (4, len(self.feature_names)))
+            aggregated = model(x2)
+        
+        self.assertTrue(torch.allclose(aggregated, expected))
+    
+    def test_ensemble_towers_have_different_weights(self):
+        """Test that each tower has different weights (different seeds)."""
+        tower_params = []
+        for tower in self.model.towers:
+            tower_params.append(list(tower.parameters())[0].clone())
+        
+        # At least some tower pairs should have different weights
+        different = False
+        for i in range(len(tower_params)):
+            for j in range(i + 1, len(tower_params)):
+                if not torch.allclose(tower_params[i], tower_params[j]):
+                    different = True
+                    break
+        self.assertTrue(different, "Towers should have different weights")
+    
+    def test_ensemble_parameter_count_less_than_k_models(self):
+        """Test that ensemble with shared embeddings has fewer params than k separate models."""
+        config = make_test_config(
+            use_ensemble=True,
+            ensemble_k=3,
+            use_senet=False,
+            use_feature_gating=True
+        )
+        ensemble = EnsembleModel(self.vocab_sizes, self.feature_names, config)
+        single_model = GatedDCNModel(self.vocab_sizes, self.feature_names, config)
+        
+        ensemble_params = sum(p.numel() for p in ensemble.parameters())
+        single_params = sum(p.numel() for p in single_model.parameters())
+        
+        # Ensemble should have fewer params than 3 separate models
+        self.assertLess(ensemble_params, 3 * single_params)
+    
+    def test_ensemble_with_variable_embeddings(self):
+        """Test ensemble with variable embedding dimensions."""
+        config = make_test_config(
+            use_ensemble=True,
+            ensemble_k=2,
+            use_variable_embeddings=True,
+            use_senet=False,
+            use_feature_gating=True
+        )
+        vocab_sizes = {'small': 5, 'medium': 50, 'large': 500}
+        model = EnsembleModel(vocab_sizes, ['small', 'medium', 'large'], config)
+        
+        # Check variable dims
+        self.assertEqual(model.embeddings['small'].embedding_dim, 8)
+        self.assertEqual(model.embeddings['medium'].embedding_dim, 16)
+        self.assertEqual(model.embeddings['large'].embedding_dim, 32)
+        
+        # Forward pass should work
+        x = torch.randint(0, 5, (4, 3))
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1))
+    
+    def test_ensemble_with_projection(self):
+        """Test ensemble with embedding projection layer."""
+        config = make_test_config(
+            use_ensemble=True,
+            ensemble_k=2,
+            use_variable_embeddings=True,
+            embedding_projection_dim=64,
+            use_senet=False,
+            use_feature_gating=True
+        )
+        vocab_sizes = {'f1': 100, 'f2': 50}
+        model = EnsembleModel(vocab_sizes, ['f1', 'f2'], config)
+        
+        self.assertTrue(model.use_projection)
+        self.assertTrue(hasattr(model, 'projection'))
+        self.assertEqual(model.working_dim, 64)
+        
+        x = torch.randint(0, 50, (4, 2))
+        out = model(x)
+        self.assertEqual(out.shape, (4, 1))
+    
+    def test_ensemble_numerical_stability(self):
+        """Verify no NaN/Inf in ensemble output."""
+        for _ in range(10):
+            x = torch.randint(0, 50, (32, len(self.feature_names)))
+            with torch.no_grad():
+                out = self.model(x)
+            self.assertFalse(torch.isnan(out).any(), "NaN in output")
+            self.assertFalse(torch.isinf(out).any(), "Inf in output")
 
 
 if __name__ == "__main__":
