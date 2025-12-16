@@ -341,7 +341,7 @@ def compute_count_features_from_train(
 
         # Collect with streaming to reduce memory pressure
         try:
-            count_df = count_query.collect(streaming=True)
+            count_df = count_query.collect(engine='streaming')
         except Exception:
             count_df = count_query.collect()
 
@@ -430,7 +430,7 @@ def compute_hourly_aggregated_features(
 
     # Collect with streaming
     try:
-        hourly_counts_df = hourly_query.collect(streaming=True)
+        hourly_counts_df = hourly_query.collect(engine='streaming')
     except Exception:
         hourly_counts_df = hourly_query.collect()
 
@@ -511,7 +511,7 @@ def build_vocabularies(lf_train: pl.LazyFrame, cat_cols: list[str], min_freq: in
 
         # Collect with streaming to reduce memory pressure
         try:
-            counts = vocab_query.collect(streaming=True)
+            counts = vocab_query.collect(engine='streaming')
         except Exception:
             # Fallback if streaming not supported for this query
             counts = vocab_query.collect()
