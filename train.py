@@ -147,7 +147,6 @@ def train():
     # 2. Create Train/Validation Split (batch-level, not row-level)
     print("\nStep 2: Creating Train/Validation Split...")
 
-    # Calculate split at batch level
     # Create dataset - Loads entire file into memory
     full_dataset = ParquetFullDataset(
         parquet_path=train_parquet,
@@ -155,25 +154,31 @@ def train():
         label_col='click'
     )
 
-    # 2. Create Train/Validation Split
-    print("\nStep 2: Creating Train/Validation Split...")
+    # Check if validation is enabled
+    use_validation = CONFIG['validation_split'] > 0
     
-    # Random split
-    indices = np.arange(len(full_dataset))
-    np.random.seed(CONFIG['seed'])  # Reproducible split
-    np.random.shuffle(indices)
-    
-    split_idx = int(len(full_dataset) * (1 - CONFIG['validation_split']))
-    train_indices = indices[:split_idx].tolist()
-    val_indices = indices[split_idx:].tolist()
-    
-    print(f"Random split: {CONFIG['validation_split']*100:.1f}% as validation")
-    
-    train_dataset = Subset(full_dataset, train_indices)
-    val_dataset = Subset(full_dataset, val_indices)
+    if use_validation:
+        # Random split
+        indices = np.arange(len(full_dataset))
+        np.random.seed(CONFIG['seed'])  # Reproducible split
+        np.random.shuffle(indices)
+        
+        split_idx = int(len(full_dataset) * (1 - CONFIG['validation_split']))
+        train_indices = indices[:split_idx].tolist()
+        val_indices = indices[split_idx:].tolist()
+        
+        print(f"Random split: {CONFIG['validation_split']*100:.1f}% as validation")
+        
+        train_dataset = Subset(full_dataset, train_indices)
+        val_dataset = Subset(full_dataset, val_indices)
 
-    print(f"Training samples: {len(train_dataset):,}")
-    print(f"Validation samples: {len(val_dataset):,}")
+        print(f"Training samples: {len(train_dataset):,}")
+        print(f"Validation samples: {len(val_dataset):,}")
+    else:
+        print("Validation disabled (validation_split=0)")
+        train_dataset = full_dataset
+        val_dataset = None
+        print(f"Training samples: {len(train_dataset):,}")
 
     # Standard DataLoaders
     # Pin memory for faster transfer to GPU
@@ -186,14 +191,16 @@ def train():
         persistent_workers=True
     )
 
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=CONFIG['batch_size'],
-        shuffle=False,
-        num_workers=CONFIG['num_workers'],
-        pin_memory=True,
-        persistent_workers=True
-    )
+    val_loader = None
+    if use_validation and val_dataset is not None:
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=CONFIG['batch_size'],
+            shuffle=False,
+            num_workers=CONFIG['num_workers'],
+            pin_memory=True,
+            persistent_workers=True
+        )
 
     # 3. Model Initialization
     print("\nStep 3: Initializing Model...")
@@ -366,50 +373,62 @@ def train():
             avg_train_loss = total_loss / len(train_loader)
             epoch_time = time.time() - start_time
 
-            # Validation
-            val_loss, val_auc, val_logloss = evaluate(model, val_loader, criterion, CONFIG['device'], use_amp=use_amp, amp_dtype=amp_dtype)
+            # Validation (only if enabled)
+            if use_validation and val_loader is not None:
+                val_loss, val_auc, val_logloss = evaluate(model, val_loader, criterion, CONFIG['device'], use_amp=use_amp, amp_dtype=amp_dtype)
 
-            # Log epoch metrics to TensorBoard
-            if writer is not None:
-                writer.add_scalar('Loss/train_epoch', avg_train_loss, epoch)
-                writer.add_scalar('Loss/val', val_loss, epoch)
-                writer.add_scalar('Metrics/val_auc', val_auc, epoch)
-                writer.add_scalar('Metrics/val_logloss', val_logloss, epoch)
+                # Log epoch metrics to TensorBoard
+                if writer is not None:
+                    writer.add_scalar('Loss/train_epoch', avg_train_loss, epoch)
+                    writer.add_scalar('Loss/val', val_loss, epoch)
+                    writer.add_scalar('Metrics/val_auc', val_auc, epoch)
+                    writer.add_scalar('Metrics/val_logloss', val_logloss, epoch)
 
-            print(f"\n{'='*80}")
-            print(f"Epoch {epoch+1}/{CONFIG['epochs']} Summary:")
-            print(f"  Train Loss: {avg_train_loss:.5f}")
-            print(f"  Val Loss:   {val_loss:.5f}")
-            print(f"  Val AUC:    {val_auc:.5f}")
-            print(f"  Val LogLoss: {val_logloss:.5f}")
-            print(f"  LR:         {scheduler.get_lr():.2e}")
-            print(f"  Time:       {epoch_time:.0f}s")
-            print(f"{'='*80}\n")
+                print(f"\n{'='*80}")
+                print(f"Epoch {epoch+1}/{CONFIG['epochs']} Summary:")
+                print(f"  Train Loss: {avg_train_loss:.5f}")
+                print(f"  Val Loss:   {val_loss:.5f}")
+                print(f"  Val AUC:    {val_auc:.5f}")
+                print(f"  Val LogLoss: {val_logloss:.5f}")
+                print(f"  LR:         {scheduler.get_lr():.2e}")
+                print(f"  Time:       {epoch_time:.0f}s")
+                print(f"{'='*80}\n")
 
-            # Early stopping check
-            if val_loss < best_val_loss:
-                best_val_loss = val_loss
-                best_val_auc = val_auc
-                patience_counter = 0
+                # Early stopping check
+                if val_loss < best_val_loss:
+                    best_val_loss = val_loss
+                    best_val_auc = val_auc
+                    patience_counter = 0
 
-                # Save best model
-                torch.save({
-                    'epoch': epoch,
-                    'model_state_dict': model.state_dict(),
-                    'embedding_optimizer_state_dict': embedding_optimizer.state_dict(),
-                    'other_optimizer_state_dict': other_optimizer.state_dict(),
-                    'val_loss': val_loss,
-                    'val_auc': val_auc,
-                    'val_logloss': val_logloss,
-                }, os.path.join(CONFIG['models_path'], "best_model.pth"))
-                print(f"✓ New best model saved! (Val AUC: {val_auc:.5f})")
+                    # Save best model
+                    torch.save({
+                        'epoch': epoch,
+                        'model_state_dict': model.state_dict(),
+                        'embedding_optimizer_state_dict': embedding_optimizer.state_dict(),
+                        'other_optimizer_state_dict': other_optimizer.state_dict(),
+                        'val_loss': val_loss,
+                        'val_auc': val_auc,
+                        'val_logloss': val_logloss,
+                    }, os.path.join(CONFIG['models_path'], "best_model.pth"))
+                    print(f"✓ New best model saved! (Val AUC: {val_auc:.5f})")
+                else:
+                    patience_counter += 1
+                    print(f"No improvement for {patience_counter} epoch(s)")
+
+                    if patience_counter >= CONFIG['early_stopping_patience']:
+                        print(f"\nEarly stopping triggered after {epoch+1} epochs")
+                        break
             else:
-                patience_counter += 1
-                print(f"No improvement for {patience_counter} epoch(s)")
+                # No validation - just log training metrics
+                if writer is not None:
+                    writer.add_scalar('Loss/train_epoch', avg_train_loss, epoch)
 
-                if patience_counter >= CONFIG['early_stopping_patience']:
-                    print(f"\nEarly stopping triggered after {epoch+1} epochs")
-                    break
+                print(f"\n{'='*80}")
+                print(f"Epoch {epoch+1}/{CONFIG['epochs']} Summary:")
+                print(f"  Train Loss: {avg_train_loss:.5f}")
+                print(f"  LR:         {scheduler.get_lr():.2e}")
+                print(f"  Time:       {epoch_time:.0f}s")
+                print(f"{'='*80}\n")
 
     except KeyboardInterrupt:
         print("\n" + "=" * 80)
@@ -423,9 +442,10 @@ def train():
     print("\n" + "=" * 80)
     print("TRAINING COMPLETE")
     print("=" * 80)
-    print(f"Best Validation Loss: {best_val_loss:.5f}")
-    print(f"Best Validation AUC:  {best_val_auc:.5f}")
-    print(f"\nBest model saved to: {models_path}/best_model.pth")
+    if use_validation:
+        print(f"Best Validation Loss: {best_val_loss:.5f}")
+        print(f"Best Validation AUC:  {best_val_auc:.5f}")
+        print(f"\nBest model saved to: {models_path}/best_model.pth")
     print(f"Latest model saved to: {models_path}/model.pth")
     print("=" * 80)
 

@@ -1020,8 +1020,8 @@ class TestConfigExtended(unittest.TestCase):
         self.assertGreater(CONFIG['lr'], 0)
     
     def test_config_validation_split_valid(self):
-        """Verify validation_split is in valid range (0, 1)."""
-        self.assertGreater(CONFIG['validation_split'], 0)
+        """Verify validation_split is in valid range [0, 1)."""
+        self.assertGreaterEqual(CONFIG['validation_split'], 0)  # 0 means validation disabled
         self.assertLess(CONFIG['validation_split'], 1)
     
     def test_config_senet_and_gating_mutual_exclusivity(self):
