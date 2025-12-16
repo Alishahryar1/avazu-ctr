@@ -13,8 +13,8 @@ import sys
 import torch
 import torch.nn as nn
 import numpy as np
-from config import CONFIG, ConfigType
-from model import GatedDCNModel, DCNv2, SENetLayer, FeatureGatingLayer
+from src.config.config import CONFIG, ConfigType
+from src.models.model import GatedDCNModel, DCNv2, SENetLayer, FeatureGatingLayer
 
 
 def make_test_config(**overrides) -> ConfigType:

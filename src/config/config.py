@@ -165,11 +165,11 @@ CONFIG: ConfigType = {
     "label_smoothing": 0.0,  # Optional label smoothing
     
     # === Paths ===
-    "train_path": "./data/train.gz",
-    "test_path": "./data/test.gz",
+    "train_path": "data/raw/train.gz",
+    "test_path": "data/raw/test.gz",
     "sub_path": "submission.csv",
-    "processed_path": "./data",
-    "models_path": "./models",
+    "processed_path": "data/processed",
+    "models_path": "./checkpoints",
 }
 
 def seed_everything(seed=42):
