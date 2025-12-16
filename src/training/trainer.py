@@ -16,7 +16,7 @@ from src.processing.dataset import ParquetFullDataset
 from src.models.architectures.base_model import GatedDCNModel
 from src.models.architectures.ensemble import EnsembleModel
 from src.models.architectures.fcnv2 import FCNv2Model
-from src.training.losses import FocalLoss, TriBCELoss
+from src.training.losses import FocalLoss, KBCELoss
 from src.training.schedulers import LRSchedulerWithWarmup
 from src.training.evaluator import evaluate
 
@@ -134,9 +134,9 @@ def train():
     print("\nStep 4: Setting up Training Components...")
 
     # Use appropriate loss function
-    if use_fcnv2:
-        criterion = TriBCELoss()
-        print("Using TriBCELoss for FCNv2")
+    if use_fcnv2 or use_ensemble:
+        criterion = KBCELoss()
+        print("Using KBCELoss for multi-branch architecture")
     elif CONFIG['focal_loss_gamma'] > 0:
         criterion = FocalLoss(gamma=CONFIG['focal_loss_gamma'])
         print(f"Using Focal Loss (gamma={CONFIG['focal_loss_gamma']})")
@@ -248,8 +248,7 @@ def train():
                         # Get logits from all models: [K, Batch, 1]
                         stacked_logits = model(X_batch, return_all_logits=True)
 
-                        # 1. Ensemble Loss
-                        # Aggregate logits based on strategy
+                        # Aggregate logits for combined prediction
                         if model.ensemble_aggregation == 'mean':
                             ensemble_logits = stacked_logits.mean(dim=0)
                         elif model.ensemble_aggregation == 'median':
@@ -257,23 +256,18 @@ def train():
                         else:
                             raise ValueError(f"Unknown aggregation: {model.ensemble_aggregation}")
 
-                        # Loss for the ensemble prediction
-                        loss_ensemble = criterion(ensemble_logits, y_batch)
-
-                        # 2. Individual Losses (k-BCE)
-                        loss_individual = 0
-                        for k in range(model.k):
-                            loss_individual += criterion(stacked_logits[k], y_batch)
-
-                        # Total Loss = Ensemble Loss + Sum(Individual Losses)
-                        loss = loss_ensemble + loss_individual
+                        # Convert stacked logits to list of branches for KBCELoss
+                        # stacked_logits shape: [K, Batch, 1] -> list of K tensors [Batch, 1]
+                        branch_logits = [stacked_logits[i] for i in range(model.k)]
+                        
+                        # Use same interface as FCNv2: combined output + list of branches
+                        loss = criterion(ensemble_logits, branch_logits, y_batch)
                     elif isinstance(model, FCNv2Model):
                         # FCNv2 returns dict with y_pred, y_d, y_s
                         output = model(X_batch)
                         loss = criterion(
                             output['y_pred'],
-                            output['y_d'],
-                            output['y_s'],
+                            [output['y_d'], output['y_s']],  # k=2 branches for FCN
                             y_batch
                         )
                     else:

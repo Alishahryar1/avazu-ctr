@@ -2,7 +2,7 @@
 Test suite for FCNv2 neural network layers and model.
 
 This module tests MultiHeadFeatureEmbedding, Exponential2LinearCrossNetwork,
-Linear2ExponentialCrossNetwork, FCNv2Model, and TriBCELoss.
+Linear2ExponentialCrossNetwork, FCNv2Model, and KBCELoss.
 """
 
 import unittest
@@ -12,7 +12,7 @@ from src.models.layers.multihead_embedding import MultiHeadFeatureEmbedding
 from src.models.layers.exp2lin_cross_network import Exponential2LinearCrossNetwork
 from src.models.layers.lin2exp_cross_network import Linear2ExponentialCrossNetwork
 from src.models.architectures.fcnv2 import FCNv2Model
-from src.training.losses import TriBCELoss
+from src.training.losses import KBCELoss
 
 
 class TestMultiHeadFeatureEmbedding(unittest.TestCase):
@@ -189,19 +189,18 @@ class TestLinear2ExponentialCrossNetwork(unittest.TestCase):
                 self.assertFalse(torch.isnan(param.grad).any(), f"NaN gradient for {name}")
 
 
-class TestTriBCELoss(unittest.TestCase):
-    """Tests for TriBCELoss."""
+class TestKBCELoss(unittest.TestCase):
+    """Tests for KBCELoss (generalized k-BCE loss)."""
 
     def test_forward(self):
         """Test loss computation."""
-        loss_fn = TriBCELoss()
+        loss_fn = KBCELoss()  # Uses default k=3
         
         y_pred = torch.randn(16, 1)
-        y_d = torch.randn(16, 1)
-        y_s = torch.randn(16, 1)
+        y_branches = [torch.randn(16, 1), torch.randn(16, 1)]  # k=2 branches (FCN default)
         y_true = torch.randint(0, 2, (16, 1)).float()
         
-        loss = loss_fn(y_pred, y_d, y_s, y_true)
+        loss = loss_fn(y_pred, y_branches, y_true)
         
         self.assertEqual(loss.dim(), 0)  # Should be scalar
         self.assertFalse(torch.isnan(loss))
@@ -209,14 +208,15 @@ class TestTriBCELoss(unittest.TestCase):
 
     def test_gradient_flow(self):
         """Verify gradients flow through the loss."""
-        loss_fn = TriBCELoss()
+        loss_fn = KBCELoss()
         
         y_pred = torch.randn(16, 1, requires_grad=True)
         y_d = torch.randn(16, 1, requires_grad=True)
         y_s = torch.randn(16, 1, requires_grad=True)
+        y_branches = [y_d, y_s]
         y_true = torch.randint(0, 2, (16, 1)).float()
         
-        loss = loss_fn(y_pred, y_d, y_s, y_true)
+        loss = loss_fn(y_pred, y_branches, y_true)
         loss.backward()
         
         self.assertIsNotNone(y_pred.grad)
@@ -225,14 +225,15 @@ class TestTriBCELoss(unittest.TestCase):
 
     def test_weighting_mechanism(self):
         """Test that worse branches get higher weights."""
-        loss_fn = TriBCELoss()
+        loss_fn = KBCELoss()
         
         y_true = torch.ones(16, 1)
         y_pred = torch.ones(16, 1) * 5  # Good prediction (high logit for 1)
         y_d = torch.zeros(16, 1)  # Worse prediction
         y_s = torch.ones(16, 1) * 5  # Good prediction
+        y_branches = [y_d, y_s]
         
-        loss = loss_fn(y_pred, y_d, y_s, y_true)
+        loss = loss_fn(y_pred, y_branches, y_true)
         
         # Loss should be finite
         self.assertFalse(torch.isnan(loss))

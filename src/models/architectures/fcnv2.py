@@ -18,7 +18,7 @@ class FCNv2Model(nn.Module):
     - L2ECN: Linear-to-Exponential Cross Network
     
     The final prediction is the average of both paths.
-    Uses TriBCELoss for weighted auxiliary loss training.
+    Uses KBCELoss for weighted auxiliary loss training.
     
     Args:
         vocab_sizes: Dictionary mapping feature names to vocabulary sizes.

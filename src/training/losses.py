@@ -29,23 +29,23 @@ class FocalLoss(nn.Module):
         return loss.mean()
 
 
-class TriBCELoss(nn.Module):
+class KBCELoss(nn.Module):
     """
-    Triple BCE Loss for FCNv2 dual-path architecture.
+    K-way BCE Loss for multi-branch architectures.
     
-    Computes weighted loss from three predictions:
-    - y_pred: Combined prediction (average of both paths)
-    - y_d: E2L path prediction (Exponential-to-Linear)
-    - y_s: L2E path prediction (Linear-to-Exponential)
+    Generalized loss function that computes weighted BCE from k+1 predictions:
+    - y_pred: Combined prediction (e.g., average of all branches)
+    - y_branches: List of k individual branch predictions
     
-    Loss = BCE(y_pred) + weight_d * BCE(y_d) + weight_s * BCE(y_s)
+    Loss = BCE(y_pred) + sum_i(weight_i * BCE(y_i))
     
     Weights are dynamically computed based on relative performance:
-    - weight_d = max(0, loss_d - loss)  
-    - weight_s = max(0, loss_s - loss)
+    - weight_i = max(0, loss_i - loss_combined)
     
-    This encourages the weaker branch to improve while not penalizing
-    the stronger branch.
+    This encourages weaker branches to improve while not penalizing
+    stronger branches.
+    
+    Works with any number of branches (FCN uses 2, Ensemble uses k models).
     """
     def __init__(self):
         super().__init__()
@@ -54,32 +54,29 @@ class TriBCELoss(nn.Module):
     def forward(
         self, 
         y_pred: torch.Tensor, 
-        y_d: torch.Tensor, 
-        y_s: torch.Tensor, 
+        y_branches: list[torch.Tensor], 
         y_true: torch.Tensor
     ) -> torch.Tensor:
         """
-        Compute the triple BCE loss.
+        Compute the k-way BCE loss.
         
         Args:
             y_pred: Combined logits [B, 1]
-            y_d: E2L path logits [B, 1]
-            y_s: L2E path logits [B, 1]
+            y_branches: List of branch logits, each [B, 1]
             y_true: Ground truth labels [B, 1]
             
         Returns:
             Weighted combined loss
         """
-        # Compute individual losses
+        # Compute combined loss
         loss = self.bce(y_pred, y_true)
-        loss_d = self.bce(y_d, y_true)
-        loss_s = self.bce(y_s, y_true)
         
-        # Compute dynamic weights (penalize branches that perform worse than combined)
-        weight_d = (loss_d - loss).clamp(min=0)
-        weight_s = (loss_s - loss).clamp(min=0)
-        
-        # Combined weighted loss
-        total_loss = loss + loss_d * weight_d + loss_s * weight_s
+        # Compute individual branch losses and dynamic weights
+        total_loss = loss
+        for y_branch in y_branches:
+            loss_i = self.bce(y_branch, y_true)
+            # Penalize branches that perform worse than combined
+            weight_i = (loss_i - loss).clamp(min=0)
+            total_loss = total_loss + loss_i * weight_i
         
         return total_loss
