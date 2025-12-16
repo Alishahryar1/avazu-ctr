@@ -133,7 +133,7 @@ CONFIG: ConfigType = {
     
     # === Automatic Mixed Precision (AMP) ===
     "auto_amp": True,  # Enable AMP for faster training on CUDA (uses float16/bfloat16)
-    "amp_dtype": "bfloat16",  # Options: 'float16' (more compatible), 'bfloat16' (better numerics)
+    "amp_dtype": "float16",  # Options: 'float16' (more compatible), 'bfloat16' (better numerics)
     
     # === Regularization ===
     "lr_warmup_epoch_ratio": 0.1,
