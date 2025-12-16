@@ -1,7 +1,7 @@
-data
+/data
 *.csv
 __pycache__
-models
+/models
 runs
 GEMINI.md
 .pytest_cache

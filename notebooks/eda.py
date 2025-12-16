@@ -11,8 +11,8 @@ Run: python eda.py
 import polars as pl
 import numpy as np
 from pathlib import Path
-from config import CONFIG
-from data_processor import (
+from src.config.config import CONFIG
+from src.data.data_processor import (
     SCHEMA, BASE_CATEGORICAL_COLS, CATEGORICAL_COLS,
     get_user_proxy_expression, get_interaction_feature_expressions,
     get_time_feature_expressions, COUNT_FEATURE_COLS, CUMCOUNT_COLS,
