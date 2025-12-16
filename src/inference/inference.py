@@ -10,6 +10,7 @@ from src.processing.data_processor import load_metadata, get_parquet_path
 from src.processing.dataset import ParquetFullDataset
 from src.models.architectures.base_model import GatedDCNModel
 from src.models.architectures.ensemble import EnsembleModel
+from src.models.architectures.fcnv2 import FCNv2Model
 
 
 def inference():
@@ -47,7 +48,12 @@ def inference():
     # 3. Model Initialization and Loading
     print("Step 3: Loading Model...")
     use_ensemble = CONFIG['use_ensemble']
-    if use_ensemble:
+    use_fcnv2 = CONFIG.get('use_fcnv2', False)
+    
+    if use_fcnv2:
+        model = FCNv2Model(vocab_sizes, feature_names, CONFIG)
+        print("Using FCNv2 model (dual-path cross network)")
+    elif use_ensemble:
         model = EnsembleModel(vocab_sizes, feature_names, CONFIG)
         print(f"Using ensemble of {CONFIG['ensemble_k']} models (aggregation={CONFIG['ensemble_aggregation']})")
     else:
@@ -82,9 +88,15 @@ def inference():
         for X_batch in tqdm(test_loader, desc="Predicting"):
             X_batch = X_batch.to(CONFIG['device'])
 
-            logits = model(X_batch)
-            # Apply sigmoid to convert logits to probabilities
-            preds = torch.sigmoid(logits)
+            output = model(X_batch)
+            
+            # Handle different model output formats
+            if isinstance(output, dict):
+                # FCNv2Model returns dict with 'y_pred' already as probabilities
+                preds = output['y_pred']
+            else:
+                # GatedDCNModel and EnsembleModel return logits
+                preds = torch.sigmoid(output)
 
             predictions.append(preds.cpu().numpy())
 
