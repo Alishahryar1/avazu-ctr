@@ -11,8 +11,8 @@ import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
 from src.config.config import CONFIG, seed_everything
-from src.data.data_processor import load_metadata, get_parquet_path, get_parquet_row_count
-from src.data.dataset import ParquetFullDataset
+from src.processing.data_processor import load_metadata, get_parquet_path, get_parquet_row_count
+from src.processing.dataset import ParquetFullDataset
 from src.models.architectures.base_model import GatedDCNModel
 from src.models.architectures.ensemble import EnsembleModel
 from src.training.losses import FocalLoss
