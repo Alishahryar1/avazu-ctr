@@ -142,6 +142,7 @@ def train():
 
     print(f"Train samples: {len(X_train):,}")
     print(f"Positive rate: {y_train.mean():.4f}")
+    print(f"Number of features: {len(feature_names)}")
 
     # 2. Random Train/Validation Split
     print("\nStep 2: Creating Random Train/Validation Split...")
