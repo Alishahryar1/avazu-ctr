@@ -39,6 +39,15 @@ class ConfigType(TypedDict):
     use_feature_gating: bool  # Alternative to SENET (mutually exclusive)
     feature_gating_activation: str  # Options: sigmoid, tanh, relu, etc.
     feature_gating_low_rank: int | None  # None = full-rank, int = low-rank dimension
+
+    # === Model Architecture - STEC ===
+    use_stec: bool
+    stec_num_layers: int
+    stec_num_heads: int
+    stec_hidden_dim: int | None
+    stec_dropout: float
+    stec_use_ffn: bool
+    stec_mlp_hidden_dims: list[int]
     
 
     mlp_hidden_dims: list[int]
@@ -128,6 +137,15 @@ CONFIG: ConfigType = {
     "use_feature_gating": True,  # Alternative to SENET (mutually exclusive)
     "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
     "feature_gating_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
+    
+    # === Model Architecture - STEC ===
+    "use_stec": True,
+    "stec_num_layers": 2,
+    "stec_num_heads": 4,
+    "stec_hidden_dim": None,  # Defaults to 4 * embed_dim
+    "stec_dropout": 0.1,
+    "stec_use_ffn": True,
+    "stec_mlp_hidden_dims": [1024, 512, 256],
     
 
     # === Model Architecture - MLP ===
