@@ -56,9 +56,8 @@ class Linear2ExponentialCrossNetwork(nn.Module):
                 self.gamma.append(nn.Parameter(torch.ones(input_dim // 2)))
                 self.beta.append(nn.Parameter(torch.zeros(input_dim // 2)))
             
-            # Bias
-            self.b.append(nn.Parameter(torch.empty(input_dim)))
-            nn.init.uniform_(self.b[i])
+            # Bias - initialize to zeros for stability
+            self.b.append(nn.Parameter(torch.zeros(input_dim)))
             
             # Batch norm (applied on heads dimension)
             if batch_norm:
