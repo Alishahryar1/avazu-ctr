@@ -1,3 +1,4 @@
+from torch.optim import optimizer
 import os
 import torch
 import torch.nn as nn
@@ -296,6 +297,9 @@ def train():
     best_val_auc = 0.0
     patience_counter = 0
     epoch = 0  # Initialize for graceful interrupt handling
+    val_loss = 0
+    val_auc = 0
+    val_logloss = 0
 
     # Setup TensorBoard writer with timestamped run directory
     writer = None
@@ -422,7 +426,19 @@ def train():
                 # No validation - just log training metrics
                 if writer is not None:
                     writer.add_scalar('Loss/train_epoch', avg_train_loss, epoch)
-
+                
+                # Save best model
+                torch.save({
+                    'epoch': epoch,
+                    'model_state_dict': model.state_dict(),
+                    'embedding_optimizer_state_dict': embedding_optimizer.state_dict(),
+                    'other_optimizer_state_dict': other_optimizer.state_dict(),
+                    'val_loss': val_loss,
+                    'val_auc': val_auc,
+                    'val_logloss': val_logloss,
+                }, os.path.join(models_path, "best_model.pth"))
+                print(f"✓ New best model saved! (Val AUC: {val_auc:.5f})")
+                
                 print(f"\n{'='*80}")
                 print(f"Epoch {epoch+1}/{CONFIG['epochs']} Summary:")
                 print(f"  Train Loss: {avg_train_loss:.5f}")
@@ -450,7 +466,16 @@ def train():
     print("=" * 80)
 
     # Save final model
-    torch.save(model.state_dict(), os.path.join(models_path, "model.pth"))
+    torch.save(
+        {
+            'model_state_dict': model.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'other_optimizer_state_dict': other_optimizer.state_dict(),
+            'val_loss': val_loss,
+            'val_auc': val_auc,
+            'val_logloss': val_logloss,
+        }, os.path.join(models_path, "model.pth")
+    )
 
     # Cleanup TensorBoard writer
     if writer is not None:
