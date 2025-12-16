@@ -158,17 +158,17 @@ def train():
     # 2. Create Train/Validation Split
     print("\nStep 2: Creating Train/Validation Split...")
     
-    # Calculate split index
-    # Data is temporally sorted, so we split by index
-    split_idx = int(len(full_dataset) * (1 - CONFIG['validation_split']))
+    # Random split
+    indices = np.arange(len(full_dataset))
+    np.random.seed(CONFIG['seed'])  # Reproducible split
+    np.random.shuffle(indices)
     
-    print(f"Temporal split: last {CONFIG['validation_split']*100:.1f}% as validation")
-    print(f"Split index: {split_idx:,} / {len(full_dataset):,}")
-
-    # Create subsets
-    indices = list(range(len(full_dataset)))
-    train_indices = indices[:split_idx]
-    val_indices = indices[split_idx:]
+    split_idx = int(len(full_dataset) * (1 - CONFIG['validation_split']))
+    train_indices = indices[:split_idx].tolist()
+    val_indices = indices[split_idx:].tolist()
+    
+    print(f"Random split: {CONFIG['validation_split']*100:.1f}% as validation")
+    print(f"Split sizes: {len(train_indices):,} train / {len(val_indices):,} val")
     
     train_dataset = Subset(full_dataset, train_indices)
     val_dataset = Subset(full_dataset, val_indices)
