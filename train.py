@@ -168,7 +168,6 @@ def train():
     val_indices = indices[split_idx:].tolist()
     
     print(f"Random split: {CONFIG['validation_split']*100:.1f}% as validation")
-    print(f"Split sizes: {len(train_indices):,} train / {len(val_indices):,} val")
     
     train_dataset = Subset(full_dataset, train_indices)
     val_dataset = Subset(full_dataset, val_indices)
@@ -205,6 +204,7 @@ def train():
         print("Model compiled with torch.compile (mode='reduce-overhead')")
     else:
         print("Model compilation disabled (compile_model=False)")
+    assert(isinstance(model, torch.nn.Module))
 
     # Count parameters
     total_params = sum(p.numel() for p in model.parameters())
