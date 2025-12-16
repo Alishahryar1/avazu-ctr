@@ -4,35 +4,48 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
 import polars as pl
-import gc
 
 from config import CONFIG, seed_everything
-from data_processor import load_processed_data
-from dataset import AvazuDataset
+from data_processor import load_metadata, get_parquet_path
+from dataset import ParquetBatchDataset
 from model import GatedDCNModel
+
 
 def inference():
     seed_everything(CONFIG['seed'])
-    
-    # 1. Load and Process Data (Need to get vocab_sizes and feature_names)
-    print("Step 1: Loading Processed Data (for Inference)...")
+
+    # 1. Load Metadata (data stays in parquet)
+    print("Step 1: Loading Metadata...")
     try:
-        _, _, _, X_test, test_ids, vocab_sizes, feature_names = load_processed_data(mode='inference')
+        vocab_sizes, feature_names = load_metadata()
     except FileNotFoundError:
         print("Processed data not found. Please run 'python data_processor.py' to generate it.")
         return
-    
+
+    test_parquet = get_parquet_path('test')
+    print(f"Test parquet: {test_parquet}")
+
     # 2. Dataset and DataLoader
     print("Step 2: Preparing Test DataLoader...")
-    test_dataset = AvazuDataset(X_test)
-    test_loader = DataLoader(
-        test_dataset, 
-        batch_size=CONFIG['batch_size'], 
-        shuffle=False, 
-        num_workers=CONFIG['num_workers'], 
-        pin_memory=True
+    test_dataset = ParquetBatchDataset(
+        parquet_path=test_parquet,
+        feature_cols=feature_names,
+        label_col=None,  # No labels for test data
+        batch_size=CONFIG['batch_size'],
+        shuffle=False  # Must be False for inference to maintain order
     )
-    
+
+    print(f"Test batches: {test_dataset.n_batches:,} (~{test_dataset.n_samples:,} samples)")
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=1,  # Each item is already a batch
+        shuffle=False,
+        num_workers=0,  # Parquet reading not compatible with multiprocessing
+        pin_memory=False,
+        collate_fn=lambda x: x[0]  # Unwrap the single batch
+    )
+
     # 3. Model Initialization and Loading
     print("Step 3: Loading Model...")
     model = GatedDCNModel(vocab_sizes, feature_names, CONFIG)
@@ -61,7 +74,8 @@ def inference():
     predictions = []
 
     with torch.no_grad():
-        for X_batch in tqdm(test_loader, desc="Predicting"):
+        for batch_data in tqdm(test_loader, desc="Predicting"):
+            X_batch, _ = batch_data  # _ is None for test data
             X_batch = X_batch.to(CONFIG['device'])
 
             logits = model(X_batch)
@@ -73,17 +87,22 @@ def inference():
     # Concatenate predictions
     predictions = np.concatenate(predictions).flatten()
     print(f"Prediction stats - Min: {predictions.min():.6f}, Max: {predictions.max():.6f}, Mean: {predictions.mean():.6f}")
-    
-    # 5. Save Submission
+
+    # 5. Read test IDs from parquet and save submission
     print("Step 5: Creating submission file...")
+
+    # Read IDs from parquet (memory efficient - only read ID column)
+    test_ids = pl.scan_parquet(test_parquet).select('id').collect()['id'].to_numpy()
+
     submission = pl.DataFrame({
         "id": test_ids,
         "click": predictions
     })
-    
+
     submission.write_csv(CONFIG['sub_path'])
     print(f"Submission saved to {CONFIG['sub_path']}")
     print(submission.head())
+
 
 if __name__ == "__main__":
     inference()

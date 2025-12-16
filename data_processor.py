@@ -3,18 +3,15 @@ Avazu CTR Data Processor - Memory-Efficient Polars Implementation
 
 This module is optimized for running on memory-constrained systems (e.g., laptops):
 - Sequential processing of vocabulary building to avoid memory spikes
-- Streaming sink to temporary parquet for transformation to avoid OOM
+- Streaming sink directly to parquet (no numpy conversion)
 - Explicit garbage collection between processing phases
-- Chunked reading from parquet for numpy conversion
+- Data stays in parquet format for on-demand batch reading during training
 - Expression-based transformations (no Python loops in hot paths)
 - Lazy evaluation with streaming for memory efficiency
 """
 
 import polars as pl
-import numpy as np
 import gc
-import shutil
-import tempfile
 from pathlib import Path
 from config import CONFIG
 import pickle
@@ -538,7 +535,7 @@ def build_vocabularies(lf_train: pl.LazyFrame, cat_cols: list[str], min_freq: in
 
 
 # =============================================================================
-# Data Transformation (Memory-Efficient with Streaming Sink)
+# Data Transformation (Streaming Sink to Parquet)
 # =============================================================================
 def create_mapping_expressions(feat_maps: dict, cat_cols: list[str]) -> list[pl.Expr]:
     """
@@ -559,36 +556,35 @@ def create_mapping_expressions(feat_maps: dict, cat_cols: list[str]) -> list[pl.
     return expressions
 
 
-def transform_dataframe(
+def sink_to_parquet(
     lf: pl.LazyFrame,
     feat_maps: dict,
     cat_cols: list[str],
-    is_test: bool = False,
-    chunk_size: int = 500_000
-) -> tuple[np.ndarray, np.ndarray, np.ndarray | None]:
+    output_path: Path,
+    is_test: bool = False
+) -> int:
     """
-    Transform a lazy frame into numpy arrays using streaming sink to parquet.
+    Transform and sink a LazyFrame directly to parquet file.
 
-    MEMORY-OPTIMIZED: Uses streaming sink to write transformed data to a temporary
-    parquet file, then reads it back in chunks. This avoids holding the entire
-    transformed LazyFrame in memory and prevents re-evaluation per chunk.
+    MEMORY-OPTIMIZED: Uses streaming sink to write transformed data directly
+    to the final parquet file. No intermediate numpy arrays are created.
 
     Args:
         lf: Input LazyFrame
         feat_maps: Feature value to ID mappings
         cat_cols: List of categorical column names
+        output_path: Path to write the parquet file
         is_test: Whether this is test data
-        chunk_size: Number of rows to process at once (default 500K)
 
     Returns:
-        X: Feature matrix (n_samples, n_features)
-        extra: Labels (train) or IDs (test)
-        hour_data: Raw hour strings for temporal splitting (train only)
+        Number of rows written
     """
     # Build all mapping expressions
     mapping_exprs = create_mapping_expressions(feat_maps, cat_cols)
 
     # Select columns based on train/test
+    # For train: click (label), hour (for splitting), and all features
+    # For test: id (for submission) and all features
     if is_test:
         select_cols = ['id'] + cat_cols
     else:
@@ -601,80 +597,30 @@ def transform_dataframe(
         .with_columns(mapping_exprs)
     )
 
-    # Create temp directory for intermediate parquet
-    temp_dir = tempfile.mkdtemp(prefix="polars_transform_")
-    temp_parquet = Path(temp_dir) / "transformed.parquet"
+    print(f"  Streaming transformed data to {output_path}...")
 
+    # Use streaming sink to write to parquet - this is memory-efficient
     try:
-        print(f"  Streaming transformed data to temporary parquet...")
+        transformed_lf.sink_parquet(output_path)
+    except Exception as e:
+        # Fallback: collect with streaming and write
+        print(f"  Sink failed ({e}), using streaming collect fallback...")
+        df = transformed_lf.collect(streaming=True)
+        df.write_parquet(output_path)
+        del df
+        gc.collect()
 
-        # Use streaming sink to write to parquet - this is memory-efficient
-        try:
-            transformed_lf.sink_parquet(temp_parquet)
-        except Exception as e:
-            # Fallback: collect with streaming and write
-            print(f"  Sink failed ({e}), using streaming collect fallback...")
-            df = transformed_lf.collect(streaming=True)
-            df.write_parquet(temp_parquet)
-            del df
-            gc.collect()
+    # Get row count from the written file
+    total_rows = pl.scan_parquet(output_path).select(pl.len()).collect().item()
+    print(f"  Written {total_rows:,} rows to {output_path.name}")
 
-        # Now read the parquet file in chunks using scan + slice
-        # First get total row count
-        total_rows = pl.scan_parquet(temp_parquet).select(pl.len()).collect().item()
-        print(f"  Total rows to process: {total_rows:,} in chunks of {chunk_size:,}")
-
-        # Pre-allocate output arrays
-        X = np.empty((total_rows, len(cat_cols)), dtype=np.int32)
-
-        if is_test:
-            extra = np.empty(total_rows, dtype=object)
-            hour_data = None
-        else:
-            extra = np.empty(total_rows, dtype=np.float32)
-            hour_data = np.empty(total_rows, dtype=object)
-
-        # Process in chunks by reading slices from parquet
-        n_chunks = (total_rows + chunk_size - 1) // chunk_size
-        for chunk_idx in range(n_chunks):
-            start_idx = chunk_idx * chunk_size
-            rows_in_chunk = min(chunk_size, total_rows - start_idx)
-
-            # Read chunk using slice (very efficient on parquet)
-            chunk_df = (
-                pl.scan_parquet(temp_parquet)
-                .slice(start_idx, rows_in_chunk)
-                .collect()
-            )
-
-            # Extract data from chunk
-            if is_test:
-                extra[start_idx:start_idx + rows_in_chunk] = chunk_df['id'].to_numpy()
-            else:
-                extra[start_idx:start_idx + rows_in_chunk] = chunk_df['click'].to_numpy().astype(np.float32)
-                hour_data[start_idx:start_idx + rows_in_chunk] = chunk_df['hour'].to_numpy()
-
-            # Extract features
-            X[start_idx:start_idx + rows_in_chunk, :] = chunk_df.select(cat_cols).to_numpy().astype(np.int32)
-
-            # Cleanup
-            del chunk_df
-            gc.collect()
-
-            if (chunk_idx + 1) % 10 == 0 or chunk_idx == n_chunks - 1:
-                print(f"  Processed chunk {chunk_idx + 1}/{n_chunks}")
-
-    finally:
-        # Clean up temp directory
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-    return X, extra, hour_data
+    return total_rows
 
 
 # =============================================================================
 # Main Processing Pipeline
 # =============================================================================
-def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, dict, list]:
+def process_data_polars() -> tuple[dict, list, int, int]:
     """
     Main data processing pipeline using memory-efficient Polars patterns.
 
@@ -682,34 +628,31 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     - Sequential processing of count/vocabulary features (avoids parallel memory spike)
     - Streaming collection where possible
     - Explicit garbage collection between phases
-    - Streaming sink to parquet for final transformation
+    - Streaming sink directly to parquet (no numpy arrays in memory)
 
-    Materializations occur at:
-    1. Count features (train stats -> join to both)
-    2. Hourly features (train stats -> join to both)
-    3. Vocabulary building (one column at a time)
-    4. Final transformation (via streaming parquet sink)
+    Output files are saved to CONFIG['processed_path']:
+    - train.parquet: Training data with features and labels
+    - test.parquet: Test data with features and IDs
+    - vocab_sizes.pkl: Vocabulary sizes for each feature
+    - feature_names.pkl: List of feature column names
 
     Returns:
-        X_train: Training feature matrix
-        y_train: Training labels
-        train_hours: Hour strings for temporal splitting
-        X_test: Test feature matrix
-        test_ids: Test IDs
         vocab_sizes: Vocabulary sizes per column
         cat_cols: List of categorical column names
+        train_rows: Number of training rows
+        test_rows: Number of test rows
     """
     print("Loading data with Polars (memory-efficient pipeline)...")
-    
+
     # Lazy load with explicit schema
     lf_train = pl.scan_csv(CONFIG['train_path'], schema_overrides=SCHEMA)
     lf_test = pl.scan_csv(CONFIG['test_path'], schema_overrides=SCHEMA)
-    
+
     # ==========================================================================
     # PHASE 1: All independent base features (stays lazy)
     # ==========================================================================
     print("Building base feature expressions...")
-    
+
     # Combine ALL base expressions into a single expression list
     base_exprs = [
         # User proxy
@@ -719,10 +662,10 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
         # Time features
         *get_time_feature_expressions(),
     ]
-    
+
     lf_train = lf_train.with_columns(base_exprs)
     lf_test = lf_test.with_columns(base_exprs)
-    
+
     # ==========================================================================
     # PHASE 2: Count features (REQUIRED materialization - train stats to both)
     # ==========================================================================
@@ -743,16 +686,16 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     print("Computing hourly aggregated features (memory-efficient)...")
     lf_train, lf_test = compute_hourly_aggregated_features(lf_train, lf_test)
     gc.collect()  # Free memory after materialization
-    
+
     # ==========================================================================
     # PHASE 4: All remaining features in a SINGLE expression batch (stays lazy)
     # ==========================================================================
     print("Computing sequential/window features (batched)...")
-    
+
     # Sort for chronological operations (lazy - just adds to query plan)
     lf_train = lf_train.sort("hour")
     lf_test = lf_test.sort("hour")
-    
+
     # Build ALL remaining expressions as a single batch
     # These are window/sequential ops that can be computed together after sort
     sequential_exprs = [
@@ -762,10 +705,10 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
         # Inlined from compute_time_delta_features for single expression batch
         (pl.col("hour") + "00").str.to_datetime("%y%m%d%H%M").alias("_timestamp"),
     ]
-    
+
     lf_train = lf_train.with_columns(sequential_exprs)
     lf_test = lf_test.with_columns(sequential_exprs)
-    
+
     # Time delta computation (needs _timestamp column)
     time_delta_exprs = [
         (
@@ -781,15 +724,15 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
         .cast(pl.UInt32)
         .alias("user_proxy_prev_clicks"),
     ]
-    
+
     lf_train = lf_train.with_columns(time_delta_exprs).drop("_timestamp")
     lf_test = lf_test.with_columns(time_delta_exprs).drop("_timestamp")
-    
-    # ==========================================================================  
+
+    # ==========================================================================
     # PHASE 5: ALL binning in one shot (stays lazy until collect)
     # ==========================================================================
     print("Binning all features (single batch)...")
-    
+
     all_bin_exprs = [
         # Cumcount bins
         *bin_cumcount_features(CUMCOUNT_COLS),
@@ -800,29 +743,29 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
         # Previous clicks bin
         bin_prev_clicks("user_proxy"),
     ]
-    
+
     lf_train = lf_train.with_columns(all_bin_exprs)
     lf_test = lf_test.with_columns(all_bin_exprs)
-    
+
     # ==========================================================================
     # Build final feature list
     # ==========================================================================
     count_bin_cols = [f"{col}_count_bin" for col in COUNT_FEATURE_COLS]
     cumcount_bin_cols = [f"{col}_cumcount_bin" for col in CUMCOUNT_COLS]
     cat_cols = (
-        CATEGORICAL_COLS 
-        + ['month', 'day_of_month', 'hour_of_day', 'day_of_week'] 
-        + count_bin_cols 
-        + cumcount_bin_cols 
+        CATEGORICAL_COLS
+        + ['month', 'day_of_month', 'hour_of_day', 'day_of_week']
+        + count_bin_cols
+        + cumcount_bin_cols
         + ['user_hourly_impressions_bin']
         + ['hours_since_last_click_bin']
         + ['user_proxy_prev_clicks_bin']
     )
-    
+
     print(f"Total categorical features: {len(cat_cols)}")
-    
+
     # ==========================================================================
-    # PHASE 6: Vocabulary building + final transformation (memory-efficient)
+    # PHASE 6: Vocabulary building + streaming sink to parquet
     # ==========================================================================
     vocab_sizes, feat_maps = build_vocabularies(
         lf_train,
@@ -831,126 +774,105 @@ def process_data_polars() -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarra
     )
     gc.collect()  # Free memory after vocabulary building
 
-    print("Transforming data to numpy arrays (memory-efficient)...")
+    # Create output directory
+    output_path = Path(CONFIG['processed_path'])
+    output_path.mkdir(parents=True, exist_ok=True)
 
-    # Transform train data
+    print("Sinking transformed data to parquet (memory-efficient)...")
+
+    # Sink train data to parquet
     print("Processing training data...")
-    X_train, y_train, train_hours_raw = transform_dataframe(
-        lf_train, feat_maps, cat_cols, is_test=False
-    )
-    assert train_hours_raw is not None
-    train_hours = train_hours_raw
-    print(f"Train processed: {X_train.shape}")
+    train_parquet = output_path / "train.parquet"
+    train_rows = sink_to_parquet(lf_train, feat_maps, cat_cols, train_parquet, is_test=False)
 
     # Free train LazyFrame reference and collect garbage before test
     del lf_train
     gc.collect()
 
-    # Transform test data
+    # Sink test data to parquet
     print("Processing test data...")
-    X_test, test_ids, _ = transform_dataframe(
-        lf_test, feat_maps, cat_cols, is_test=True
-    )
-    print(f"Test processed: {X_test.shape}")
+    test_parquet = output_path / "test.parquet"
+    test_rows = sink_to_parquet(lf_test, feat_maps, cat_cols, test_parquet, is_test=True)
 
     # Free test LazyFrame reference
     del lf_test
     gc.collect()
-    
-    return X_train, y_train, train_hours, X_test, test_ids, vocab_sizes, cat_cols
 
-
-# =============================================================================
-# Data Persistence
-# =============================================================================
-def save_processed_data(
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    train_hours: np.ndarray,
-    X_test: np.ndarray,
-    test_ids: np.ndarray,
-    vocab_sizes: dict,
-    feature_names: list
-) -> None:
-    """Save processed numpy arrays and metadata to disk."""
-    
-    
-    path = Path(CONFIG['processed_path'])
-    path.mkdir(parents=True, exist_ok=True)
-    
-    print(f"Saving processed data to {path}...")
-    
-    # Save arrays
-    np.save(path / "X_train.npy", X_train)
-    np.save(path / "y_train.npy", y_train)
-    np.save(path / "train_hours.npy", train_hours)
-    np.save(path / "X_test.npy", X_test)
-    np.save(path / "test_ids.npy", test_ids)
-    
     # Save metadata
-    with open(path / "vocab_sizes.pkl", "wb") as f:
+    print("Saving metadata...")
+    with open(output_path / "vocab_sizes.pkl", "wb") as f:
         pickle.dump(vocab_sizes, f)
-    
-    with open(path / "feature_names.pkl", "wb") as f:
-        pickle.dump(feature_names, f)
-    
-    print("Data saved successfully.")
+    with open(output_path / "feature_names.pkl", "wb") as f:
+        pickle.dump(cat_cols, f)
+
+    print(f"\nProcessing complete!")
+    print(f"  Train: {train_rows:,} rows -> {train_parquet}")
+    print(f"  Test:  {test_rows:,} rows -> {test_parquet}")
+
+    return vocab_sizes, cat_cols, train_rows, test_rows
 
 
-def load_processed_data(mode: str = 'train') -> tuple[
-    np.ndarray | None,  # X_train
-    np.ndarray | None,  # y_train
-    np.ndarray | None,  # train_hours
-    np.ndarray,         # X_test
-    np.ndarray,         # test_ids
-    dict,               # vocab_sizes
-    list                # feature_names
-]:
+# =============================================================================
+# Data Loading (Metadata Only - Data Stays in Parquet)
+# =============================================================================
+def load_metadata() -> tuple[dict, list]:
     """
-    Load processed data from disk.
-    
-    Args:
-        mode: 'train' loads all data, 'inference' loads only test data
-        
+    Load metadata (vocab sizes and feature names) from disk.
+
+    The actual data stays in parquet files and is read on-demand by ParquetDataset.
+
     Returns:
-        Tuple of arrays and metadata
+        vocab_sizes: Vocabulary sizes per column
+        feature_names: List of feature column names
     """
-    
     path = Path(CONFIG['processed_path'])
-    print(f"Loading processed data from {path} ({mode} mode)...")
-    
+
     try:
-        # Load metadata (always needed)
         with open(path / "vocab_sizes.pkl", "rb") as f:
             vocab_sizes = pickle.load(f)
         with open(path / "feature_names.pkl", "rb") as f:
             feature_names = pickle.load(f)
-        
-        # Load test data (always needed)
-        X_test = np.load(path / "X_test.npy", allow_pickle=True)
-        test_ids = np.load(path / "test_ids.npy", allow_pickle=True)
-        
-        if mode == 'train':
-            X_train = np.load(path / "X_train.npy", allow_pickle=True)
-            y_train = np.load(path / "y_train.npy", allow_pickle=True)
-            train_hours = np.load(path / "train_hours.npy", allow_pickle=True)
-            return X_train, y_train, train_hours, X_test, test_ids, vocab_sizes, feature_names
-        
-        elif mode == 'inference':
-            return None, None, None, X_test, test_ids, vocab_sizes, feature_names
-        
-        else:
-            raise ValueError(f"Invalid mode: {mode}. Must be 'train' or 'inference'.")
-    
+
+        return vocab_sizes, feature_names
+
     except FileNotFoundError as e:
         raise FileNotFoundError(
             f"Processed data not found in {path}. Run 'python data_processor.py' first."
         ) from e
 
 
+def get_parquet_path(split: str = 'train') -> Path:
+    """
+    Get the path to a parquet file.
+
+    Args:
+        split: 'train' or 'test'
+
+    Returns:
+        Path to the parquet file
+    """
+    path = Path(CONFIG['processed_path'])
+    return path / f"{split}.parquet"
+
+
+def get_parquet_row_count(split: str = 'train') -> int:
+    """
+    Get the number of rows in a parquet file.
+
+    Args:
+        split: 'train' or 'test'
+
+    Returns:
+        Number of rows
+    """
+    parquet_path = get_parquet_path(split)
+    return pl.scan_parquet(parquet_path).select(pl.len()).collect().item()
+
+
 # =============================================================================
 # Entry Point
 # =============================================================================
 if __name__ == "__main__":
-    X_train, y_train, train_hours, X_test, test_ids, vocab_sizes, cat_cols = process_data_polars()
-    save_processed_data(X_train, y_train, train_hours, X_test, test_ids, vocab_sizes, cat_cols)
+    vocab_sizes, cat_cols, train_rows, test_rows = process_data_polars()
+    print(f"\nVocabulary sizes: {len(vocab_sizes)} features")
+    print(f"Feature names: {cat_cols[:5]}... ({len(cat_cols)} total)")
