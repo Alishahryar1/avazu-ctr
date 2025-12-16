@@ -947,6 +947,7 @@ class TestParquetDataset(unittest.TestCase):
         X_batch, y_batch = dataset.get_batch(start_idx=0, batch_size=10)
         
         self.assertEqual(X_batch.shape, (10, 2))
+        self.assertIsNotNone(y_batch)
         self.assertEqual(y_batch.shape, (10,))
         
         # Test batch at end of file (partial batch)
@@ -1013,6 +1014,7 @@ class TestParquetBatchDataset(unittest.TestCase):
         # First batch
         X_batch, y_batch = dataset[0]
         self.assertEqual(X_batch.shape, (10, 1))
+        self.assertIsNotNone(y_batch)
         self.assertEqual(y_batch.shape, (10,))
         
         # Check types

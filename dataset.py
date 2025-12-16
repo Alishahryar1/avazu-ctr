@@ -10,7 +10,7 @@ from torch.utils.data import Dataset, Sampler
 import polars as pl
 import numpy as np
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Sized
 
 
 class ParquetDataset(Dataset):
@@ -120,7 +120,7 @@ class ContiguousBatchSampler(Sampler[list[int]]):
 
     def __init__(
         self,
-        data_source: Dataset,
+        data_source: Sized,
         batch_size: int,
         shuffle: bool = True,
         drop_last: bool = False
@@ -199,9 +199,9 @@ class ParquetBatchDataset(Dataset):
     def __len__(self) -> int:
         return self.n_batches
 
-    def __getitem__(self, batch_idx: int) -> tuple[torch.Tensor, torch.Tensor | None]:
+    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor | None]:
         """Get a batch by batch index (not row index)."""
-        actual_idx = self._order[batch_idx]
+        actual_idx = self._order[index]
         start = self.batch_starts[actual_idx]
         actual_size = min(self.batch_size, self.n_samples - start)
 
