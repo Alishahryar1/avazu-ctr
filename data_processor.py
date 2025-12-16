@@ -561,7 +561,8 @@ def sink_to_parquet(
     feat_maps: dict,
     cat_cols: list[str],
     output_path: Path,
-    is_test: bool = False
+    is_test: bool = False,
+    row_group_size: int = 100_000
 ) -> int:
     """
     Transform and sink a LazyFrame directly to parquet file.
@@ -575,6 +576,7 @@ def sink_to_parquet(
         cat_cols: List of categorical column names
         output_path: Path to write the parquet file
         is_test: Whether this is test data
+        row_group_size: Row group size for parquet sink
 
     Returns:
         Number of rows written
@@ -601,7 +603,7 @@ def sink_to_parquet(
 
     # Use streaming sink to write to parquet - this is memory-efficient
     try:
-        transformed_lf.sink_parquet(output_path)
+        transformed_lf.sink_parquet(output_path, row_group_size=row_group_size)
     except Exception as e:
         # Fallback: collect with streaming and write
         print(f"  Sink failed ({e}), using streaming collect fallback...")
