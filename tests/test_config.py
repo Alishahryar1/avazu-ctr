@@ -106,11 +106,15 @@ class TestConfigExtended(unittest.TestCase):
         """Verify MLP has at least one hidden layer."""
         self.assertGreater(len(CONFIG['mlp_hidden_dims']), 0)
 
-    def test_config_embedding_dim_rules_sorted(self):
-        """Verify embedding_dim_rules are sorted ascending by cardinality."""
-        rules = CONFIG['embedding_dim_rules']
-        cardinalities = [r[0] for r in rules]
-        self.assertEqual(cardinalities, sorted(cardinalities))
+    def test_config_feature_embeddings_valid(self):
+        """Verify feature_embeddings has valid structure."""
+        feature_embeddings = CONFIG['feature_embeddings']
+        self.assertIsInstance(feature_embeddings, dict)
+        for name, config in feature_embeddings.items():
+            self.assertIn('type', config, f"feature {name} missing 'type'")
+            self.assertIn(config['type'], ['standard', 'hash'], f"feature {name} has invalid type")
+            self.assertIn('dim', config, f"feature {name} missing 'dim'")
+            self.assertGreater(config['dim'], 0, f"feature {name} has invalid dim")
 
 
 if __name__ == "__main__":
