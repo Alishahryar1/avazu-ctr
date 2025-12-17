@@ -7,13 +7,11 @@ Analyzes processed parquet data to suggest optimal feature_embeddings config:
 - Dimension recommendations
 - Hash bucket size recommendations
 
-Uses Polars lazy evaluation and vocab_sizes.pkl for efficiency.
 
 Run from project root: python -m misc.eda_preprocessed
 """
 
-import polars as pl
-import numpy as np
+
 import pickle
 from pathlib import Path
 import math
