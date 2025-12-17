@@ -81,35 +81,34 @@ class FTRLProximal(Optimizer):
                 z = state['z']
                 n = state['n']
                 
-                # Compute sigma: (sqrt(n_new) - sqrt(n_old)) / alpha
-                n_old = n.clone()
-                n.add_(grad * grad)
-                sigma = (torch.sqrt(n) - torch.sqrt(n_old)) / alpha
+                # OPTIMIZED: Compute sqrt(n_old) BEFORE updating n, avoiding expensive clone()
+                sqrt_n_old = torch.sqrt(n)
                 
-                # Update z accumulator: z += g - sigma * w
-                z.add_(grad - sigma * p.data)
+                # Update n accumulator in-place: n += g^2
+                n.addcmul_(grad, grad)  # More efficient than n.add_(grad * grad)
+                
+                # Compute sigma: (sqrt(n_new) - sqrt(n_old)) / alpha
+                sqrt_n = torch.sqrt(n)
+                sigma = (sqrt_n - sqrt_n_old) / alpha
+                
+                # Update z accumulator in-place: z += g - sigma * w
+                z.add_(grad).addcmul_(sigma, p.data, value=-1)
                 
                 # Compute new weights with L1 soft-thresholding
                 # w_i = 0 if |z_i| <= l1
                 # w_i = -sign(z_i) * (|z_i| - l1) / (l2 + (beta + sqrt(n_i)) / alpha) otherwise
                 
-                abs_z = torch.abs(z)
-                sign_z = torch.sign(z)
-                
-                # Soft-thresholding for L1 regularization
-                threshold_mask = abs_z > l1
-                
+                # OPTIMIZED: Fused operations to reduce temporary allocations
                 # Compute denominator: l2 + (beta + sqrt(n)) / alpha
-                denom = l2 + (beta + torch.sqrt(n)) / alpha
+                # Reuse sqrt_n from above
+                denom = l2 + (beta + sqrt_n) / alpha
                 
-                # Compute new weights
-                new_weights = torch.where(
-                    threshold_mask,
-                    -sign_z * (abs_z - l1) / denom,
-                    torch.zeros_like(p)
-                )
+                # Soft-thresholding: compute |z| - l1, clamp negative to 0
+                abs_z = z.abs()
+                soft_threshold = (abs_z - l1).clamp_(min=0)
                 
-                # Update parameters in-place
-                p.data.copy_(new_weights)
+                # Compute new weights: -sign(z) * soft_threshold / denom
+                # This is 0 when |z| <= l1 (soft_threshold = 0)
+                p.data.copy_(soft_threshold.div_(denom).mul_(z.sign()).neg_())
         
         return loss

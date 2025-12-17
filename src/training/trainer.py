@@ -1,4 +1,5 @@
 """Training script for CTR prediction model."""
+import pyperclip
 from torch.optim import optimizer
 import os
 import torch
@@ -220,8 +221,10 @@ def train():
         timestamp = time.strftime("%Y%m%d_%H%M%S")
         run_dir = os.path.join(CONFIG['tensorboard_logdir'], f"run_{timestamp}")
         writer = SummaryWriter(log_dir=run_dir)
+        command = f"python -m tensorboard.main --logdir={run_dir} --reload_interval=30"
         print(f"TensorBoard logging to: {run_dir}")
-        print("Run 'tensorboard --logdir=runs' to view training progress")
+        print(f"Run '{command}' to view training progress")
+        pyperclip.copy(command)
 
     try:
         for epoch in range(CONFIG['epochs']):
