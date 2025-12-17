@@ -31,7 +31,7 @@ class BilinearInteractionLayer(nn.Module):
             x: Input [B, F, D]
             
         Returns:
-            bilinear: [B, H*F*F, head_dim] - flattened bilinear interaction
+            bilinear: [B, H*F*F] - flattened and pooled bilinear interaction
         """
         B, F, D = x.shape
         
@@ -45,7 +45,10 @@ class BilinearInteractionLayer(nn.Module):
         # Bilinear: [B, H, F, 1, head_dim] * [B, H, 1, F, head_dim] = [B, H, F, F, head_dim]
         bilinear = x_heads.unsqueeze(3) * Wx_heads.unsqueeze(2)
         
-        # Flatten: [B, H*F*F, head_dim]
-        bilinear = bilinear.reshape(B, self.num_heads * F * F, self.head_dim)
+        # Apply AvgPool (pooling over head_dim): [B, H, F, F]
+        bilinear = bilinear.mean(dim=-1)
+        
+        # Flatten: [B, H*F*F]
+        bilinear = bilinear.reshape(B, self.num_heads * F * F)
         
         return bilinear

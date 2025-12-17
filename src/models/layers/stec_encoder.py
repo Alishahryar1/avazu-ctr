@@ -50,7 +50,7 @@ class STECEncoderLayer(nn.Module):
             
         Returns:
             output: [B, F, D] - for next layer
-            bilinear: [B, H*F*F, head_dim] - bilinear interaction for fusion
+            bilinear: [B, H*F*F] - pooled bilinear interaction for fusion
         """
         # Self-attention with residual
         attn_out, bilinear = self.stec(x)

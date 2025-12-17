@@ -148,8 +148,7 @@ class STECModel(BaseCTRModel):
         
         # 6. Batch Normalization for each level's bilinear interaction
         # N+1 levels: N from STEC layers + final
-        head_dim = self.embed_per_field // stec_num_heads
-        bilinear_size = stec_num_heads * self.num_fields * self.num_fields * head_dim
+        bilinear_size = stec_num_heads * self.num_fields * self.num_fields
         num_bilinear_levels = stec_num_layers + 1  # N layers + final
         
         self.bilinear_bns = nn.ModuleList([
@@ -216,14 +215,12 @@ class STECModel(BaseCTRModel):
         
         # 4. Pass through STEC layers
         for i, layer in enumerate(self.stec_layers):
-            h, bilinear = layer(h)  # h: [B, F, D], bilinear: [B, H*F*F, head_dim]
-            bilinear_flat = bilinear.view(B, -1)
-            bilinear_interactions.append(self.bilinear_bns[i](bilinear_flat))
+            h, bilinear = layer(h)  # h: [B, F, D], bilinear: [B, H*F*F]
+            bilinear_interactions.append(self.bilinear_bns[i](bilinear))
         
         # 5. Final bilinear from last layer output
-        final_bilinear = self.final_bilinear(h)
-        final_bilinear_flat = final_bilinear.view(B, -1)
-        bilinear_interactions.append(self.bilinear_bns[-1](final_bilinear_flat))
+        final_bilinear = self.final_bilinear(h) # [B, H*F*F]
+        bilinear_interactions.append(self.bilinear_bns[-1](final_bilinear))
         
         # 6. Concatenate all bilinear interactions
         fused = torch.cat(bilinear_interactions, dim=1)  # [B, total_bilinear_dim]

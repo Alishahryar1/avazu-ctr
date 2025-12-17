@@ -54,7 +54,7 @@ class STECBlock(nn.Module):
             
         Returns:
             attention_output: [B, F, D] - standard self-attention output
-            bilinear_interaction: [B, F, F, D] - bilinear interaction tensor
+            bilinear_interaction: [B, F, F] - pooled bilinear interaction tensor
         """
         # x: [B, F, D]
         Q = self.W_q(x)  # [B, F, D]
@@ -76,6 +76,9 @@ class STECBlock(nn.Module):
         # Using K as W @ x (since K = W_k @ x)
         # bilinear: [B, F, 1, D] * [B, 1, F, D] = [B, F, F, D]
         bilinear_interaction = x.unsqueeze(2) * K.unsqueeze(1)
+        
+        # Apply AvgPool (pooling over embedding dimension): [B, F, F]
+        bilinear_interaction = bilinear_interaction.mean(dim=-1)
         
         return attention_output, bilinear_interaction
 

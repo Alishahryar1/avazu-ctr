@@ -165,7 +165,7 @@ CONFIG: ConfigType = {
     "ftrl_beta": 1.0,  # FTRL learning rate smoothing parameter
     "ftrl_l1": 2.0,  # FTRL L1 regularization (enables sparsity)
     "ftrl_l2": 1.0,  # FTRL L2 regularization
-    "epochs": 500,
+    "epochs": 1,
     "early_stopping_patience": 50,
     "use_tensorboard": True,
     "tensorboard_logdir": "./runs",

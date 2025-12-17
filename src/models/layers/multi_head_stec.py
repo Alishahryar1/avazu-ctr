@@ -48,7 +48,7 @@ class MultiHeadSTEC(nn.Module):
             
         Returns:
             attention_output: [B, F, D] - concatenated multi-head attention
-            bilinear_interaction: [B, F*F*H, head_dim] - grouped bilinear interactions
+            bilinear_interaction: [B, H*F*F] - grouped and pooled bilinear interactions
                 where H is num_heads, flattened for efficiency
         """
         B, num_fields, D = x.shape
@@ -81,7 +81,10 @@ class MultiHeadSTEC(nn.Module):
         # bilinear: [B, H, F, 1, head_dim] * [B, H, 1, F, head_dim] = [B, H, F, F, head_dim]
         bilinear = x_heads.unsqueeze(3) * K.unsqueeze(2)
         
-        # Flatten to [B, H*F*F, head_dim] for concatenation layer
-        bilinear = bilinear.reshape(B, self.num_heads * num_fields * num_fields, self.head_dim)
+        # Apply AvgPool (pooling over head_dim): [B, H, F, F]
+        bilinear = bilinear.mean(dim=-1)
+        
+        # Flatten to [B, H*F*F] for concatenation layer
+        bilinear = bilinear.reshape(B, self.num_heads * num_fields * num_fields)
         
         return attn_output, bilinear

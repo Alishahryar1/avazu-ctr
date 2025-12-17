@@ -28,8 +28,8 @@ class TestSTECLayers(unittest.TestCase):
         # Check attention output: [B, F, D]
         self.assertEqual(attn_out.shape, (batch, fields, embed_dim))
         
-        # Check bilinear output: [B, F, F, D]
-        self.assertEqual(bilinear.shape, (batch, fields, fields, embed_dim))
+        # Check bilinear output: [B, F, F]
+        self.assertEqual(bilinear.shape, (batch, fields, fields))
     
     def test_multi_head_stec_forward(self):
         """Test multi-head STEC block output shapes."""
@@ -46,9 +46,8 @@ class TestSTECLayers(unittest.TestCase):
         # Check attention output: [B, F, D]
         self.assertEqual(attn_out.shape, (batch, fields, embed_dim))
         
-        # Check bilinear output: [B, H*F*F, head_dim]
-        head_dim = embed_dim // num_heads
-        expected_bilinear_shape = (batch, num_heads * fields * fields, head_dim)
+        # Check bilinear output: [B, H*F*F]
+        expected_bilinear_shape = (batch, num_heads * fields * fields)
         self.assertEqual(bilinear.shape, expected_bilinear_shape)
     
     def test_stec_encoder_layer(self):
@@ -64,8 +63,8 @@ class TestSTECLayers(unittest.TestCase):
         out, bilinear = layer(x)
         
         self.assertEqual(out.shape, (batch, fields, embed_dim))
-        expected_bilinear_dim = embed_dim // num_heads
-        self.assertEqual(bilinear.shape[2], expected_bilinear_dim)
+        expected_bilinear_size = num_heads * fields * fields
+        self.assertEqual(bilinear.shape[1], expected_bilinear_size)
         
     def test_bilinear_interaction_layer(self):
         """Test standalone bilinear interaction layer."""
@@ -79,9 +78,8 @@ class TestSTECLayers(unittest.TestCase):
         
         bilinear = layer(x)
         
-        # Expected: [B, H*F*F, head_dim]
-        head_dim = embed_dim // num_heads
-        expected_shape = (batch, num_heads * fields * fields, head_dim)
+        # Expected: [B, H*F*F]
+        expected_shape = (batch, num_heads * fields * fields)
         self.assertEqual(bilinear.shape, expected_shape)
 
 
