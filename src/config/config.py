@@ -158,8 +158,8 @@ CONFIG: ConfigType = {
     "use_layer_norm": True,
     
     # === Training ===
-    "lr": 1e-3,  # Lower initial LR for better convergence
-    "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
+    "lr": 1e-4,  # Lower initial LR for better convergence
+    "embedding_lr": 0.5,  # Higher LR for embeddings (Adagrad style)
     "optimizer_mode": "adamw_adagrad",  # Options: 'adamw_adagrad' or 'ftrl'
     "ftrl_alpha": 0.1,  # FTRL learning rate proportionality constant
     "ftrl_beta": 1.0,  # FTRL learning rate smoothing parameter
@@ -185,7 +185,7 @@ CONFIG: ConfigType = {
     
     # === Regularization ===
     "lr_warmup_epoch_ratio": 0.0,
-    "mlp_dropout": 0.1,
+    "mlp_dropout": 0.25,
     "grad_clip": 1.0,
     "weight_decay": 1e-4,  # L2 regularization for MLP/DCN params
     "embedding_weight_decay": 0.0,  # L2 regularization for embeddings (usually 0)
