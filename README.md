@@ -22,10 +22,11 @@ A state-of-the-art **Click-Through Rate (CTR)** prediction system for the [Avazu
 ### Core Innovations
 
 - **STEC (See-Through Transformer-based Encoder)**: Novel architecture that extracts bilinear interactions from attention mechanisms at no additional computational cost
+- **Gated Deep Cross Network V2 (DCNv2)**: Advanced feature interaction layer with gating mechanisms and low-rank decomposition options
+- **Hash Embedding Layer**: Memory-efficient handling of very high-cardinality features using multiple-hash collisions and importance weighting
 - **Multi-Level Interaction Fusion**: Direct connections from all encoder layers to the final prediction head
-- **Gated Deep Cross Network V2 (DCNv2)** available as a configurable alternative
-- **Dual Optimizer Strategy** (AdamW + Adagrad) for optimal embedding and network parameter updates
-- **Memory-Efficient Pipeline** using Polars for blazing-fast data processing
+- **Hybrid Optimizer Strategy**: Support for AdamW + Adagrad or FTRL (Follow-the-Regularized-Leader) for optimal sparse feature learning
+- **Memory-Efficient Pipeline** using Polars for blazing-fast data processing and streaming
 
 ---
 
@@ -37,16 +38,24 @@ A state-of-the-art **Click-Through Rate (CTR)** prediction system for the [Avazu
     - Multi-Head Group Bilinear Interactions
     - See-Through connections for gradient flow
     - Transformer-based encoder with FFN
-  - **Legacy Components (Configurable)**
-    - Deep Cross Network V2 (DCNv2)
-    - Squeeze-and-Excitation Networks (SENet)
-    - Feature Gating Layers
-  - Variable embedding dimensions based on cardinality
+  - **DCNv2 (Gated Deep Cross Network)**
+    - Explicit high-order feature interactions
+    - Gating mechanisms for selective interaction
+    - Low-rank decomposition for parameter efficiency
+  - **Squeeze-and-Excitation (SENet)**
+    - Field-level importance weighting
+    - Multi-mode squeezing (mean, max, min)
+  - **Memory-Efficient Embeddings**
+    - Standard `nn.Embedding` for low-mid cardinality
+    - **Hash Embeddings** for extremely high cardinality (e.g., user_id, device_ip)
+    - Variable embedding dimensions per feature
 
 - 🎯 **Training Optimizations**
-  - Mixed Precision Training (AMP) with float16/bfloat16
-  - Gradient clipping and weight decay regularization
-  - Focal Loss for handling class imbalance
+  - **Mixed Precision Training (AMP)** with float16/bfloat16
+  - **Optimizer Modes**
+    - `adamw_adagrad`: Hybrid AdamW (network) and Adagrad (embeddings)
+    - `ftrl`: Follow-the-Regularized-Leader for high sparsity
+  - Focal Loss and Binary Cross-Entropy support
   - Learning rate warmup with cosine decay
   - Early stopping with validation monitoring
 
@@ -60,6 +69,7 @@ A state-of-the-art **Click-Through Rate (CTR)** prediction system for the [Avazu
 - 📊 **Polars-Powered Pipeline**
   - Streaming data processing for memory efficiency
   - Sequential vocabulary building to prevent memory spikes
+  - **Automated Configuration EDA**: Analysis scripts to recommend optimal embedding dimensions and hash bucket sizes
   - Direct parquet sink (no intermediate numpy arrays)
   - Expression-based transformations (no Python loops in hot paths)
 
@@ -149,7 +159,15 @@ pip install -r requirements.txt
    mv train.gz test.gz data/raw/
    ```
 
-3. **Process Data**
+4. **Analyze & Optimize (Optional)**
+   ```bash
+   # Run EDA on preprocessed data to get optimal embedding configs
+   python -m misc.eda_preprocessed
+   ```
+
+   This will analyze vocabulary sizes and suggest the best `feature_embeddings` configuration for `config.py`.
+
+5. **Process Data**
    ```bash
    # Run feature engineering and vocabulary building
    python data_processor.py
@@ -209,26 +227,35 @@ All hyperparameters are managed in `src/config/config.py`. Key configuration cat
 "use_senet": False,
 
 # Embedding Configuration
-"embedding_dim": 64,
-"use_variable_embeddings": False,
+"embedding_dim": 16,            # Default dimension
+"feature_embeddings": {         # Granular per-feature config
+    "site_id": {"type": "standard", "dim": 32},
+    "user_id": {"type": "hash", "dim": 32, "num_buckets": 10000},
+},
 "embedding_projection_dim": None,
 
 # MLP Configuration
-"mlp_hidden_dims": [1024, 512],
+"mlp_hidden_dims": [2048, 1024, 512],
 "mlp_activation": "gelu",
 "mlp_use_skip_connections": True,
-"mlp_dropout": 0.1,
+"mlp_dropout": 0.25,
+"use_layer_norm": True,
 ```
 
 ### Training Strategy
 
 ```python
 # Optimization
-"lr": 1e-3,                             # AdamW learning rate
-"embedding_lr": 1.0,                    # Adagrad learning rate (embeddings)
-"weight_decay": 1e-3,
-"embedding_weight_decay": 0.0,
+"lr": 1e-4,
+"embedding_lr": 0.5,
+"optimizer_mode": "adamw_adagrad",      # "adamw_adagrad" or "ftrl"
+"weight_decay": 1e-4,
 "grad_clip": 1.0,
+
+# FTRL Specific (if enabled)
+"ftrl_alpha": 0.1,
+"ftrl_l1": 2.0,
+"ftrl_l2": 1.0,
 
 # Training Schedule
 "epochs": 500,
@@ -311,7 +338,9 @@ avazu-ctr/
 │       └── inference.py                 # Prediction generation
 │
 ├── 📂 tests/                            # Unit and integration tests
-├── 📂 misc/                             # Exploratory data analysis
+├── 📂 misc/                             # Exploratory Data Analysis & Utilities
+│   ├── eda_raw.py                       # Initial raw data analysis
+│   └── eda_preprocessed.py              # Embedding configuration optimizer
 ├── 📂 data/                             # Data directory (gitignored)
 ├── 📂 checkpoints/                      # Model checkpoints (gitignored)
 ├── 📂 runs/                             # TensorBoard logs (gitignored)
@@ -354,8 +383,8 @@ avazu-ctr/
    - Decrease if encountering OOM errors
 
 2. **Embedding Strategy**
-   - Enable `use_variable_embeddings=True` for memory efficiency
-   - Tune `embedding_dim_rules` based on your feature cardinalities (see `misc/eda.py`)
+   - Use granular `feature_embeddings` in `config.py` for memory efficiency
+   - Tune embedding dimensions based on feature cardinalities (see `misc/eda_preprocessed.py`)
 
 3. **Regularization**
    - Increase `mlp_dropout` (0.1 → 0.2) if overfitting

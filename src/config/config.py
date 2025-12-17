@@ -195,12 +195,12 @@ CONFIG: ConfigType = {
     
     # === Model Architecture - STEC ===
     "use_stec": True,
-    "stec_num_layers": 2,
-    "stec_num_heads": 2,
+    "stec_num_layers": 4,
+    "stec_num_heads": 4,
     "stec_hidden_dim": None,  # Defaults to 4 * embed_dim
-    "stec_dropout": 0.1,
+    "stec_dropout": 0.0,
     "stec_use_ffn": True,
-    "stec_mlp_hidden_dims": [2048, 1024, 512],
+    "stec_mlp_hidden_dims": [2048],
     
     # === Model Architecture - MLP ===
     "mlp_hidden_dims": [2048, 1024, 512],  # Deeper network
