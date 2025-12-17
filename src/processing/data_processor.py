@@ -1052,17 +1052,11 @@ def process_data_polars() -> tuple[dict, list, int, int]:
 
     # SINK TRAIN (now streamable - RHS of joins are static)
     print(f"  Sinking Train to {train_parquet}...")
-    lf_train_final.select(train_cols).sink_parquet(
-        train_parquet, 
-        row_group_size=10_000
-    )
+    lf_train_final.select(train_cols).sink_parquet(train_parquet)
 
     # SINK TEST
     print(f"  Sinking Test to {test_parquet}...")
-    lf_test_final.select(test_cols).sink_parquet(
-        test_parquet, 
-        row_group_size=10_000
-    )
+    lf_test_final.select(test_cols).sink_parquet(test_parquet)
 
     # =========================================================================
     # Metadata Recovery
