@@ -1,13 +1,12 @@
 """
-Avazu CTR Data Processor - Memory-Efficient Polars Implementation
+Avazu CTR Data Processor - Full Lazy Polars Implementation
 
-This module is optimized for running on memory-constrained systems (e.g., laptops):
-- Sequential processing of vocabulary building to avoid memory spikes
-- Streaming sink directly to parquet (no numpy conversion)
-- Explicit garbage collection between processing phases
-- Data stays in parquet format for on-demand batch reading during training
+This module uses FULL LAZY evaluation until the final sink:
+- All feature engineering stays lazy (no intermediate collect)
+- Statistics (counts, vocabularies) are collected once in a batched manner
+- Joins use lazy frames throughout
+- Only the final sink_parquet triggers computation
 - Expression-based transformations (no Python loops in hot paths)
-- Lazy evaluation with streaming for memory efficiency
 """
 
 import polars as pl
@@ -176,50 +175,39 @@ def bin_cumcount_features(cols: list[str]) -> list[pl.Expr]:
 # =============================================================================
 # Time-Delta Features (Hours Since Last Click)
 # =============================================================================
-def compute_time_delta_features(
-    lf: pl.LazyFrame,
-    group_col: str = "user_proxy"
-) -> pl.LazyFrame:
+def get_time_delta_expressions() -> list[pl.Expr]:
     """
-    Compute time delta features - hours since last click for each user.
+    Get expressions for time delta features - hours since last click for each user.
     
     This captures click velocity patterns:
     - Bots/fraudulent clicks have very short intervals
     - Normal users have longer intervals between clicks
     
-    Note: Since the 'hour' column is YYMMDDHH format (hour-level granularity),
-    we compute hours since last click, not seconds.
-    
-    Args:
-        lf: Input LazyFrame (must be sorted by 'hour')
-        group_col: Column to group by for computing deltas (default: user_proxy)
-        
     Returns:
-        LazyFrame with time delta features added
+        List of Polars expressions for time delta computation
     """
-    # Parse hour column to datetime for time delta computation
-    # Format: YYMMDDHH -> add "00" for minutes
-    lf = lf.with_columns(
-        (pl.col("hour") + "00")
-        .str.to_datetime("%y%m%d%H%M")
-        .alias("_timestamp")
-    )
+    return [
+        # Parse hour column to datetime for time delta computation
+        (pl.col("hour") + "00").str.to_datetime("%y%m%d%H%M").alias("_timestamp"),
+    ]
+
+
+def get_time_delta_window_expressions() -> list[pl.Expr]:
+    """
+    Get window expressions for time delta that require _timestamp column.
     
-    # Compute hours since previous click for this user
-    lf = lf.with_columns(
+    Returns:
+        List of expressions for hours_since_last_click
+    """
+    return [
         (
-            pl.col("_timestamp") - pl.col("_timestamp").shift(1).over(group_col)
+            pl.col("_timestamp") - pl.col("_timestamp").shift(1).over("user_proxy")
         )
         .dt.total_hours()
-        .fill_null(0)  # First click has no previous
+        .fill_null(0)
         .cast(pl.UInt32)
-        .alias("hours_since_last_click")
-    )
-    
-    # Drop temporary timestamp column
-    lf = lf.drop("_timestamp")
-    
-    return lf
+        .alias("hours_since_last_click"),
+    ]
 
 
 def bin_time_delta_features() -> pl.Expr:
@@ -246,28 +234,20 @@ def bin_time_delta_features() -> pl.Expr:
 # =============================================================================
 # Previous Click Count Features (Rolling Count)
 # =============================================================================
-def compute_previous_click_count(
-    lf: pl.LazyFrame,
-    group_col: str = "user_proxy"
-) -> pl.LazyFrame:
+def get_prev_clicks_expression(group_col: str = "user_proxy") -> pl.Expr:
     """
-    Compute the number of previous clicks for each user up to (but not including) current row.
+    Get expression for number of previous clicks for each user.
     
     This is similar to cumulative count but shifted by 1, so it represents
     "how many clicks has this user made BEFORE this one".
     
-    This is more useful than cumulative count for prediction because:
-    - cumcount includes the current row
-    - prev_click_count is what we would know at prediction time
-    
     Args:
-        lf: Input LazyFrame (must be sorted chronologically)
         group_col: Column to group by
         
     Returns:
-        LazyFrame with previous click count feature
+        Polars expression for previous click count
     """
-    return lf.with_columns(
+    return (
         (pl.col(group_col).cum_count().over(group_col) - 1)
         .clip(lower_bound=0)
         .cast(pl.UInt32)
@@ -302,66 +282,6 @@ def get_string_cast_expressions(columns: list[str]) -> list[pl.Expr]:
     return [pl.col(c).cast(pl.String) for c in columns]
 
 
-def compute_count_features_from_train(
-    lf_train: pl.LazyFrame,
-    lf_test: pl.LazyFrame,
-    count_cols: list[str]
-) -> tuple[pl.LazyFrame, pl.LazyFrame]:
-    """
-    Compute count/frequency features based on training data statistics.
-
-    MEMORY-OPTIMIZED: Processes columns sequentially with streaming collection
-    to avoid holding all count DataFrames in memory simultaneously.
-
-    Args:
-        lf_train: Training LazyFrame
-        lf_test: Test LazyFrame
-        count_cols: Columns to compute counts for
-
-    Returns:
-        Updated train and test LazyFrames with count features
-    """
-    print(f"Computing count features for: {count_cols} (sequential, memory-efficient)")
-
-    # Process columns one at a time to minimize peak memory
-    for i, col in enumerate(count_cols):
-        count_query = (
-            lf_train
-            .select(pl.col(col).cast(pl.String))
-            .group_by(col)
-            .len()
-            .rename({"len": f"{col}_count"})
-        )
-
-        # Collect with streaming to reduce memory pressure
-        try:
-            count_df = count_query.collect(engine='streaming')
-        except Exception:
-            count_df = count_query.collect()
-
-        # Join to both train and test
-        count_lf = count_df.lazy()
-        lf_train = lf_train.join(count_lf, on=col, how="left")
-        lf_test = lf_test.join(count_lf, on=col, how="left")
-
-        # Explicitly free memory
-        del count_df, count_lf
-        gc.collect()
-
-        if (i + 1) % 3 == 0 or i == len(count_cols) - 1:
-            print(f"  Computed count feature {i + 1}/{len(count_cols)}: {col}")
-
-    # Apply all fill_null operations in a single with_columns call
-    fill_exprs = [
-        pl.col(f"{col}_count").fill_null(0).cast(pl.UInt32)
-        for col in count_cols
-    ]
-    lf_train = lf_train.with_columns(fill_exprs)
-    lf_test = lf_test.with_columns(fill_exprs)
-
-    return lf_train, lf_test
-
-
 def bin_count_features(count_cols: list[str]) -> list[pl.Expr]:
     """
     Create binned versions of count features for use as categorical features.
@@ -389,70 +309,6 @@ def bin_count_features(count_cols: list[str]) -> list[pl.Expr]:
     return expressions
 
 
-def compute_hourly_aggregated_features(
-    lf_train: pl.LazyFrame,
-    lf_test: pl.LazyFrame
-) -> tuple[pl.LazyFrame, pl.LazyFrame]:
-    """
-    Compute hourly aggregated features for user activity.
-
-    MEMORY-OPTIMIZED: Uses streaming collection.
-
-    This is an efficient alternative to rolling window features.
-    For each row, adds the count of impressions this user had in the same hour.
-
-    Features added:
-    - user_hourly_impressions: Number of impressions for this user_proxy in this hour
-
-    Args:
-        lf_train: Training LazyFrame
-        lf_test: Test LazyFrame
-
-    Returns:
-        Updated train and test LazyFrames with hourly features
-    """
-    print("  Computing hourly aggregated features...")
-
-    # Compute user impressions per hour from training data
-    hourly_query = (
-        lf_train
-        .select(["user_proxy", "hour"])
-        .group_by(["user_proxy", "hour"])
-        .len()
-        .rename({"len": "user_hourly_impressions"})
-    )
-
-    # Collect with streaming
-    try:
-        hourly_counts_df = hourly_query.collect(engine='streaming')
-    except Exception:
-        hourly_counts_df = hourly_query.collect()
-
-    hourly_counts = hourly_counts_df.lazy()
-
-    # Join to both train and test
-    lf_train = (
-        lf_train
-        .join(hourly_counts, on=["user_proxy", "hour"], how="left")
-        .with_columns(
-            pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32)
-        )
-    )
-    lf_test = (
-        lf_test
-        .join(hourly_counts, on=["user_proxy", "hour"], how="left")
-        .with_columns(
-            pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32)
-        )
-    )
-
-    # Cleanup
-    del hourly_counts_df, hourly_counts
-    gc.collect()
-
-    return lf_train, lf_test
-
-
 def bin_hourly_impressions() -> pl.Expr:
     """
     Bin hourly impressions into categorical buckets.
@@ -473,14 +329,14 @@ def bin_hourly_impressions() -> pl.Expr:
 
 
 # =============================================================================
-# Vocabulary Building (Memory-Efficient Sequential)
+# Backward-Compatible Wrapper Functions (for tests)
 # =============================================================================
 def build_vocabularies(lf_train: pl.LazyFrame, cat_cols: list[str], min_freq: int) -> tuple[dict, dict]:
     """
     Build vocabularies using memory-efficient sequential processing.
 
-    MEMORY-OPTIMIZED: Processes one column at a time with streaming collection
-    to avoid holding all vocabulary DataFrames in memory simultaneously.
+    BACKWARD-COMPATIBLE WRAPPER: This function maintains the original API
+    for existing tests while internally using the new lazy implementation.
 
     Returns:
         vocab_sizes: dict mapping column names to vocabulary sizes
@@ -491,33 +347,27 @@ def build_vocabularies(lf_train: pl.LazyFrame, cat_cols: list[str], min_freq: in
     vocab_sizes = {}
     feat_maps = {}
 
-    # Process columns one at a time to minimize peak memory
     for i, col in enumerate(cat_cols):
-        # Build vocabulary query for single column
         vocab_query = (
             lf_train
             .select(pl.col(col).cast(pl.String))
             .group_by(col)
             .len()
             .filter(pl.col("len") >= min_freq)
-            .sort(col)  # Deterministic ordering
+            .sort(col)
         )
 
-        # Collect with streaming to reduce memory pressure
         try:
-            counts = vocab_query.collect(engine='streaming')
+            counts = vocab_query.collect(engine='gpu')
         except Exception:
-            # Fallback if streaming not supported for this query
             counts = vocab_query.collect()
 
-        # Build mapping: value -> sequential ID (starting at 1, 0 = <UNK>)
         values = counts[col].to_list()
         mapping = {val: idx + 1 for idx, val in enumerate(values)}
 
         feat_maps[col] = mapping
-        vocab_sizes[col] = len(mapping) + 1  # +1 for <UNK> token
+        vocab_sizes[col] = len(mapping) + 1
 
-        # Explicitly free memory
         del counts, values
         gc.collect()
 
@@ -528,8 +378,342 @@ def build_vocabularies(lf_train: pl.LazyFrame, cat_cols: list[str], min_freq: in
     return vocab_sizes, feat_maps
 
 
+def compute_count_features_from_train(
+    lf_train: pl.LazyFrame,
+    lf_test: pl.LazyFrame,
+    count_cols: list[str]
+) -> tuple[pl.LazyFrame, pl.LazyFrame]:
+    """
+    Compute count/frequency features based on training data statistics.
+
+    BACKWARD-COMPATIBLE WRAPPER: This function maintains the original API
+    for existing tests while internally using lazy joins.
+
+    Args:
+        lf_train: Training LazyFrame
+        lf_test: Test LazyFrame
+        count_cols: Columns to compute counts for
+
+    Returns:
+        Updated train and test LazyFrames with count features
+    """
+    print(f"Computing count features for: {count_cols} (sequential, memory-efficient)")
+
+    for i, col in enumerate(count_cols):
+        count_query = (
+            lf_train
+            .select(pl.col(col).cast(pl.String))
+            .group_by(col)
+            .len()
+            .rename({"len": f"{col}_count"})
+        )
+
+        try:
+            count_df = count_query.collect(engine='gpu')
+        except Exception:
+            count_df = count_query.collect()
+
+        count_lf = count_df.lazy()
+        lf_train = lf_train.join(count_lf, on=col, how="left")
+        lf_test = lf_test.join(count_lf, on=col, how="left")
+
+        del count_df, count_lf
+        gc.collect()
+
+        if (i + 1) % 3 == 0 or i == len(count_cols) - 1:
+            print(f"  Computed count feature {i + 1}/{len(count_cols)}: {col}")
+
+    fill_exprs = [
+        pl.col(f"{col}_count").fill_null(0).cast(pl.UInt32)
+        for col in count_cols
+    ]
+    lf_train = lf_train.with_columns(fill_exprs)
+    lf_test = lf_test.with_columns(fill_exprs)
+
+    return lf_train, lf_test
+
+
+def compute_hourly_aggregated_features(
+    lf_train: pl.LazyFrame,
+    lf_test: pl.LazyFrame
+) -> tuple[pl.LazyFrame, pl.LazyFrame]:
+    """
+    Compute hourly aggregated features for user activity.
+
+    BACKWARD-COMPATIBLE WRAPPER: This function maintains the original API
+    for existing tests.
+
+    Args:
+        lf_train: Training LazyFrame
+        lf_test: Test LazyFrame
+
+    Returns:
+        Updated train and test LazyFrames with hourly features
+    """
+    print("  Computing hourly aggregated features...")
+
+    hourly_query = (
+        lf_train
+        .select(["user_proxy", "hour"])
+        .group_by(["user_proxy", "hour"])
+        .len()
+        .rename({"len": "user_hourly_impressions"})
+    )
+
+    try:
+        hourly_counts_df = hourly_query.collect(engine='gpu')
+    except Exception:
+        hourly_counts_df = hourly_query.collect()
+
+    hourly_counts = hourly_counts_df.lazy()
+
+    lf_train = (
+        lf_train
+        .join(hourly_counts, on=["user_proxy", "hour"], how="left")
+        .with_columns(
+            pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32)
+        )
+    )
+    lf_test = (
+        lf_test
+        .join(hourly_counts, on=["user_proxy", "hour"], how="left")
+        .with_columns(
+            pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32)
+        )
+    )
+
+    del hourly_counts_df, hourly_counts
+    gc.collect()
+
+    return lf_train, lf_test
+
+
+def compute_time_delta_features(
+    lf: pl.LazyFrame,
+    group_col: str = "user_proxy"
+) -> pl.LazyFrame:
+    """
+    Compute time delta features - hours since last click for each user.
+
+    BACKWARD-COMPATIBLE WRAPPER: This function maintains the original API
+    for existing tests.
+
+    Args:
+        lf: Input LazyFrame (must be sorted by 'hour')
+        group_col: Column to group by for computing deltas (default: user_proxy)
+
+    Returns:
+        LazyFrame with time delta features added
+    """
+    lf = lf.with_columns(
+        (pl.col("hour") + "00")
+        .str.to_datetime("%y%m%d%H%M")
+        .alias("_timestamp")
+    )
+
+    lf = lf.with_columns(
+        (
+            pl.col("_timestamp") - pl.col("_timestamp").shift(1).over(group_col)
+        )
+        .dt.total_hours()
+        .fill_null(0)
+        .cast(pl.UInt32)
+        .alias("hours_since_last_click")
+    )
+
+    lf = lf.drop("_timestamp")
+
+    return lf
+
+
+def compute_previous_click_count(
+    lf: pl.LazyFrame,
+    group_col: str = "user_proxy"
+) -> pl.LazyFrame:
+    """
+    Compute the number of previous clicks for each user up to (but not including) current row.
+
+    BACKWARD-COMPATIBLE WRAPPER: This function maintains the original API
+    for existing tests.
+
+    Args:
+        lf: Input LazyFrame (must be sorted chronologically)
+        group_col: Column to group by
+
+    Returns:
+        LazyFrame with previous click count feature
+    """
+    return lf.with_columns(
+        (pl.col(group_col).cum_count().over(group_col) - 1)
+        .clip(lower_bound=0)
+        .cast(pl.UInt32)
+        .alias(f"{group_col}_prev_clicks")
+    )
+
+
 # =============================================================================
-# Data Transformation (Streaming Sink to Parquet)
+# Statistics Collection (Single Materialization Point)
+# =============================================================================
+def collect_all_statistics(
+    lf_train: pl.LazyFrame,
+    count_cols: list[str],
+    cat_cols: list[str],
+    min_freq: int
+) -> tuple[dict[str, pl.LazyFrame], pl.LazyFrame, dict, dict]:
+    """
+    Collect ALL required statistics in a single batched operation.
+    
+    This is the ONLY materialization point before the final sink.
+    Collects:
+    - Count statistics for count_cols
+    - Hourly aggregation statistics
+    - Vocabularies for cat_cols
+    
+    Args:
+        lf_train: Training LazyFrame (with all base features already added)
+        count_cols: Columns to compute counts for
+        cat_cols: Categorical columns for vocabulary building
+        min_freq: Minimum frequency for vocabulary inclusion
+        
+    Returns:
+        count_lfs: Dict of column -> LazyFrame with counts
+        hourly_lf: LazyFrame with hourly aggregations
+        vocab_sizes: Dict of column -> vocabulary size
+        feat_maps: Dict of column -> value->id mapping
+    """
+    print("Collecting statistics (single materialization point)...")
+    
+    # =========================================================================
+    # 1. Count features - batch collect all at once
+    # =========================================================================
+    print(f"  Computing count features for: {count_cols}")
+    count_dfs = {}
+    
+    for col in count_cols:
+        count_query = (
+            lf_train
+            .select(pl.col(col).cast(pl.String))
+            .group_by(col)
+            .len()
+            .rename({"len": f"{col}_count"})
+        )
+        try:
+            count_dfs[col] = count_query.collect(engine='gpu')
+        except Exception:
+            count_dfs[col] = count_query.collect()
+    
+    print(f"  Collected {len(count_dfs)} count statistics")
+    
+    # =========================================================================
+    # 2. Hourly aggregation
+    # =========================================================================
+    print("  Computing hourly aggregated features...")
+    hourly_query = (
+        lf_train
+        .select(["user_proxy", "hour"])
+        .group_by(["user_proxy", "hour"])
+        .len()
+        .rename({"len": "user_hourly_impressions"})
+    )
+    
+    try:
+        hourly_df = hourly_query.collect(engine='gpu')
+    except Exception:
+        hourly_df = hourly_query.collect()
+    
+    print(f"  Collected hourly statistics")
+    
+    # =========================================================================
+    # 3. Vocabularies - batch collect
+    # =========================================================================
+    print(f"  Building vocabularies for {len(cat_cols)} columns...")
+    vocab_sizes = {}
+    feat_maps = {}
+    
+    for i, col in enumerate(cat_cols):
+        vocab_query = (
+            lf_train
+            .select(pl.col(col).cast(pl.String))
+            .group_by(col)
+            .len()
+            .filter(pl.col("len") >= min_freq)
+            .sort(col)
+        )
+        
+        try:
+            counts = vocab_query.collect(engine='gpu')
+        except Exception:
+            counts = vocab_query.collect()
+        
+        # Build mapping: value -> sequential ID (starting at 1, 0 = <UNK>)
+        values = counts[col].to_list()
+        mapping = {val: idx + 1 for idx, val in enumerate(values)}
+        
+        feat_maps[col] = mapping
+        vocab_sizes[col] = len(mapping) + 1  # +1 for <UNK> token
+        
+        del counts, values
+        
+        if (i + 1) % 10 == 0 or i == len(cat_cols) - 1:
+            print(f"    Built vocabulary for {i + 1}/{len(cat_cols)} columns")
+    
+    # Convert count DataFrames to LazyFrames for lazy joins
+    count_lfs = {col: df.lazy() for col, df in count_dfs.items()}
+    hourly_lf = hourly_df.lazy()
+    
+    # Cleanup eager DataFrames
+    del count_dfs, hourly_df
+    gc.collect()
+    
+    print("Statistics collection complete!")
+    return count_lfs, hourly_lf, vocab_sizes, feat_maps
+
+
+def apply_statistics_lazy(
+    lf: pl.LazyFrame,
+    count_lfs: dict[str, pl.LazyFrame],
+    hourly_lf: pl.LazyFrame,
+    count_cols: list[str]
+) -> pl.LazyFrame:
+    """
+    Apply pre-computed statistics to a LazyFrame using lazy joins.
+    
+    All joins are lazy - no materialization happens here.
+    
+    Args:
+        lf: Input LazyFrame
+        count_lfs: Dict of column -> LazyFrame with counts
+        hourly_lf: LazyFrame with hourly aggregations
+        count_cols: Columns to join counts for
+        
+    Returns:
+        LazyFrame with statistics joined
+    """
+    # Join count features (all lazy)
+    for col in count_cols:
+        lf = lf.join(count_lfs[col], on=col, how="left")
+    
+    # Fill nulls and cast counts
+    fill_exprs = [
+        pl.col(f"{col}_count").fill_null(0).cast(pl.UInt32)
+        for col in count_cols
+    ]
+    lf = lf.with_columns(fill_exprs)
+    
+    # Join hourly features (lazy)
+    lf = (
+        lf
+        .join(hourly_lf, on=["user_proxy", "hour"], how="left")
+        .with_columns(
+            pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32)
+        )
+    )
+    
+    return lf
+
+
+# =============================================================================
+# Vocabulary Application (Lazy)
 # =============================================================================
 def create_mapping_expressions(feat_maps: dict, cat_cols: list[str]) -> list[pl.Expr]:
     """
@@ -550,6 +734,9 @@ def create_mapping_expressions(feat_maps: dict, cat_cols: list[str]) -> list[pl.
     return expressions
 
 
+# =============================================================================
+# Final Sink (Only Materialization of Data)
+# =============================================================================
 def sink_to_parquet(
     lf: pl.LazyFrame,
     feat_maps: dict,
@@ -561,11 +748,11 @@ def sink_to_parquet(
     """
     Transform and sink a LazyFrame directly to parquet file.
 
-    MEMORY-OPTIMIZED: Uses streaming sink to write transformed data directly
-    to the final parquet file. No intermediate numpy arrays are created.
+    This is the ONLY data materialization point - all processing stays lazy
+    until this final sink.
 
     Args:
-        lf: Input LazyFrame
+        lf: Input LazyFrame (fully lazy with all transformations)
         feat_maps: Feature value to ID mappings
         cat_cols: List of categorical column names
         output_path: Path to write the parquet file
@@ -579,53 +766,54 @@ def sink_to_parquet(
     mapping_exprs = create_mapping_expressions(feat_maps, cat_cols)
 
     # Select columns based on train/test
-    # For train: click (label), hour (for splitting), and all features
-    # For test: id (for submission) and all features
     if is_test:
         select_cols = ['id'] + cat_cols
     else:
         select_cols = ['click', 'hour'] + cat_cols
 
-    # Apply all transformations
+    # Apply all transformations (still lazy)
     transformed_lf = (
         lf
         .select(select_cols)
         .with_columns(mapping_exprs)
     )
 
-    print(f"  Streaming transformed data to {output_path}...")
+    print(f"  Sinking transformed data to {output_path}...")
 
-    # Use streaming sink to write to parquet - this is memory-efficient
+    # Collect and write - this is the ONLY materialization
     try:
-        transformed_lf.sink_parquet(output_path, row_group_size=row_group_size)
-        # raise Exception("Not implemented")
-    except Exception as e:
-        # Fallback: collect with streaming and write
-        print(f"  Sink failed ({e}), using streaming collect fallback...")
-        df = transformed_lf.collect(engine='streaming')
-        df.write_parquet(output_path, row_group_size=row_group_size)
-        del df
-        gc.collect()
+        df = transformed_lf.collect(engine='gpu')
+    except Exception:
+        df = transformed_lf.collect()
+    
+    df.write_parquet(output_path, row_group_size=row_group_size)
+    total_rows = len(df)
+    
+    del df
+    gc.collect()
 
-    # Get row count from the written file
-    total_rows = pl.scan_parquet(output_path).select(pl.len()).collect().item()
     print(f"  Written {total_rows:,} rows to {output_path.name}")
-
     return total_rows
 
 
 # =============================================================================
-# Main Processing Pipeline
+# Main Processing Pipeline (Full Lazy Until Sink)
 # =============================================================================
 def process_data_polars() -> tuple[dict, list, int, int]:
     """
-    Main data processing pipeline using memory-efficient Polars patterns.
+    Main data processing pipeline using FULL LAZY evaluation.
 
-    MEMORY-OPTIMIZED for laptops and constrained environments:
-    - Sequential processing of count/vocabulary features (avoids parallel memory spike)
-    - Streaming collection where possible
-    - Explicit garbage collection between phases
-    - Streaming sink directly to parquet (no numpy arrays in memory)
+    The pipeline stays completely lazy until the final sink to parquet.
+    Only statistics (counts, vocabularies) are materialized once.
+
+    Phases:
+    1. Lazy load and base features (lazy)
+    2. Sort for chronological features (lazy)  
+    3. Window/sequential features (lazy)
+    4. Binning features (lazy)
+    5. Statistics collection (SINGLE MATERIALIZATION for lookups)
+    6. Apply statistics via lazy joins (lazy)
+    7. Final sink to parquet (DATA MATERIALIZATION)
 
     Output files are saved to CONFIG['processed_path']:
     - train.parquet: Training data with features and labels
@@ -639,18 +827,19 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         train_rows: Number of training rows
         test_rows: Number of test rows
     """
-    print("Loading data with Polars (memory-efficient pipeline)...")
+    print("Loading data with Polars (FULL LAZY pipeline)...")
 
-    # Lazy load with explicit schema
+    # ==========================================================================
+    # PHASE 1: Lazy load with explicit schema
+    # ==========================================================================
     lf_train = pl.scan_csv(CONFIG['train_path'], schema_overrides=SCHEMA)
     lf_test = pl.scan_csv(CONFIG['test_path'], schema_overrides=SCHEMA)
 
     # ==========================================================================
-    # PHASE 1: All independent base features (stays lazy)
+    # PHASE 2: All base feature expressions (stays lazy)
     # ==========================================================================
-    print("Building base feature expressions...")
+    print("Building base feature expressions (lazy)...")
 
-    # Combine ALL base expressions into a single expression list
     base_exprs = [
         # User proxy
         get_user_proxy_expression(),
@@ -664,88 +853,36 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     lf_test = lf_test.with_columns(base_exprs)
 
     # ==========================================================================
-    # PHASE 2: Count features (REQUIRED materialization - train stats to both)
+    # PHASE 3: Sort for chronological operations (lazy)
     # ==========================================================================
-    print("Computing count features (memory-efficient)...")
-    lf_train, lf_test = compute_count_features_from_train(
-        lf_train, lf_test, COUNT_FEATURE_COLS
-    )
-    gc.collect()  # Free memory after materialization
-
-    # Immediately add count binning (stays lazy)
-    bin_exprs = bin_count_features(COUNT_FEATURE_COLS)
-    lf_train = lf_train.with_columns(bin_exprs)
-    lf_test = lf_test.with_columns(bin_exprs)
-
-    # ==========================================================================
-    # PHASE 3: Hourly features (REQUIRED materialization - train stats to both)
-    # ==========================================================================
-    print("Computing hourly aggregated features (memory-efficient)...")
-    lf_train, lf_test = compute_hourly_aggregated_features(lf_train, lf_test)
-    gc.collect()  # Free memory after materialization
-
-    # ==========================================================================
-    # PHASE 4: All remaining features in a SINGLE expression batch (stays lazy)
-    # ==========================================================================
-    print("Computing sequential/window features (batched)...")
-
-    # Sort for chronological operations (lazy - just adds to query plan)
+    print("Sorting for chronological features (lazy)...")
     lf_train = lf_train.sort("hour")
     lf_test = lf_test.sort("hour")
 
-    # Build ALL remaining expressions as a single batch
-    # These are window/sequential ops that can be computed together after sort
-    sequential_exprs = [
-        # Cumulative counts (window over sorted data)
+    # ==========================================================================
+    # PHASE 4: Sequential/window features (lazy)
+    # ==========================================================================
+    print("Computing sequential/window features (lazy)...")
+
+    # Timestamp for time delta
+    lf_train = lf_train.with_columns(get_time_delta_expressions())
+    lf_test = lf_test.with_columns(get_time_delta_expressions())
+
+    # Window features batch
+    window_exprs = [
+        # Cumulative counts
         *get_cumulative_count_expressions(CUMCOUNT_COLS),
-        # Time delta (window over sorted data)
-        # Inlined from compute_time_delta_features for single expression batch
-        (pl.col("hour") + "00").str.to_datetime("%y%m%d%H%M").alias("_timestamp"),
-    ]
-
-    lf_train = lf_train.with_columns(sequential_exprs)
-    lf_test = lf_test.with_columns(sequential_exprs)
-
-    # Time delta computation (needs _timestamp column)
-    time_delta_exprs = [
-        (
-            pl.col("_timestamp") - pl.col("_timestamp").shift(1).over("user_proxy")
-        )
-        .dt.total_hours()
-        .fill_null(0)
-        .cast(pl.UInt32)
-        .alias("hours_since_last_click"),
+        # Time delta
+        *get_time_delta_window_expressions(),
         # Previous click count
-        (pl.col("user_proxy").cum_count().over("user_proxy") - 1)
-        .clip(lower_bound=0)
-        .cast(pl.UInt32)
-        .alias("user_proxy_prev_clicks"),
+        get_prev_clicks_expression("user_proxy"),
     ]
 
-    lf_train = lf_train.with_columns(time_delta_exprs).drop("_timestamp")
-    lf_test = lf_test.with_columns(time_delta_exprs).drop("_timestamp")
+    lf_train = lf_train.with_columns(window_exprs).drop("_timestamp")
+    lf_test = lf_test.with_columns(window_exprs).drop("_timestamp")
 
     # ==========================================================================
-    # PHASE 5: ALL binning in one shot (stays lazy until collect)
-    # ==========================================================================
-    print("Binning all features (single batch)...")
-
-    all_bin_exprs = [
-        # Cumcount bins
-        *bin_cumcount_features(CUMCOUNT_COLS),
-        # Hourly impressions bin
-        bin_hourly_impressions(),
-        # Time delta bin
-        bin_time_delta_features(),
-        # Previous clicks bin
-        bin_prev_clicks("user_proxy"),
-    ]
-
-    lf_train = lf_train.with_columns(all_bin_exprs)
-    lf_test = lf_test.with_columns(all_bin_exprs)
-
-    # ==========================================================================
-    # Build final feature list
+    # Build feature list (needed for statistics collection)
     # ==========================================================================
     count_bin_cols = [f"{col}_count_bin" for col in COUNT_FEATURE_COLS]
     cumcount_bin_cols = [f"{col}_cumcount_bin" for col in CUMCOUNT_COLS]
@@ -762,37 +899,67 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     print(f"Total categorical features: {len(cat_cols)}")
 
     # ==========================================================================
-    # PHASE 6: Vocabulary building + streaming sink to parquet
+    # PHASE 5: Statistics collection (SINGLE MATERIALIZATION POINT)
     # ==========================================================================
-    vocab_sizes, feat_maps = build_vocabularies(
+    count_lfs, hourly_lf, vocab_sizes, feat_maps = collect_all_statistics(
         lf_train,
+        COUNT_FEATURE_COLS,
         cat_cols,
         CONFIG['min_freq']
     )
-    gc.collect()  # Free memory after vocabulary building
 
-    # Create output directory
+    # ==========================================================================
+    # PHASE 6: Apply statistics via lazy joins (stays lazy)
+    # ==========================================================================
+    print("Applying statistics via lazy joins...")
+    lf_train = apply_statistics_lazy(lf_train, count_lfs, hourly_lf, COUNT_FEATURE_COLS)
+    lf_test = apply_statistics_lazy(lf_test, count_lfs, hourly_lf, COUNT_FEATURE_COLS)
+
+    # ==========================================================================
+    # PHASE 7: All binning in one shot (stays lazy)
+    # ==========================================================================
+    print("Binning all features (lazy)...")
+
+    all_bin_exprs = [
+        # Count bins
+        *bin_count_features(COUNT_FEATURE_COLS),
+        # Cumcount bins
+        *bin_cumcount_features(CUMCOUNT_COLS),
+        # Hourly impressions bin
+        bin_hourly_impressions(),
+        # Time delta bin
+        bin_time_delta_features(),
+        # Previous clicks bin
+        bin_prev_clicks("user_proxy"),
+    ]
+
+    lf_train = lf_train.with_columns(all_bin_exprs)
+    lf_test = lf_test.with_columns(all_bin_exprs)
+
+    # ==========================================================================
+    # PHASE 8: Final sink to parquet (DATA MATERIALIZATION)
+    # ==========================================================================
     output_path = Path(CONFIG['processed_path'])
     output_path.mkdir(parents=True, exist_ok=True)
 
-    print("Sinking transformed data to parquet (memory-efficient)...")
+    print("Sinking to parquet (FINAL MATERIALIZATION)...")
 
-    # Sink train data to parquet
+    # Sink train data
     print("Processing training data...")
     train_parquet = output_path / "train.parquet"
     train_rows = sink_to_parquet(lf_train, feat_maps, cat_cols, train_parquet, is_test=False)
 
-    # Free train LazyFrame reference and collect garbage before test
+    # Free train reference
     del lf_train
     gc.collect()
 
-    # Sink test data to parquet
+    # Sink test data
     print("Processing test data...")
     test_parquet = output_path / "test.parquet"
     test_rows = sink_to_parquet(lf_test, feat_maps, cat_cols, test_parquet, is_test=True)
 
-    # Free test LazyFrame reference
-    del lf_test
+    # Free test reference
+    del lf_test, count_lfs, hourly_lf
     gc.collect()
 
     # Save metadata
