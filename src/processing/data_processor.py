@@ -358,7 +358,7 @@ def build_vocabularies(lf_train: pl.LazyFrame, cat_cols: list[str], min_freq: in
         )
 
         try:
-            counts = vocab_query.collect(engine='gpu')
+            counts = vocab_query.collect(engine='streaming')
         except Exception:
             counts = vocab_query.collect()
 
@@ -409,7 +409,7 @@ def compute_count_features_from_train(
         )
 
         try:
-            count_df = count_query.collect(engine='gpu')
+            count_df = count_query.collect(engine='streaming')
         except Exception:
             count_df = count_query.collect()
 
@@ -461,7 +461,7 @@ def compute_hourly_aggregated_features(
     )
 
     try:
-        hourly_counts_df = hourly_query.collect(engine='gpu')
+        hourly_counts_df = hourly_query.collect(engine='streaming')
     except Exception:
         hourly_counts_df = hourly_query.collect()
 
@@ -598,7 +598,7 @@ def collect_all_statistics(
             .rename({"len": f"{col}_count"})
         )
         try:
-            count_dfs[col] = count_query.collect(engine='gpu')
+            count_dfs[col] = count_query.collect(engine='streaming')
         except Exception:
             count_dfs[col] = count_query.collect()
     
@@ -617,7 +617,7 @@ def collect_all_statistics(
     )
     
     try:
-        hourly_df = hourly_query.collect(engine='gpu')
+        hourly_df = hourly_query.collect(engine='streaming')
     except Exception:
         hourly_df = hourly_query.collect()
     
@@ -641,7 +641,7 @@ def collect_all_statistics(
         )
         
         try:
-            counts = vocab_query.collect(engine='gpu')
+            counts = vocab_query.collect(engine='streaming')
         except Exception:
             counts = vocab_query.collect()
         
@@ -713,88 +713,62 @@ def apply_statistics_lazy(
 
 
 # =============================================================================
-# Vocabulary Application (Lazy)
+# Lazy Vocabulary Building (Full Lazy Until Sink)
 # =============================================================================
-def create_mapping_expressions(feat_maps: dict, cat_cols: list[str]) -> list[pl.Expr]:
+def get_lazy_vocab_map(lf: pl.LazyFrame, col: str, min_freq: int) -> pl.LazyFrame:
     """
-    Create Polars expressions for mapping categorical values to integer IDs.
-    Uses vectorized replace_strict for optimal performance.
-    """
-    expressions = []
-    for col in cat_cols:
-        mapping = feat_maps[col]
-        expr = (
-            pl.col(col)
-            .cast(pl.String)
-            .replace_strict(mapping, default=0)
-            .cast(pl.Int32)
-            .alias(col)
-        )
-        expressions.append(expr)
-    return expressions
-
-
-# =============================================================================
-# Final Sink (Only Materialization of Data)
-# =============================================================================
-def sink_to_parquet(
-    lf: pl.LazyFrame,
-    feat_maps: dict,
-    cat_cols: list[str],
-    output_path: Path,
-    is_test: bool = False,
-    row_group_size: int = 10_000
-) -> int:
-    """
-    Transform and sink a LazyFrame directly to parquet file.
-
-    This is the ONLY data materialization point - all processing stays lazy
-    until this final sink.
-
+    Creates a LazyFrame mapping for a specific column.
+    
+    Builds a vocabulary by filtering values with frequency >= min_freq,
+    then assigns sequential IDs starting at 1 (0 is reserved for <UNK>).
+    
     Args:
-        lf: Input LazyFrame (fully lazy with all transformations)
-        feat_maps: Feature value to ID mappings
-        cat_cols: List of categorical column names
-        output_path: Path to write the parquet file
-        is_test: Whether this is test data
-        row_group_size: Row group size for parquet sink
-
+        lf: Training LazyFrame to build vocabulary from
+        col: Column name to build vocabulary for
+        min_freq: Minimum frequency threshold for inclusion
+        
     Returns:
-        Number of rows written
+        LazyFrame with two columns: [col, '{col}_id'] where _id contains Int32 IDs
     """
-    # Build all mapping expressions
-    mapping_exprs = create_mapping_expressions(feat_maps, cat_cols)
-
-    # Select columns based on train/test
-    if is_test:
-        select_cols = ['id'] + cat_cols
-    else:
-        select_cols = ['click', 'hour'] + cat_cols
-
-    # Apply all transformations (still lazy)
-    transformed_lf = (
+    return (
         lf
-        .select(select_cols)
-        .with_columns(mapping_exprs)
+        .group_by(col)
+        .len()
+        .filter(pl.col("len") >= min_freq)
+        .select(pl.col(col))
+        .sort(col)
+        # Assign IDs starting at 1 (0 is reserved for <UNK>)
+        .with_row_index(name=f"{col}_id", offset=1)
+        .with_columns(pl.col(f"{col}_id").cast(pl.Int32))
     )
 
-    print(f"  Sinking transformed data to {output_path}...")
 
-    # Collect and write - this is the ONLY materialization
-    try:
-        df = transformed_lf.collect(engine='gpu')
-    except Exception:
-        df = transformed_lf.collect()
+def apply_lazy_vocab(
+    lf_data: pl.LazyFrame, 
+    lf_vocab: pl.LazyFrame, 
+    col: str
+) -> pl.LazyFrame:
+    """
+    Joins the vocabulary LazyFrame to the data LazyFrame.
     
-    df.write_parquet(output_path, row_group_size=row_group_size)
-    total_rows = len(df)
+    Replaces the original string column with integer IDs via a lazy join.
+    Unseen or low-frequency values get mapped to 0 (<UNK>).
     
-    del df
-    gc.collect()
-
-    print(f"  Written {total_rows:,} rows to {output_path.name}")
-    return total_rows
-
+    Args:
+        lf_data: Data LazyFrame to apply vocabulary to
+        lf_vocab: Vocabulary LazyFrame from get_lazy_vocab_map
+        col: Column name being transformed
+        
+    Returns:
+        LazyFrame with the original column replaced by integer IDs
+    """
+    return (
+        lf_data
+        .join(lf_vocab, on=col, how="left")
+        .drop(col)  # Drop original string column
+        .rename({f"{col}_id": col})  # Rename ID column to original name
+        .with_columns(pl.col(col).fill_null(0))  # Fill <UNK> with 0
+    )
 
 # =============================================================================
 # Main Processing Pipeline (Full Lazy Until Sink)
@@ -804,21 +778,24 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     Main data processing pipeline using FULL LAZY evaluation.
 
     The pipeline stays completely lazy until the final sink to parquet.
-    Only statistics (counts, vocabularies) are materialized once.
+    NO intermediate materialization - vocabularies are built via lazy joins.
 
     Phases:
-    1. Lazy load and base features (lazy)
-    2. Sort for chronological features (lazy)  
-    3. Window/sequential features (lazy)
-    4. Binning features (lazy)
-    5. Statistics collection (SINGLE MATERIALIZATION for lookups)
+    1. Lazy load with explicit schema (lazy)
+    2. Base feature expressions - user proxy, interactions, time (lazy)
+    3. Sort for chronological features (lazy)
+    4. Sequential/window features - cumcount, time delta, prev clicks (lazy)
+    5. Define statistical features as LazyFrames (lazy - no materialization)
     6. Apply statistics via lazy joins (lazy)
-    7. Final sink to parquet (DATA MATERIALIZATION)
+    7. Binning features - count bins, cumcount bins, hourly bins (lazy)
+    8. Vocabulary mapping via lazy joins (lazy - no materialization)
+    9. Final sink to parquet (THE ONLY DATA MATERIALIZATION)
+    10. Recover metadata from parquet (vocab sizes, row counts)
 
     Output files are saved to CONFIG['processed_path']:
     - train.parquet: Training data with features and labels
     - test.parquet: Test data with features and IDs
-    - vocab_sizes.pkl: Vocabulary sizes for each feature
+    - vocab_sizes.pkl: Vocabulary sizes for each feature (recovered from parquet)
     - feature_names.pkl: List of feature column names
 
     Returns:
@@ -882,38 +859,50 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     lf_test = lf_test.with_columns(window_exprs).drop("_timestamp")
 
     # ==========================================================================
-    # Build feature list (needed for statistics collection)
+    # PHASE 5: Define statistical features (PURE LAZY - no materialization)
     # ==========================================================================
-    count_bin_cols = [f"{col}_count_bin" for col in COUNT_FEATURE_COLS]
-    cumcount_bin_cols = [f"{col}_cumcount_bin" for col in CUMCOUNT_COLS]
-    cat_cols = (
-        CATEGORICAL_COLS
-        + ['month', 'day_of_month', 'hour_of_day', 'day_of_week']
-        + count_bin_cols
-        + cumcount_bin_cols
-        + ['user_hourly_impressions_bin']
-        + ['hours_since_last_click_bin']
-        + ['user_proxy_prev_clicks_bin']
-    )
+    print("Defining statistical features (lazy)...")
 
-    print(f"Total categorical features: {len(cat_cols)}")
+    # 1. Count Features LazyFrames - derived from train, used in join
+    count_lfs = {}
+    for col in COUNT_FEATURE_COLS:
+        count_lfs[col] = (
+            lf_train
+            .group_by(col)
+            .len()
+            .rename({"len": f"{col}_count"})
+            .with_columns(pl.col(f"{col}_count").cast(pl.UInt32))
+        )
 
-    # ==========================================================================
-    # PHASE 5: Statistics collection (SINGLE MATERIALIZATION POINT)
-    # ==========================================================================
-    count_lfs, hourly_lf, vocab_sizes, feat_maps = collect_all_statistics(
-        lf_train,
-        COUNT_FEATURE_COLS,
-        cat_cols,
-        CONFIG['min_freq']
+    # 2. Hourly Impressions LazyFrame
+    hourly_lf = (
+        lf_train
+        .group_by(["user_proxy", "hour"])
+        .len()
+        .rename({"len": "user_hourly_impressions"})
+        .with_columns(pl.col("user_hourly_impressions").cast(pl.UInt32))
     )
 
     # ==========================================================================
     # PHASE 6: Apply statistics via lazy joins (stays lazy)
     # ==========================================================================
     print("Applying statistics via lazy joins...")
-    lf_train = apply_statistics_lazy(lf_train, count_lfs, hourly_lf, COUNT_FEATURE_COLS)
-    lf_test = apply_statistics_lazy(lf_test, count_lfs, hourly_lf, COUNT_FEATURE_COLS)
+
+    # Join count features (all lazy)
+    for col, count_lf in count_lfs.items():
+        lf_train = lf_train.join(count_lf, on=col, how="left")
+        lf_test = lf_test.join(count_lf, on=col, how="left")
+
+    # Join hourly features
+    lf_train = lf_train.join(hourly_lf, on=["user_proxy", "hour"], how="left")
+    lf_test = lf_test.join(hourly_lf, on=["user_proxy", "hour"], how="left")
+
+    # Fill nulls from joins (unseen values in test get 0/1)
+    fill_exprs = [pl.col("user_hourly_impressions").fill_null(1)] + \
+                 [pl.col(f"{c}_count").fill_null(0) for c in COUNT_FEATURE_COLS]
+
+    lf_train = lf_train.with_columns(fill_exprs)
+    lf_test = lf_test.with_columns(fill_exprs)
 
     # ==========================================================================
     # PHASE 7: All binning in one shot (stays lazy)
@@ -937,30 +926,89 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     lf_test = lf_test.with_columns(all_bin_exprs)
 
     # ==========================================================================
-    # PHASE 8: Final sink to parquet (DATA MATERIALIZATION)
+    # Build feature list (now all columns exist)
+    # ==========================================================================
+    count_bin_cols = [f"{col}_count_bin" for col in COUNT_FEATURE_COLS]
+    cumcount_bin_cols = [f"{col}_cumcount_bin" for col in CUMCOUNT_COLS]
+    cat_cols = (
+        CATEGORICAL_COLS
+        + ['month', 'day_of_month', 'hour_of_day', 'day_of_week']
+        + count_bin_cols
+        + cumcount_bin_cols
+        + ['user_hourly_impressions_bin']
+        + ['hours_since_last_click_bin']
+        + ['user_proxy_prev_clicks_bin']
+    )
+
+    print(f"Total categorical features: {len(cat_cols)}")
+
+    # ==========================================================================
+    # PHASE 8: Vocabulary Mapping (PURE LAZY - no materialization)
+    # ==========================================================================
+    print(f"Defining vocabulary mappings for {len(cat_cols)} columns (lazy)...")
+
+    # Build vocabulary LazyFrames and apply via lazy joins
+    vocab_lfs = {}
+    for i, col in enumerate(cat_cols):
+        # Create the mapping based on TRAIN data
+        vocab_lfs[col] = get_lazy_vocab_map(lf_train, col, CONFIG['min_freq'])
+
+        # Apply to Train and Test via lazy join
+        lf_train = apply_lazy_vocab(lf_train, vocab_lfs[col], col)
+        lf_test = apply_lazy_vocab(lf_test, vocab_lfs[col], col)
+
+        if (i + 1) % 10 == 0 or i == len(cat_cols) - 1:
+            print(f"  Defined vocabulary for {i + 1}/{len(cat_cols)} columns")
+
+    # ==========================================================================
+    # PHASE 9: Final Sink (THE ONLY MATERIALIZATION)
     # ==========================================================================
     output_path = Path(CONFIG['processed_path'])
     output_path.mkdir(parents=True, exist_ok=True)
 
-    print("Sinking to parquet (FINAL MATERIALIZATION)...")
+    # Select final columns
+    train_cols = ['click', 'hour'] + cat_cols
+    test_cols = ['id'] + cat_cols
 
-    # Sink train data
-    print("Processing training data...")
     train_parquet = output_path / "train.parquet"
-    train_rows = sink_to_parquet(lf_train, feat_maps, cat_cols, train_parquet, is_test=False)
+    test_parquet = output_path / "test.parquet"
+
+    print("Sinking TRAIN to parquet (FINAL MATERIALIZATION)...")
+    # This triggers the entire graph: Load -> Feats -> Stats -> Vocab -> Join -> Write
+    try:
+        lf_train.select(train_cols).sink_parquet(train_parquet, row_group_size=10_000)
+    except Exception:
+        lf_train.select(train_cols).collect(engine='streaming').write_parquet(train_parquet, row_group_size=10_000)
 
     # Free train reference
     del lf_train
     gc.collect()
 
-    # Sink test data
-    print("Processing test data...")
-    test_parquet = output_path / "test.parquet"
-    test_rows = sink_to_parquet(lf_test, feat_maps, cat_cols, test_parquet, is_test=True)
+    print("Sinking TEST to parquet...")
+    try:
+        lf_test.select(test_cols).sink_parquet(test_parquet, row_group_size=10_000)
+    except Exception:
+        lf_test.select(test_cols).collect(engine='streaming').write_parquet(test_parquet, row_group_size=10_000)
 
     # Free test reference
-    del lf_test, count_lfs, hourly_lf
+    del lf_test, count_lfs, hourly_lf, vocab_lfs
     gc.collect()
+
+    # ==========================================================================
+    # PHASE 10: Recover Metadata from Parquet (vocab sizes, row counts)
+    # ==========================================================================
+    print("Extracting vocabulary sizes from parquet metadata...")
+
+    # Since we mapped IDs 1..N, the max value in the column IS the vocab size (excluding 0)
+    # Parquet stores max values in metadata, so this is very fast
+    stats_df = pl.scan_parquet(train_parquet).select(
+        [pl.col(c).max().alias(c) for c in cat_cols]
+    ).collect()
+
+    vocab_sizes = {}
+    for col in cat_cols:
+        # Max ID + 1 (to account for 0 index/UNK)
+        vocab_sizes[col] = int(stats_df[col][0]) + 1
 
     # Save metadata
     print("Saving metadata...")
@@ -968,6 +1016,10 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         pickle.dump(vocab_sizes, f)
     with open(output_path / "feature_names.pkl", "wb") as f:
         pickle.dump(cat_cols, f)
+
+    # Get row counts from parquet
+    train_rows = pl.scan_parquet(train_parquet).select(pl.len()).collect().item()
+    test_rows = pl.scan_parquet(test_parquet).select(pl.len()).collect().item()
 
     print(f"\nProcessing complete!")
     print(f"  Train: {train_rows:,} rows -> {train_parquet}")

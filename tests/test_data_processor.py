@@ -140,49 +140,104 @@ class TestDataProcessorVocabulary(unittest.TestCase):
         self.assertNotIn(0, feat_maps['cat'].values())
 
 
-class TestDataProcessorMapping(unittest.TestCase):
-    """Tests for mapping expression creation."""
+class TestLazyVocabularyMapping(unittest.TestCase):
+    """Tests for lazy vocabulary mapping functions."""
     
-    def test_create_mapping_expressions(self):
-        """Test that mapping expressions correctly transform values."""
+    def test_get_lazy_vocab_map_basic(self):
+        """Test that lazy vocab map creates correct mappings."""
         import polars as pl
-        from src.processing.data_processor import create_mapping_expressions
+        from src.processing.data_processor import get_lazy_vocab_map
         
-        # Create a simple mapping
-        feat_maps = {
-            'cat1': {'a': 1, 'b': 2, 'c': 3}
-        }
+        # Create test data with known frequencies
+        test_data = pl.DataFrame({
+            'cat1': ['a', 'a', 'a', 'b', 'b', 'c']  # a=3, b=2, c=1
+        }).lazy()
+        
+        vocab_lf = get_lazy_vocab_map(test_data, 'cat1', min_freq=2)
+        vocab_df = vocab_lf.collect()
+        
+        # Only 'a' and 'b' should pass min_freq=2
+        self.assertEqual(len(vocab_df), 2)
+        self.assertIn('cat1', vocab_df.columns)
+        self.assertIn('cat1_id', vocab_df.columns)
+        
+        # IDs should start at 1 (sorted: 'a' -> 1, 'b' -> 2)
+        vocab_dict = dict(zip(vocab_df['cat1'].to_list(), vocab_df['cat1_id'].to_list()))
+        self.assertEqual(vocab_dict['a'], 1)
+        self.assertEqual(vocab_dict['b'], 2)
+        self.assertNotIn('c', vocab_dict)  # Filtered by min_freq
+    
+    def test_apply_lazy_vocab_transforms_values(self):
+        """Test that apply_lazy_vocab correctly transforms values to IDs."""
+        import polars as pl
+        from src.processing.data_processor import get_lazy_vocab_map, apply_lazy_vocab
+        
+        # Create training data
+        train_data = pl.DataFrame({
+            'cat1': ['a', 'a', 'a', 'b', 'b', 'c']
+        }).lazy()
+        
+        # Build vocab from train
+        vocab_lf = get_lazy_vocab_map(train_data, 'cat1', min_freq=1)
+        
+        # Apply to test data (including unknown value)
+        test_data = pl.DataFrame({
+            'cat1': ['a', 'b', 'c', 'unknown']
+        }).lazy()
+        
+        result_lf = apply_lazy_vocab(test_data, vocab_lf, 'cat1')
+        result = result_lf.collect()
+        
+        # 'a', 'b', 'c' should have IDs 1, 2, 3 (sorted)
+        # 'unknown' should be 0 (UNK)
+        self.assertEqual(result['cat1'].to_list(), [1, 2, 3, 0])
+    
+    def test_apply_lazy_vocab_fills_null_with_unk(self):
+        """Test that unknown values get mapped to 0 (UNK)."""
+        import polars as pl
+        from src.processing.data_processor import get_lazy_vocab_map, apply_lazy_vocab
+        
+        # Train only has 'a' and 'b'
+        train_data = pl.DataFrame({
+            'cat1': ['a', 'a', 'b']
+        }).lazy()
+        
+        vocab_lf = get_lazy_vocab_map(train_data, 'cat1', min_freq=1)
+        
+        # Test has values not in vocab
+        test_data = pl.DataFrame({
+            'cat1': ['x', 'y', 'z']
+        }).lazy()
+        
+        result = apply_lazy_vocab(test_data, vocab_lf, 'cat1').collect()
+        
+        # All should be 0 (UNK)
+        self.assertEqual(result['cat1'].to_list(), [0, 0, 0])
+    
+    def test_lazy_vocab_preserves_other_columns(self):
+        """Test that apply_lazy_vocab preserves other columns."""
+        import polars as pl
+        from src.processing.data_processor import get_lazy_vocab_map, apply_lazy_vocab
+        
+        train_data = pl.DataFrame({
+            'cat1': ['a', 'a', 'b'],
+            'other': [1, 2, 3]
+        }).lazy()
+        
+        vocab_lf = get_lazy_vocab_map(train_data, 'cat1', min_freq=1)
         
         test_data = pl.DataFrame({
-            'cat1': ['a', 'b', 'c', 'unknown']  # 'unknown' should map to 0
-        })
+            'cat1': ['a', 'b'],
+            'other': [10, 20]
+        }).lazy()
         
-        mapping_exprs = create_mapping_expressions(feat_maps, ['cat1'])
-        result = test_data.with_columns(mapping_exprs)
+        result = apply_lazy_vocab(test_data, vocab_lf, 'cat1').collect()
         
-        expected = [1, 2, 3, 0]  # 'unknown' -> 0 (UNK)
-        self.assertEqual(result['cat1'].to_list(), expected)
-    
-    def test_create_mapping_expressions_multiple_columns(self):
-        """Test mapping with multiple categorical columns."""
-        import polars as pl
-        from src.processing.data_processor import create_mapping_expressions
-        
-        feat_maps = {
-            'cat1': {'x': 1, 'y': 2},
-            'cat2': {'p': 1, 'q': 2, 'r': 3}
-        }
-        
-        test_data = pl.DataFrame({
-            'cat1': ['x', 'y', 'x'],
-            'cat2': ['p', 'q', 'r']
-        })
-        
-        mapping_exprs = create_mapping_expressions(feat_maps, ['cat1', 'cat2'])
-        result = test_data.with_columns(mapping_exprs)
-        
-        self.assertEqual(result['cat1'].to_list(), [1, 2, 1])
-        self.assertEqual(result['cat2'].to_list(), [1, 2, 3])
+        # 'other' column should be preserved
+        self.assertIn('other', result.columns)
+        self.assertEqual(result['other'].to_list(), [10, 20])
+        # 'cat1' should now be integer IDs
+        self.assertEqual(result['cat1'].dtype, pl.Int32)
 
 
 # =============================================================================
