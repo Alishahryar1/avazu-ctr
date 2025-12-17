@@ -106,7 +106,7 @@ CONFIG: ConfigType = {
     "validation_split": 0.0,  # Hold out 1% for validation
     
     # === Model Architecture - Embeddings ===
-    "embedding_dim": 16,  # Default/fallback embedding dimension
+    "embedding_dim": 32,  # Default/fallback embedding dimension
     "use_variable_embeddings": False,  # Enable cardinality-based embedding dimensions
     # Cardinality rules: (max_vocab_size, embedding_dim) - sorted ascending
     # Based on EDA analysis of actual feature cardinalities

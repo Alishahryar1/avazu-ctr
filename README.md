@@ -21,9 +21,9 @@ A state-of-the-art **Click-Through Rate (CTR)** prediction system for the [Avazu
 
 ### Core Innovations
 
-- **Gated Deep Cross Network V2 (DCNv2)** with low-rank decomposition for efficient high-order feature interactions
-- **Ensemble Learning** with configurable model aggregation strategies
-- **Dynamic Feature Gating** for adaptive noise suppression in sparse data
+- **STEC (See-Through Transformer-based Encoder)**: Novel architecture that extracts bilinear interactions from attention mechanisms at no additional computational cost
+- **Multi-Level Interaction Fusion**: Direct connections from all encoder layers to the final prediction head
+- **Gated Deep Cross Network V2 (DCNv2)** available as a configurable alternative
 - **Dual Optimizer Strategy** (AdamW + Adagrad) for optimal embedding and network parameter updates
 - **Memory-Efficient Pipeline** using Polars for blazing-fast data processing
 
@@ -33,10 +33,14 @@ A state-of-the-art **Click-Through Rate (CTR)** prediction system for the [Avazu
 
 ### Model Architecture
 - 🧠 **Advanced Neural Components**
-  - Deep Cross Network V2 with optional low-rank decomposition
-  - Squeeze-and-Excitation Networks (SENet) from FiBiNET
-  - Feature Gating Layers for element-wise attention
-  - Residual MLP with skip connections
+  - **STEC Architecture (Default)**
+    - Multi-Head Group Bilinear Interactions
+    - See-Through connections for gradient flow
+    - Transformer-based encoder with FFN
+  - **Legacy Components (Configurable)**
+    - Deep Cross Network V2 (DCNv2)
+    - Squeeze-and-Excitation Networks (SENet)
+    - Feature Gating Layers
   - Variable embedding dimensions based on cardinality
 
 - 🎯 **Training Optimizations**
@@ -66,76 +70,51 @@ A state-of-the-art **Click-Through Rate (CTR)** prediction system for the [Avazu
 ```mermaid
 graph TB
     subgraph Input["Input Layer"]
-        A[Categorical Features] --> B[Embedding Layer<br/>Variable Dimensions]
-        B --> C[Projection Layer<br/>Optional]
+        A[Categorical Features] --> B[Embedding Layer]
+        B --> C[Projection Layer<br/>(Uniform Dim)]
     end
 
-    subgraph Attention["Attention / Gating"]
-        C --> D{Gating Enabled?}
-        D -->|Yes| E[Feature Gating<br/>Element-wise Attention]
-        D -->|No| F{SENet Enabled?}
-        F -->|Yes| G[SENet Layer<br/>Field-wise Importance]
-        F -->|No| H[Skip]
-        E --> I[...]
-        G --> I
-        H --> I
+    subgraph STEC["STEC Encoder"]
+        C --> D[STEC Layer 1]
+        D --> E[STEC Layer 2]
+        
+        D -.->|Bilinear| F[Interaction Collection]
+        E -.->|Bilinear| F
+    
+        subgraph Layer["Inside STEC Layer"]
+            L1[Multi-Head Attention] --> L2[Group Bilinear]
+            L1 --> L3[Add & Norm] --> L4[FFN] --> L5[Add & Norm]
+        end
     end
-
-    subgraph Cross["Cross Network"]
-        I --> J{DCNv2 Enabled?}
-        J -->|Yes| K[Deep Cross Network V2<br/>Low-Rank/Full-Rank]
-        J -->|No| L[Skip]
-        K --> M[...]
-        L --> M
-    end
-
-    subgraph Deep["Deep Network"]
-        M --> N[Residual MLP<br/>1024 → 512 → 256]
-        N --> O[LayerNorm + Dropout]
-    end
-
-    subgraph Output["Output Layer"]
-        O --> P[Prediction Head<br/>Sigmoid Activation]
-        P --> Q[CTR Score]
+    
+    subgraph Final["Output Stage"]
+        C -.->|Final Bilinear| F
+        F --> G[Concat All Interactions]
+        G --> H[Residual MLP]
+        H --> I[Prediction Head]
     end
 
     style A fill:#e1f5ff
-    style Q fill:#d4edda
+    style I fill:#d4edda
+    style D fill:#fff3cd
     style E fill:#fff3cd
-    style G fill:#fff3cd
-    style K fill:#fff3cd
-    style N fill:#f8d7da
+    style F fill:#ffebee
+    style H fill:#f8d7da
 ```
 
 ### Component Details
 
-#### Deep Cross Network V2 (DCNv2)
-Learns explicit high-order feature interactions via bit-wise cross operations:
+#### STEC (See-Through Transformer-based Encoder)
+The default architecture that improves upon standard Transformers for CTR:
+1. **Cost-Free Interactions**: Reuses attention scores to compute bilinear interactions without extra matrix multiplications.
+2. **See-Through Path**: Exports interactions from every layer directly to the final classification head, preventing signal degradation.
+3. **Group Bilinear**: Performs interactions within heads to capture diverse feature crosses.
 
-```
-x_{l+1} = x_0 ⊙ (W_l x_l + b_l) + x_l
-```
-
-With optional low-rank decomposition: `W = U × V^T` where `U, V ∈ ℝ^(d×r)`, `r ≪ d`
-
-#### Feature Gating Layer
-Element-wise multiplicative gating inspired by Gated Linear Units:
-
-```
-y = x ⊙ σ(Wx + b)
-```
-
-Computationally efficient (O(n) vs O(n²) for self-attention) while achieving strong performance.
-
-#### SENet (Squeeze-and-Excitation)
-Field-aware importance weighting from FiBiNET:
-
-```
-s = Excitation(Squeeze(x))
-y = x ⊙ s
-```
-
-Supports multiple squeeze functions (mean, max, min) for enhanced representational power.
+#### Component Availability
+The system is highly modular. While STEC is default, you can enable/disable other components via config:
+- **DCNv2**: Explicit high-order interactions (`use_dcn=True`)
+- **Feature Gating**: Element-wise filtering (`use_feature_gating=True`)
+- **SENet**: Field-wise importance (`use_senet=True`)
 
 ---
 
@@ -215,27 +194,24 @@ All hyperparameters are managed in `src/config/config.py`. Key configuration cat
 ### Model Architecture
 
 ```python
+# STEC Architecture (Default)
+"use_stec": True,
+"stec_num_layers": 2,
+"stec_num_heads": 2,
+"stec_hidden_dim": None,        # Defaults to 4 * embed_dim
+"stec_dropout": 0.1,
+"stec_use_ffn": True,
+"stec_mlp_hidden_dims": [1024, 512],
+
+# Legacy/Alternative Architectures
+"use_dcn": False,               # Can be combined or used separately
+"use_feature_gating": False,
+"use_senet": False,
+
 # Embedding Configuration
-"embedding_dim": 64,                    # Base embedding dimension
-"use_variable_embeddings": True,        # Cardinality-based embedding sizing
-"embedding_dim_rules": [
-    (10, 8),    # vocab_size ≤ 10   → 8-dim
-    (100, 16),  # vocab_size ≤ 100  → 16-dim
-    (500, 24),  # vocab_size ≤ 500  → 24-dim
-    # ... higher cardinalities get larger dimensions
-],
-
-# Cross Network (DCNv2)
-"use_dcn": True,
-"dcn_num_layers": 6,
-"dcn_low_rank": 32,                     # Low-rank dimension (None = full rank)
-"dcn_use_layernorm": False,
-
-# Attention Mechanisms (mutually exclusive)
-"use_senet": False,                     # Squeeze-and-Excitation
-"use_feature_gating": True,             # Feature Gating (recommended)
-"feature_gating_activation": "sigmoid",
-"feature_gating_low_rank": 32,
+"embedding_dim": 64,
+"use_variable_embeddings": False,
+"embedding_projection_dim": None,
 
 # MLP Configuration
 "mlp_hidden_dims": [1024, 512],
@@ -300,29 +276,34 @@ avazu-ctr/
 │   ├── 📂 models/                       # Neural network components
 │   │   ├── __init__.py
 │   │   ├── utils.py                     # Activation functions, embedding utils
+│   │   ├── types.py                     # Type definitions
 │   │   ├── layers/                      # Reusable layer components
 │   │   │   ├── __init__.py
-│   │   │   ├── attention.py             # SENet layer
-│   │   │   ├── gating.py                # Feature gating layer
-│   │   │   ├── cross_network.py         # DCNv2 implementation
+│   │   │   ├── stec_encoder.py          # STEC Transformer layers
+│   │   │   ├── multi_head_stec.py       # Multi-head attention & bilinear
+│   │   │   ├── bilinear_interaction.py  # Explicit bilinear interactions
+│   │   │   ├── gating.py                # Feature gating (legacy)
+│   │   │   ├── cross_network.py         # DCNv2 (legacy)
 │   │   │   └── mlp.py                   # Residual MLP
-│   │   └── architectures/               # Complete model architectures
+│   │   ├── architectures/               # Complete model architectures
+│   │   │   ├── __init__.py
+│   │   │   ├── base.py                  # Abstract base class
+│   │   │   ├── stec.py                  # STECModel (Default)
+│   │   │   ├── gated_dcn.py             # GatedDCNModel (Legacy)
+│   │   │   └── ensemble.py              # EnsembleModel wrapper
+│   │   └── losses/                      # Loss functions
 │   │       ├── __init__.py
-│   │       ├── base_model.py            # GatedDCNModel
-│   │       └── ensemble.py              # EnsembleModel wrapper
+│   │       └── losses.py                # Focal Loss
 │   │
 │   ├── 📂 processing/                   # Data processing pipeline
 │   │   ├── __init__.py
 │   │   ├── data_processor.py            # Polars-based ETL pipeline
-│   │   ├── dataset.py                   # PyTorch Dataset classes
-│   │   └── processors/                  # Modular processors (future)
-│   │       └── __init__.py
+│   │   └── dataset.py                   # PyTorch Dataset classes
 │   │
 │   ├── 📂 training/                     # Training components
 │   │   ├── __init__.py
-│   │   ├── losses.py                    # FocalLoss implementation
-│   │   ├── schedulers.py                # LR scheduler with warmup
 │   │   ├── evaluator.py                 # Model evaluation logic
+│   │   ├── schedulers.py                # LR scheduler with warmup
 │   │   └── trainer.py                   # Main training loop
 │   │
 │   └── 📂 inference/                    # Inference pipeline
@@ -330,26 +311,9 @@ avazu-ctr/
 │       └── inference.py                 # Prediction generation
 │
 ├── 📂 tests/                            # Unit and integration tests
-│   ├── __init__.py
-│   └── test_models.py                   # Model architecture tests
-│
-├── 📂 misc/                             # Miscellaneous scripts
-│   └── eda.py                           # Exploratory data analysis
-│
+├── 📂 misc/                             # Exploratory data analysis
 ├── 📂 data/                             # Data directory (gitignored)
-│   ├── 📂 raw/                          # Raw competition data
-│   │   ├── train.gz
-│   │   └── test.gz
-│   └── 📂 processed/                    # Processed parquet files
-│       ├── train.parquet
-│       ├── test.parquet
-│       ├── vocab_sizes.pkl
-│       └── feature_names.pkl
-│
 ├── 📂 checkpoints/                      # Model checkpoints (gitignored)
-│   ├── best_model.pth
-│   └── model.pth
-│
 ├── 📂 runs/                             # TensorBoard logs (gitignored)
 │
 ├── 📄 train.py                          # Training entry point
@@ -376,10 +340,10 @@ avazu-ctr/
 
 | Experiment | Configuration | Expected Impact |
 |:-----------|:-------------|:---------------|
-| **Baseline** | Default config | Strong baseline with Feature Gating + DCNv2 |
-| **SENet Variant** | `use_senet=True`<br>`use_feature_gating=False` | Field-aware attention (FiBiNET style) |
+| **Baseline (STEC)** | `use_stec=True` | State-of-the-art transformer encoder with free bilinear interactions |
+| **GatedDCN (Legacy)** | `use_stec=False`<br>`use_dcn=True` | Previous baseline with explicit low-rank cross network |
 | **Focal Loss** | `focal_loss_gamma=2.0` | Better handling of class imbalance |
-| **Full-Rank DCN** | `dcn_low_rank=None` | Higher capacity, slower training |
+| **Ensemble** | `use_ensemble=True` | Averaging predictions from multiple models |
 | **Larger Ensemble** | `ensemble_k=5` | Better generalization, longer training |
 | **BFloat16** | `amp_dtype="bfloat16"` | Better numerical stability than float16 |
 
