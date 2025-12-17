@@ -161,10 +161,10 @@ CONFIG: ConfigType = {
     "lr": 1e-3,  # Lower initial LR for better convergence
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
     "optimizer_mode": "ftrl",  # Options: 'adamw_adagrad' or 'ftrl'
-    "ftrl_alpha": 1.0,  # FTRL learning rate proportionality constant
+    "ftrl_alpha": 0.1,  # FTRL learning rate proportionality constant
     "ftrl_beta": 1.0,  # FTRL learning rate smoothing parameter
-    "ftrl_l1": 1e-4,  # FTRL L1 regularization (enables sparsity)
-    "ftrl_l2": 1e-4,  # FTRL L2 regularization
+    "ftrl_l1": 2.0,  # FTRL L1 regularization (enables sparsity)
+    "ftrl_l2": 1.0,  # FTRL L2 regularization
     "epochs": 500,
     "early_stopping_patience": 50,
     "use_tensorboard": False,
