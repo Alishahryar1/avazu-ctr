@@ -102,12 +102,12 @@ CONFIG: ConfigType = {
     # === Data Loading ===
     "batch_size": 4096,  # Increased for faster training
     "num_workers": 4,  # Increased for faster data loading
-    "min_freq": 10,
+    "min_freq": 0,
     "validation_split": 0.0,  # Hold out 1% for validation
     
     # === Model Architecture - Embeddings ===
-    "embedding_dim": 32,  # Default/fallback embedding dimension
-    "use_variable_embeddings": False,  # Enable cardinality-based embedding dimensions
+    "embedding_dim": 64,  # Default/fallback embedding dimension
+    "use_variable_embeddings": True,  # Enable cardinality-based embedding dimensions
     # Cardinality rules: (max_vocab_size, embedding_dim) - sorted ascending
     # Based on EDA analysis of actual feature cardinalities
     "embedding_dim_rules": [
@@ -125,7 +125,7 @@ CONFIG: ConfigType = {
     "use_dcn": True,  # Enable/disable DCNv2 cross network
     "dcn_num_layers": 6,  # Increased for more feature interactions
     "dcn_use_layernorm": False,  # LayerNorm for cross layer stability
-    "dcn_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
+    "dcn_low_rank": 64,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
     # === Model Architecture - SENET ===
     "use_senet": False,  # Enable/disable SENET (Squeeze-and-Excitation) layer
@@ -136,19 +136,19 @@ CONFIG: ConfigType = {
     # === Model Architecture - Feature Gating ===   
     "use_feature_gating": True,  # Alternative to SENET (mutually exclusive)
     "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
-    "feature_gating_low_rank": 32,  # None = full-rank, int (e.g. 32) = low-rank decomposition
+    "feature_gating_low_rank": 64,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
     # === Model Architecture - STEC ===
-    "use_stec": True,
+    "use_stec": False,
     "stec_num_layers": 2,
     "stec_num_heads": 2,
     "stec_hidden_dim": None,  # Defaults to 4 * embed_dim
     "stec_dropout": 0.1,
     "stec_use_ffn": True,
-    "stec_mlp_hidden_dims": [1024, 512],
+    "stec_mlp_hidden_dims": [2048, 1024, 512],
     
     # === Model Architecture - MLP ===
-    "mlp_hidden_dims": [1024, 512],  # Deeper network
+    "mlp_hidden_dims": [2048, 1024, 512],  # Deeper network
     "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
     "mlp_use_skip_connections": True,  # Add residual/skip connections to MLP
     "use_layer_norm": True,
