@@ -1,5 +1,7 @@
 /data
 *.csv
+*.txt
+pdf_reader.py
 __pycache__
 /checkpoints
 /runs

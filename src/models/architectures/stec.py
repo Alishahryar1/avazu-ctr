@@ -131,9 +131,6 @@ class STECModel(BaseCTRModel):
         else:
             self.dim_adjust = None
         
-        # 3. Initial Bilinear Layer (for embedding-level interaction)
-        self.initial_bilinear = BilinearInteractionLayer(self.embed_per_field, stec_num_heads)
-        
         # 4. STEC Encoder Layers
         self.stec_layers = nn.ModuleList([
             STECEncoderLayer(
@@ -150,10 +147,10 @@ class STECModel(BaseCTRModel):
         self.final_bilinear = BilinearInteractionLayer(self.embed_per_field, stec_num_heads)
         
         # 6. Batch Normalization for each level's bilinear interaction
-        # N+2 levels: initial + N from STEC layers + final
+        # N+1 levels: N from STEC layers + final
         head_dim = self.embed_per_field // stec_num_heads
         bilinear_size = stec_num_heads * self.num_fields * self.num_fields * head_dim
-        num_bilinear_levels = stec_num_layers + 2  # initial + N layers + final
+        num_bilinear_levels = stec_num_layers + 1  # N layers + final
         
         self.bilinear_bns = nn.ModuleList([
             nn.BatchNorm1d(bilinear_size)
@@ -217,16 +214,11 @@ class STECModel(BaseCTRModel):
         # 3. Collect bilinear interactions from all levels
         bilinear_interactions = []
         
-        # Initial bilinear from embeddings
-        init_bilinear = self.initial_bilinear(h)  # [B, H*F*F, head_dim]
-        init_bilinear_flat = init_bilinear.view(B, -1)  # [B, H*F*F*head_dim]
-        bilinear_interactions.append(self.bilinear_bns[0](init_bilinear_flat))
-        
         # 4. Pass through STEC layers
         for i, layer in enumerate(self.stec_layers):
             h, bilinear = layer(h)  # h: [B, F, D], bilinear: [B, H*F*F, head_dim]
             bilinear_flat = bilinear.view(B, -1)
-            bilinear_interactions.append(self.bilinear_bns[i + 1](bilinear_flat))
+            bilinear_interactions.append(self.bilinear_bns[i](bilinear_flat))
         
         # 5. Final bilinear from last layer output
         final_bilinear = self.final_bilinear(h)
