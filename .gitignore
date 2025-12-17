@@ -6,4 +6,5 @@ __pycache__
 /checkpoints
 /runs
 GEMINI.md
+AGENTS.md
 .pytest_cache

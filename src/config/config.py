@@ -58,7 +58,11 @@ class ConfigType(TypedDict):
     # Training
     lr: float
     embedding_lr: float
-    embedding_optimizer: str
+    optimizer_mode: str  # Options: 'adamw_adagrad' or 'ftrl'
+    ftrl_alpha: float  # FTRL learning rate proportionality constant
+    ftrl_beta: float  # FTRL learning rate smoothing parameter
+    ftrl_l1: float  # FTRL L1 regularization (sparsity)
+    ftrl_l2: float  # FTRL L2 regularization
     epochs: int
     lr_warmup_epoch_ratio: float
     early_stopping_patience: int
@@ -156,7 +160,11 @@ CONFIG: ConfigType = {
     # === Training ===
     "lr": 1e-3,  # Lower initial LR for better convergence
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
-    "embedding_optimizer": "adagrad",  # Separate optimizer for embeddings
+    "optimizer_mode": "ftrl",  # Options: 'adamw_adagrad' or 'ftrl'
+    "ftrl_alpha": 1.0,  # FTRL learning rate proportionality constant
+    "ftrl_beta": 1.0,  # FTRL learning rate smoothing parameter
+    "ftrl_l1": 1e-4,  # FTRL L1 regularization (enables sparsity)
+    "ftrl_l2": 1e-4,  # FTRL L2 regularization
     "epochs": 500,
     "early_stopping_patience": 50,
     "use_tensorboard": False,

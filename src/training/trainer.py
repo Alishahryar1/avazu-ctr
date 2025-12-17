@@ -120,45 +120,68 @@ def train():
     # 4. Optimizer, Scheduler (loss is now handled by model internally)
     print("\nStep 4: Setting up Training Components...")
 
-    # Separate parameters for embeddings vs other layers
-    embedding_params = []
-    other_params = []
-    for name, param in model.named_parameters():
-        if 'embeddings' in name:
-            embedding_params.append(param)
-        else:
-            other_params.append(param)
+    # Optimizer setup based on mode
+    use_ftrl = CONFIG['optimizer_mode'] == 'ftrl'
+    
+    if use_ftrl:
+        # FTRL Proximal for ALL parameters
+        from src.training.optimizers import FTRLProximal
+        optimizer = FTRLProximal(
+            model.parameters(),
+            alpha=CONFIG['ftrl_alpha'],
+            beta=CONFIG['ftrl_beta'],
+            l1=CONFIG['ftrl_l1'],
+            l2=CONFIG['ftrl_l2'],
+        )
+        embedding_optimizer = None
+        other_optimizer = None
+        print(f"Optimizer: FTRL Proximal (alpha={CONFIG['ftrl_alpha']}, beta={CONFIG['ftrl_beta']}, l1={CONFIG['ftrl_l1']}, l2={CONFIG['ftrl_l2']})")
+    else:
+        # AdamW + Adagrad mode (default)
+        # Separate parameters for embeddings vs other layers
+        embedding_params = []
+        other_params = []
+        for name, param in model.named_parameters():
+            if 'embeddings' in name:
+                embedding_params.append(param)
+            else:
+                other_params.append(param)
 
-    print(f"Embedding parameters: {sum(p.numel() for p in embedding_params):,}")
-    print(f"Other parameters: {sum(p.numel() for p in other_params):,}")
+        print(f"Embedding parameters: {sum(p.numel() for p in embedding_params):,}")
+        print(f"Other parameters: {sum(p.numel() for p in other_params):,}")
 
-    # Adagrad for embeddings (commonly used for sparse/categorical features)
-    # Separate weight decay for embeddings (usually lower or zero)
-    embedding_optimizer = optim.Adagrad(
-        embedding_params,
-        lr=CONFIG['embedding_lr'],
-        weight_decay=CONFIG['embedding_weight_decay']
-    )
-    print(f"Embedding optimizer: Adagrad (lr={CONFIG['embedding_lr']}, weight_decay={CONFIG['embedding_weight_decay']})")
+        # Adagrad for embeddings (commonly used for sparse/categorical features)
+        embedding_optimizer = optim.Adagrad(
+            embedding_params,
+            lr=CONFIG['embedding_lr'],
+            weight_decay=CONFIG['embedding_weight_decay']
+        )
+        print(f"Embedding optimizer: Adagrad (lr={CONFIG['embedding_lr']}, weight_decay={CONFIG['embedding_weight_decay']})")
 
-    # AdamW for other parameters (MLP, DCN, etc.)
-    other_optimizer = optim.AdamW(
-        other_params,
-        lr=CONFIG['lr'],
-        weight_decay=CONFIG['weight_decay']
-    )
-    print(f"Other optimizer: AdamW (lr={CONFIG['lr']}, weight_decay={CONFIG['weight_decay']})")
+        # AdamW for other parameters (MLP, DCN, etc.)
+        other_optimizer = optim.AdamW(
+            other_params,
+            lr=CONFIG['lr'],
+            weight_decay=CONFIG['weight_decay']
+        )
+        print(f"Other optimizer: AdamW (lr={CONFIG['lr']}, weight_decay={CONFIG['weight_decay']})")
+        optimizer = None
 
-    # Learning rate scheduler (only for non-embedding params)
+    # Learning rate scheduler (only for non-embedding params in adamw_adagrad mode)
     steps_per_epoch = len(train_loader)
     total_steps = steps_per_epoch * CONFIG['epochs']
     warmup_steps = int(steps_per_epoch * CONFIG['lr_warmup_epoch_ratio'])
-    scheduler = LRSchedulerWithWarmup(
-        other_optimizer,
-        warmup_steps=warmup_steps,
-        total_steps=total_steps
-    )
-    print(f"LR warmup steps: {warmup_steps} ({CONFIG['lr_warmup_epoch_ratio']*100:.0f}% of {steps_per_epoch} steps)")
+    
+    if not use_ftrl and other_optimizer is not None:
+        scheduler = LRSchedulerWithWarmup(
+            other_optimizer,
+            warmup_steps=warmup_steps,
+            total_steps=total_steps
+        )
+        print(f"LR warmup steps: {warmup_steps} ({CONFIG['lr_warmup_epoch_ratio']*100:.0f}% of {steps_per_epoch} steps)")
+    else:
+        scheduler = None
+        print("LR scheduler disabled (FTRL mode uses per-coordinate learning rates)")
 
     # Setup Automatic Mixed Precision (AMP)
     use_amp = CONFIG['auto_amp'] and CONFIG['device'] == 'cuda'
@@ -210,13 +233,19 @@ def train():
             # train_dataset.reset()
 
             pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{CONFIG['epochs']}")
-            for batch_idx, batch_data in enumerate(pbar):
+            for batch_idx, batch_data in enumerate(pbar): # pyrefly: ignore
                 X_batch, y_batch = batch_data
                 X_batch = X_batch.to(CONFIG['device'])
                 y_batch = y_batch.to(CONFIG['device']).unsqueeze(1)
 
-                embedding_optimizer.zero_grad()
-                other_optimizer.zero_grad()
+                # Zero gradients based on optimizer mode
+                if use_ftrl and optimizer is not None:
+                    optimizer.zero_grad()
+                else:
+                    if embedding_optimizer is not None:
+                        embedding_optimizer.zero_grad()
+                    if other_optimizer is not None:
+                        other_optimizer.zero_grad()
 
                 # Forward pass with optional AMP
                 with torch.amp.autocast(device_type='cuda', dtype=amp_dtype, enabled=use_amp):
@@ -230,12 +259,23 @@ def train():
 
                     # Gradient clipping (unscale first for proper clipping)
                     if CONFIG['grad_clip'] > 0:
-                        scaler.unscale_(embedding_optimizer)
-                        scaler.unscale_(other_optimizer)
+                        if use_ftrl and optimizer is not None:
+                            scaler.unscale_(optimizer)
+                        else:
+                            if embedding_optimizer is not None:
+                                scaler.unscale_(embedding_optimizer)
+                            if other_optimizer is not None:
+                                scaler.unscale_(other_optimizer)
                         torch.nn.utils.clip_grad_norm_(model.parameters(), CONFIG['grad_clip'])
 
-                    scaler.step(embedding_optimizer)
-                    scaler.step(other_optimizer)
+                    # Step optimizers
+                    if use_ftrl and optimizer is not None:
+                        scaler.step(optimizer)
+                    else:
+                        if embedding_optimizer is not None:
+                            scaler.step(embedding_optimizer)
+                        if other_optimizer is not None:
+                            scaler.step(other_optimizer)
                     scaler.update()
                 else:
                     loss.backward()
@@ -244,10 +284,18 @@ def train():
                     if CONFIG['grad_clip'] > 0:
                         torch.nn.utils.clip_grad_norm_(model.parameters(), CONFIG['grad_clip'])
 
-                    embedding_optimizer.step()
-                    other_optimizer.step()
+                    # Step optimizers
+                    if use_ftrl and optimizer is not None:
+                        optimizer.step()
+                    else:
+                        if embedding_optimizer is not None:
+                            embedding_optimizer.step()
+                        if other_optimizer is not None:
+                            other_optimizer.step()
 
-                scheduler.step()
+                # Step scheduler (only in adamw_adagrad mode)
+                if scheduler is not None:
+                    scheduler.step()
 
                 total_loss += loss.item()
 
@@ -255,12 +303,14 @@ def train():
                 if writer is not None and batch_idx % CONFIG['tensorboard_log_interval'] == 0:
                     global_step = epoch * len(train_loader) + batch_idx
                     writer.add_scalar('Loss/train_batch', loss.item(), global_step)
-                    writer.add_scalar('LR/learning_rate', scheduler.get_lr(), global_step)
+                    if scheduler is not None:
+                        writer.add_scalar('LR/learning_rate', scheduler.get_lr(), global_step)
 
                 # Update progress bar
+                current_lr = scheduler.get_lr() if scheduler is not None else CONFIG['ftrl_alpha']
                 pbar.set_postfix({
                     'loss': f"{loss.item():.4f}",
-                    'lr': f"{scheduler.get_lr():.2e}"
+                    'lr': f"{current_lr:.2e}"
                 })
 
             # Epoch statistics
@@ -284,7 +334,8 @@ def train():
                 print(f"  Val Loss:   {val_loss:.5f}")
                 print(f"  Val AUC:    {val_auc:.5f}")
                 print(f"  Val LogLoss: {val_logloss:.5f}")
-                print(f"  LR:         {scheduler.get_lr():.2e}")
+                current_lr = scheduler.get_lr() if scheduler is not None else CONFIG['ftrl_alpha']
+                print(f"  LR:         {current_lr:.2e}")
                 print(f"  Time:       {epoch_time:.0f}s")
                 print(f"{'='*80}\n")
 
@@ -294,16 +345,23 @@ def train():
                     best_val_auc = val_auc
                     patience_counter = 0
 
-                    # Save best model
-                    torch.save({
+                    # Save best model - checkpoint format depends on optimizer mode
+                    checkpoint = {
                         'epoch': epoch,
                         'model_state_dict': model.state_dict(),
-                        'embedding_optimizer_state_dict': embedding_optimizer.state_dict(),
-                        'other_optimizer_state_dict': other_optimizer.state_dict(),
                         'val_loss': val_loss,
                         'val_auc': val_auc,
                         'val_logloss': val_logloss,
-                    }, os.path.join(CONFIG['models_path'], "best_model.pth"))
+                        'optimizer_mode': CONFIG['optimizer_mode'],
+                    }
+                    if use_ftrl and optimizer is not None:
+                        checkpoint['optimizer_state_dict'] = optimizer.state_dict()
+                    else:
+                        if embedding_optimizer is not None:
+                            checkpoint['embedding_optimizer_state_dict'] = embedding_optimizer.state_dict()
+                        if other_optimizer is not None:
+                            checkpoint['other_optimizer_state_dict'] = other_optimizer.state_dict()
+                    torch.save(checkpoint, os.path.join(CONFIG['models_path'], "best_model.pth"))
                     print(f"✓ New best model saved! (Val AUC: {val_auc:.5f})")
                 else:
                     patience_counter += 1
@@ -317,22 +375,30 @@ def train():
                 if writer is not None:
                     writer.add_scalar('Loss/train_epoch', avg_train_loss, epoch)
 
-                # Save best model
-                torch.save({
+                # Save best model - checkpoint format depends on optimizer mode
+                checkpoint = {
                     'epoch': epoch,
                     'model_state_dict': model.state_dict(),
-                    'embedding_optimizer_state_dict': embedding_optimizer.state_dict(),
-                    'other_optimizer_state_dict': other_optimizer.state_dict(),
                     'val_loss': val_loss,
                     'val_auc': val_auc,
                     'val_logloss': val_logloss,
-                }, os.path.join(models_path, "best_model.pth"))
+                    'optimizer_mode': CONFIG['optimizer_mode'],
+                }
+                if use_ftrl and optimizer is not None:
+                    checkpoint['optimizer_state_dict'] = optimizer.state_dict()
+                else:
+                    if embedding_optimizer is not None:
+                        checkpoint['embedding_optimizer_state_dict'] = embedding_optimizer.state_dict()
+                    if other_optimizer is not None:
+                        checkpoint['other_optimizer_state_dict'] = other_optimizer.state_dict()
+                torch.save(checkpoint, os.path.join(models_path, "best_model.pth"))
                 print(f"✓ New best model saved! (Val AUC: {val_auc:.5f})")
 
+                current_lr = scheduler.get_lr() if scheduler is not None else CONFIG['ftrl_alpha']
                 print(f"\n{'='*80}")
                 print(f"Epoch {epoch+1}/{CONFIG['epochs']} Summary:")
                 print(f"  Train Loss: {avg_train_loss:.5f}")
-                print(f"  LR:         {scheduler.get_lr():.2e}")
+                print(f"  LR:         {current_lr:.2e}")
                 print(f"  Time:       {epoch_time:.0f}s")
                 print(f"{'='*80}\n")
 
@@ -355,17 +421,22 @@ def train():
     print(f"Latest model saved to: {models_path}/model.pth")
     print("=" * 80)
 
-    # Save final model
-    torch.save(
-        {
-            'model_state_dict': model.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'other_optimizer_state_dict': other_optimizer.state_dict(),
-            'val_loss': val_loss,
-            'val_auc': val_auc,
-            'val_logloss': val_logloss,
-        }, os.path.join(models_path, "model.pth")
-    )
+    # Save final model - checkpoint format depends on optimizer mode
+    checkpoint = {
+        'model_state_dict': model.state_dict(),
+        'val_loss': val_loss,
+        'val_auc': val_auc,
+        'val_logloss': val_logloss,
+        'optimizer_mode': CONFIG['optimizer_mode'],
+    }
+    if use_ftrl and optimizer is not None:
+        checkpoint['optimizer_state_dict'] = optimizer.state_dict()
+    else:
+        if embedding_optimizer is not None:
+            checkpoint['embedding_optimizer_state_dict'] = embedding_optimizer.state_dict()
+        if other_optimizer is not None:
+            checkpoint['other_optimizer_state_dict'] = other_optimizer.state_dict()
+    torch.save(checkpoint, os.path.join(models_path, "model.pth"))
 
     # Cleanup TensorBoard writer
     if writer is not None:
