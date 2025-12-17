@@ -128,36 +128,51 @@ CONFIG: ConfigType = {
     # - num_hashes: for hash only, number of hash functions (default: 2)
     # - aggregation_mode: for hash only, 'sum'/'concatenate'/'median' (default: 'sum')
     "feature_embeddings": {
-        # --- Base categorical features ---
-        "C1": {"type": "standard", "dim": 16},
-        "banner_pos": {"type": "standard", "dim": 8},
-        "site_id": {"type": "standard", "dim": 16},
-        "site_domain": {"type": "standard", "dim": 16},
-        "site_category": {"type": "standard", "dim": 8},
-        "app_id": {"type": "standard", "dim": 16},
-        "app_domain": {"type": "standard", "dim": 16},
-        "app_category": {"type": "standard", "dim": 8},
-        # High-cardinality: use hash embeddings
-        "device_id": {"type": "hash", "dim": 32, "num_buckets": 5000, "num_hashes": 2},
-        "device_ip": {"type": "hash", "dim": 32, "num_buckets": 10000, "num_hashes": 2},
-        "device_model": {"type": "standard", "dim": 16},
-        "device_type": {"type": "standard", "dim": 8},
+        # --- Standard embeddings (low-medium cardinality) ---
+        # Very low cardinality (dim 8)
+        "month": {"type": "standard", "dim": 8},
+        "C21_count_bin": {"type": "standard", "dim": 8},
         "device_conn_type": {"type": "standard", "dim": 8},
-        # Anonymous features
-        "C14": {"type": "standard", "dim": 16},
-        "C15": {"type": "standard", "dim": 8},
-        "C16": {"type": "standard", "dim": 8},
-        "C17": {"type": "standard", "dim": 16},
         "C18": {"type": "standard", "dim": 8},
-        "C19": {"type": "standard", "dim": 16},
-        "C20": {"type": "standard", "dim": 16},
+        "user_hourly_impressions_bin": {"type": "standard", "dim": 8},
+        "device_type": {"type": "standard", "dim": 8},
+        "hours_since_last_click_bin": {"type": "standard", "dim": 8},
+        "user_proxy_prev_clicks_bin": {"type": "standard", "dim": 8},
+        "device_ip_cumcount_bin": {"type": "standard", "dim": 8},
+        "device_id_cumcount_bin": {"type": "standard", "dim": 8},
+        "C1": {"type": "standard", "dim": 8},
+        "banner_pos": {"type": "standard", "dim": 8},
+        "day_of_week": {"type": "standard", "dim": 8},
+        "C15": {"type": "standard", "dim": 8},
+        "device_ip_count_bin": {"type": "standard", "dim": 8},
+        "device_id_count_bin": {"type": "standard", "dim": 8},
+        "C14_count_bin": {"type": "standard", "dim": 8},
+        "C17_count_bin": {"type": "standard", "dim": 8},
+        "user_proxy_count_bin": {"type": "standard", "dim": 8},
+        # Low cardinality (dim 16)
+        "C16": {"type": "standard", "dim": 16},
+        "day_of_month": {"type": "standard", "dim": 16},
+        "hour_of_day": {"type": "standard", "dim": 16},
+        "site_category": {"type": "standard", "dim": 16},
+        "app_category": {"type": "standard", "dim": 16},
         "C21": {"type": "standard", "dim": 16},
-        # --- Engineered features ---
-        # User proxy: high cardinality
-        "user_proxy": {"type": "hash", "dim": 32, "num_buckets": 10000, "num_hashes": 2},
-        # Interaction features: very high cardinality
-        "device_id_x_app_id": {"type": "hash", "dim": 32, "num_buckets": 10000, "num_hashes": 2},
-        "device_ip_x_C14": {"type": "hash", "dim": 32, "num_buckets": 10000, "num_hashes": 2},
+        "C19": {"type": "standard", "dim": 16},
+        # Medium cardinality (dim 24)
+        "C20": {"type": "standard", "dim": 24},
+        "C17": {"type": "standard", "dim": 24},
+        "app_domain": {"type": "standard", "dim": 24},
+        # High cardinality (dim 32)
+        "C14": {"type": "standard", "dim": 32},
+        "site_id": {"type": "standard", "dim": 32},
+        "site_domain": {"type": "standard", "dim": 32},
+        "device_model": {"type": "standard", "dim": 32},
+        "app_id": {"type": "standard", "dim": 32},
+        # --- Hash embeddings (very high cardinality) ---
+        "device_id": {"type": "hash", "dim": 32, "num_buckets": 3500, "num_hashes": 2},
+        "device_id_x_app_id": {"type": "hash", "dim": 32, "num_buckets": 3500, "num_hashes": 2},
+        "device_ip": {"type": "hash", "dim": 32, "num_buckets": 5000, "num_hashes": 2},
+        "user_proxy": {"type": "hash", "dim": 32, "num_buckets": 7000, "num_hashes": 2},
+        "device_ip_x_C14": {"type": "hash", "dim": 32, "num_buckets": 8000, "num_hashes": 2},
     },
     "embedding_projection_dim": None,  # None = no projection, int = project to uniform dim
     
