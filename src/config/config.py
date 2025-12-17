@@ -167,9 +167,9 @@ CONFIG: ConfigType = {
     "ftrl_l2": 1.0,  # FTRL L2 regularization
     "epochs": 500,
     "early_stopping_patience": 50,
-    "use_tensorboard": False,
+    "use_tensorboard": True,
     "tensorboard_logdir": "./runs",
-    "tensorboard_log_interval": 1000,  # Log every N batches (reduces I/O overhead)
+    "tensorboard_log_interval": 50,  # Log every N batches (reduces I/O overhead)
     
     # === Automatic Mixed Precision (AMP) ===
     "auto_amp": True,  # Enable AMP for faster training on CUDA (uses float16/bfloat16)
