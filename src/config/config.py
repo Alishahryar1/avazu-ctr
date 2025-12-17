@@ -1,12 +1,24 @@
 import os
 import numpy as np
 import torch
-from typing import TypedDict
+from typing import TypedDict, Literal
 
 
 class FeatureEmbeddingConfig(TypedDict, total=False):
-    """Per-feature embedding configuration with optional overrides."""
-    embedding_dim: int  # Override embedding dimension for this feature
+    """Per-feature embedding configuration.
+    
+    Attributes:
+        type: Embedding type - 'standard' (nn.Embedding) or 'hash' (HashEmbedding)
+        dim: Embedding dimension (output size)
+        num_buckets: For hash embeddings: size of shared embedding pool
+        num_hashes: For hash embeddings: number of hash functions (default: 2)
+        aggregation_mode: For hash embeddings: 'sum', 'concatenate', or 'median'
+    """
+    type: Literal['standard', 'hash']
+    dim: int
+    num_buckets: int  # Only for type='hash'
+    num_hashes: int  # Only for type='hash', default: 2
+    aggregation_mode: Literal['sum', 'concatenate', 'median']  # Only for type='hash', default: 'sum'
 
 
 class ConfigType(TypedDict):
@@ -21,11 +33,9 @@ class ConfigType(TypedDict):
     validation_split: float
     
     # Model Architecture - Embeddings
-    embedding_dim: int  # Default/uniform embedding dimension
-    use_variable_embeddings: bool  # Enable cardinality-based embedding dimensions
-    embedding_dim_rules: list[tuple[int, int]]  # (max_cardinality, embed_dim) sorted ascending
+    embedding_dim: int  # Default embedding dimension (fallback if feature not in feature_embeddings)
+    feature_embeddings: dict[str, FeatureEmbeddingConfig]  # Per-feature embedding config
     embedding_projection_dim: int | None  # None = sum of all, int = project to this dim
-    feature_embedding_overrides: dict[str, FeatureEmbeddingConfig]  # Per-feature overrides
     
     # Model Architecture - DCN/Attention
     use_dcn: bool
@@ -111,19 +121,45 @@ CONFIG: ConfigType = {
     
     # === Model Architecture - Embeddings ===
     "embedding_dim": 16,  # Default/fallback embedding dimension
-    "use_variable_embeddings": False,  # Enable cardinality-based embedding dimensions
-    # Cardinality rules: (max_vocab_size, embedding_dim) - sorted ascending
-    # Based on EDA analysis of actual feature cardinalities
-    "embedding_dim_rules": [
-        (10, 8),       # 10 features: device_type, C18, C1, banner_pos, day_of_week, C15, C16, month, day_of_month, device_conn_type
-        (100, 16),     # 5 features: site_category, hour_of_day, app_category, C21, C19
-        (500, 24),     # 3 features: C20, app_domain, C17
-        (5000, 32),    # 3 features: C14, site_id, site_domain
-        (20000, 48),   # 2 features: app_id, device_model
-        # Anything above 20000 uses embedding_dim (128): device_id, device_id_x_app_id, device_ip_x_C14, device_ip, user_proxy
-    ],
+    # Per-feature embedding configuration
+    # - type: 'standard' (nn.Embedding) or 'hash' (HashEmbedding)
+    # - dim: embedding dimension
+    # - num_buckets: for hash only, size of shared pool
+    # - num_hashes: for hash only, number of hash functions (default: 2)
+    # - aggregation_mode: for hash only, 'sum'/'concatenate'/'median' (default: 'sum')
+    "feature_embeddings": {
+        # --- Base categorical features ---
+        "C1": {"type": "standard", "dim": 16},
+        "banner_pos": {"type": "standard", "dim": 8},
+        "site_id": {"type": "standard", "dim": 16},
+        "site_domain": {"type": "standard", "dim": 16},
+        "site_category": {"type": "standard", "dim": 8},
+        "app_id": {"type": "standard", "dim": 16},
+        "app_domain": {"type": "standard", "dim": 16},
+        "app_category": {"type": "standard", "dim": 8},
+        # High-cardinality: use hash embeddings
+        "device_id": {"type": "hash", "dim": 32, "num_buckets": 5000, "num_hashes": 2},
+        "device_ip": {"type": "hash", "dim": 32, "num_buckets": 10000, "num_hashes": 2},
+        "device_model": {"type": "standard", "dim": 16},
+        "device_type": {"type": "standard", "dim": 8},
+        "device_conn_type": {"type": "standard", "dim": 8},
+        # Anonymous features
+        "C14": {"type": "standard", "dim": 16},
+        "C15": {"type": "standard", "dim": 8},
+        "C16": {"type": "standard", "dim": 8},
+        "C17": {"type": "standard", "dim": 16},
+        "C18": {"type": "standard", "dim": 8},
+        "C19": {"type": "standard", "dim": 16},
+        "C20": {"type": "standard", "dim": 16},
+        "C21": {"type": "standard", "dim": 16},
+        # --- Engineered features ---
+        # User proxy: high cardinality
+        "user_proxy": {"type": "hash", "dim": 32, "num_buckets": 10000, "num_hashes": 2},
+        # Interaction features: very high cardinality
+        "device_id_x_app_id": {"type": "hash", "dim": 32, "num_buckets": 10000, "num_hashes": 2},
+        "device_ip_x_C14": {"type": "hash", "dim": 32, "num_buckets": 10000, "num_hashes": 2},
+    },
     "embedding_projection_dim": None,  # None = no projection, int = project to uniform dim
-    "feature_embedding_overrides": {},  # Per-feature overrides, e.g., {"device_id": {"embedding_dim": 128}}
     
     # === Model Architecture - DCN ===
     "use_dcn": True,  # Enable/disable DCNv2 cross network

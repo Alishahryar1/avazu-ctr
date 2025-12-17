@@ -9,7 +9,8 @@ import unittest
 import torch
 import torch.nn as nn
 from src.config.config import CONFIG, ConfigType
-from src.models.model import GatedDCNModel, DCNv2
+from src.models.architectures.gated_dcn import GatedDCNModel
+from src.models.layers.cross_network import DCNv2
 
 
 def make_test_config(**overrides) -> ConfigType:
@@ -27,14 +28,8 @@ def make_test_config(**overrides) -> ConfigType:
 
         # Model Architecture - Embeddings
         'embedding_dim': 16,
-        'use_variable_embeddings': False,  # Disabled for backward compatibility in tests
-        'embedding_dim_rules': [
-            (10, 8),
-            (100, 16),
-            (1000, 32),
-        ],
+        'feature_embeddings': {},  # Per-feature config, empty = use default embedding_dim
         'embedding_projection_dim': None,
-        'feature_embedding_overrides': {},
 
         # Model Architecture - DCN/Attention
         'use_dcn': True,
@@ -150,7 +145,8 @@ class TestModelStructure(unittest.TestCase):
     def test_embedding_dim(self):
         """Verify embeddings have correct dimension."""
         expected_dim = self.config['embedding_dim']
-        for name, embedding in self.model.embeddings.items():
+        for name in self.feature_names:
+            embedding = self.model.embeddings[name]
             actual_dim = embedding.embedding_dim
             self.assertEqual(
                 actual_dim,
@@ -338,21 +334,24 @@ class TestMutualExclusivity(unittest.TestCase):
         self.assertTrue(hasattr(model, 'senet'), "Model should have senet layer")
 
 
-class TestVariableEmbeddings(unittest.TestCase):
-    """Tests for variable embedding dimensions based on feature cardinality."""
+class TestFeatureEmbeddings(unittest.TestCase):
+    """Tests for per-feature embedding configurations including hash embeddings."""
     
-    def test_cardinality_based_embedding_dims(self):
-        """Test that embeddings get different dimensions based on vocab size."""
+    def test_standard_embeddings_per_feature(self):
+        """Test that per-feature standard embeddings work correctly."""
         config = make_test_config(
-            use_variable_embeddings=True,
+            feature_embeddings={
+                'small': {'type': 'standard', 'dim': 8},
+                'medium': {'type': 'standard', 'dim': 16},
+                'large': {'type': 'standard', 'dim': 32},
+            },
             use_senet=False,  # SENET needs uniform dims
             use_feature_gating=True
         )
-        # Create features with different cardinalities
         vocab_sizes = {
-            'small': 5,      # Should get 8 dims (cardinality <= 10)
-            'medium': 50,    # Should get 16 dims (cardinality <= 100)
-            'large': 500,    # Should get 32 dims (cardinality <= 1000)
+            'small': 5,
+            'medium': 50,
+            'large': 500,
         }
         feature_names = ['small', 'medium', 'large']
         
@@ -363,24 +362,50 @@ class TestVariableEmbeddings(unittest.TestCase):
         self.assertEqual(model.embeddings['medium'].embedding_dim, 16)
         self.assertEqual(model.embeddings['large'].embedding_dim, 32)
     
-    def test_variable_embeddings_forward_pass(self):
-        """Test forward pass with variable embedding dimensions."""
+    def test_hash_embeddings_per_feature(self):
+        """Test that hash embeddings work correctly."""
+        from src.models.layers.hash_embedding import HashEmbedding
+        
         config = make_test_config(
-            use_variable_embeddings=True,
+            feature_embeddings={
+                'hash_feat': {'type': 'hash', 'dim': 16, 'num_buckets': 100, 'num_hashes': 2},
+                'std_feat': {'type': 'standard', 'dim': 16},
+            },
             use_senet=False,
             use_feature_gating=True
         )
-        vocab_sizes = {'small': 5, 'medium': 50, 'large': 500}
-        model = GatedDCNModel(vocab_sizes, ['small', 'medium', 'large'], config)
+        vocab_sizes = {'hash_feat': 1000, 'std_feat': 100}
+        model = GatedDCNModel(vocab_sizes, ['hash_feat', 'std_feat'], config)
         
-        x = torch.randint(0, 5, (4, 3))  # Use min vocab size for safety
+        # Verify hash embedding uses HashEmbedding
+        self.assertIsInstance(model.embeddings['hash_feat'], HashEmbedding)
+        # Verify standard embedding uses nn.Embedding
+        self.assertIsInstance(model.embeddings['std_feat'], nn.Embedding)
+    
+    def test_mixed_embeddings_forward_pass(self):
+        """Test forward pass with mixed embedding types."""
+        config = make_test_config(
+            feature_embeddings={
+                'hash_feat': {'type': 'hash', 'dim': 16, 'num_buckets': 50},
+                'std_feat': {'type': 'standard', 'dim': 16},
+            },
+            use_senet=False,
+            use_feature_gating=True
+        )
+        vocab_sizes = {'hash_feat': 500, 'std_feat': 100}
+        model = GatedDCNModel(vocab_sizes, ['hash_feat', 'std_feat'], config)
+        
+        x = torch.randint(0, 100, (4, 2))
         out = model(x)
         self.assertEqual(out['logits'].shape, (4, 1))
     
     def test_projection_layer(self):
-        """Test that projection layer unifies variable embedding dimensions."""
+        """Test that projection layer unifies feature embedding dimensions."""
         config = make_test_config(
-            use_variable_embeddings=True,
+            feature_embeddings={
+                'small': {'type': 'standard', 'dim': 8},
+                'medium': {'type': 'standard', 'dim': 16},
+            },
             embedding_projection_dim=64,  # Project to 64 dims
             use_senet=False,
             use_feature_gating=False
@@ -397,15 +422,18 @@ class TestVariableEmbeddings(unittest.TestCase):
         self.assertEqual(out['logits'].shape, (4, 1))
     
     def test_projection_with_senet(self):
-        """Test that SENET works with variable embeddings when projection is enabled."""
+        """Test that SENET works with projection layer."""
         config = make_test_config(
-            use_variable_embeddings=True,
+            feature_embeddings={
+                'feat1': {'type': 'standard', 'dim': 8},
+                'feat2': {'type': 'standard', 'dim': 16},
+            },
             embedding_projection_dim=64,  # Must divide evenly by num_fields for SENET
             use_senet=True,
             use_feature_gating=False
         )
-        vocab_sizes = {'small': 5, 'medium': 50}  # 2 fields
-        model = GatedDCNModel(vocab_sizes, ['small', 'medium'], config)
+        vocab_sizes = {'feat1': 5, 'feat2': 50}  # 2 fields
+        model = GatedDCNModel(vocab_sizes, ['feat1', 'feat2'], config)
         
         self.assertTrue(hasattr(model, 'senet'))
         x = torch.randint(0, 5, (4, 2))
@@ -413,50 +441,61 @@ class TestVariableEmbeddings(unittest.TestCase):
         self.assertEqual(out['logits'].shape, (4, 1))
     
     def test_senet_requires_uniform_or_projection(self):
-        """Test that SENET raises error with variable embeddings and no projection."""
+        """Test that SENET raises error with non-uniform embeddings and no projection."""
         config = make_test_config(
-            use_variable_embeddings=True,
+            feature_embeddings={
+                'small': {'type': 'standard', 'dim': 8},
+                'large': {'type': 'standard', 'dim': 32},
+            },
             embedding_projection_dim=None,
             use_senet=True,
             use_feature_gating=False
         )
-        vocab_sizes = {'small': 5, 'large': 500}  # Different dims
+        vocab_sizes = {'small': 5, 'large': 500}
         
         with self.assertRaises(ValueError) as context:
             GatedDCNModel(vocab_sizes, ['small', 'large'], config)
         self.assertIn("SENET requires uniform embedding dimensions", str(context.exception))
     
-    def test_feature_embedding_overrides(self):
-        """Test per-feature embedding dimension overrides."""
-        config = make_test_config(
-            use_variable_embeddings=True,
-            feature_embedding_overrides={
-                'special': {'embedding_dim': 128}  # Override to 128
-            },
-            use_senet=False,
-            use_feature_gating=True
-        )
-        vocab_sizes = {'small': 5, 'special': 50}
-        model = GatedDCNModel(vocab_sizes, ['small', 'special'], config)
-        
-        # 'small' should use cardinality rules (8 dims for <= 10)
-        self.assertEqual(model.embeddings['small'].embedding_dim, 8)
-        # 'special' should use override (128 dims)
-        self.assertEqual(model.embeddings['special'].embedding_dim, 128)
-    
     def test_default_embedding_fallback(self):
-        """Test that high-cardinality features use default embedding_dim."""
+        """Test that features not in feature_embeddings use default embedding_dim."""
         config = make_test_config(
-            use_variable_embeddings=True,
-            embedding_dim=64,  # Default for high cardinality
-            embedding_dim_rules=[(10, 8), (100, 16)],  # No rule for > 100
+            embedding_dim=64,  # Default for unspecified features
+            feature_embeddings={
+                'specified': {'type': 'standard', 'dim': 16},
+            },
             use_senet=False
         )
-        vocab_sizes = {'small': 5, 'huge': 10000}  # 10000 > 100, uses default
-        model = GatedDCNModel(vocab_sizes, ['small', 'huge'], config)
+        vocab_sizes = {'specified': 5, 'unspecified': 100}
+        model = GatedDCNModel(vocab_sizes, ['specified', 'unspecified'], config)
         
-        self.assertEqual(model.embeddings['small'].embedding_dim, 8)
-        self.assertEqual(model.embeddings['huge'].embedding_dim, 64)  # Default
+        self.assertEqual(model.embeddings['specified'].embedding_dim, 16)
+        self.assertEqual(model.embeddings['unspecified'].embedding_dim, 64)  # Default
+    
+    def test_hash_embedding_aggregation_modes(self):
+        """Test that hash embedding aggregation modes work correctly."""
+        from src.models.layers.hash_embedding import HashEmbedding
+        
+        for mode in ['sum', 'concatenate', 'median']:
+            config = make_test_config(
+                feature_embeddings={
+                    'feat': {'type': 'hash', 'dim': 16, 'num_buckets': 50, 'aggregation_mode': mode},
+                },
+                use_senet=False,
+                use_feature_gating=True
+            )
+            vocab_sizes = {'feat': 100}
+            model = GatedDCNModel(vocab_sizes, ['feat'], config)
+            
+            # Verify embedding was created with correct mode
+            emb = model.embeddings['feat']
+            self.assertIsInstance(emb, HashEmbedding)
+            self.assertEqual(emb.aggregation_mode, mode)
+            
+            # Forward pass should work
+            x = torch.randint(0, 100, (4, 1))
+            out = model(x)
+            self.assertEqual(out['logits'].shape, (4, 1))
 
 
 if __name__ == "__main__":

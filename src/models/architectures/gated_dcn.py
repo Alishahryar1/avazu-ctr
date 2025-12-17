@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 
 from src.config.config import ConfigType
-from src.models.utils import compute_embedding_dim
+from src.models.utils import get_embedding
 from src.models.types import ModelOutput
 from src.models.architectures.base import BaseCTRModel
 from src.models.losses import FocalLoss
@@ -56,32 +56,17 @@ class GatedDCNModel(BaseCTRModel):
         self.use_feature_gating = use_feature_gating
         self.num_fields = len(feature_names)
         self.base_embedding_dim = embedding_dim  # Base/fallback dimension
-
-        # Track per-feature embedding dimensions for variable embeddings
-        use_variable_embeddings = config.get('use_variable_embeddings', False)
-        feature_overrides = config.get('feature_embedding_overrides', {})
         projection_dim = config.get('embedding_projection_dim', None)
 
-        # 1. Embedding Layer with variable dimensions per feature
+        # 1. Embedding Layer using get_embedding utility
         self.embeddings = nn.ModuleDict()
         self.feature_dims: dict[str, int] = {}  # Track dimension per feature
         total_embed_dim = 0
 
         for feat in feature_names:
-            # Check for manual override first
-            if feat in feature_overrides and 'embedding_dim' in feature_overrides[feat]:
-                feat_dim = feature_overrides[feat]['embedding_dim']
-            elif use_variable_embeddings:
-                # Compute dimension based on cardinality
-                feat_dim = compute_embedding_dim(vocab_sizes[feat], config)
-            else:
-                feat_dim = embedding_dim
-
-            self.feature_dims[feat] = feat_dim
-            emb = nn.Embedding(vocab_sizes[feat], feat_dim)
-            # Xavier initialization for embeddings
-            nn.init.xavier_uniform_(emb.weight)
+            emb, feat_dim = get_embedding(feat, vocab_sizes[feat], config)
             self.embeddings[feat] = emb
+            self.feature_dims[feat] = feat_dim
             total_embed_dim += feat_dim
 
         # Store dimensions for later use
@@ -98,21 +83,20 @@ class GatedDCNModel(BaseCTRModel):
             self.embedding_dim = projection_dim // self.num_fields
         else:
             working_dim = total_embed_dim
-            # For SENET compatibility: only works with uniform embeddings
-            # When variable embeddings without projection, SENET is disabled
-            self.embedding_dim = embedding_dim if not use_variable_embeddings else embedding_dim
+            # For SENET compatibility
+            self.embedding_dim = embedding_dim
 
         # Layer norm after embeddings (before or after projection)
         if use_layer_norm:
             self.embed_ln = nn.LayerNorm(working_dim)
 
-        # 3. SENET (Squeeze-and-Excitation) - Optional
-        # Note: SENET requires uniform embedding dimensions per field
         if use_senet:
-            if use_variable_embeddings and not self.use_projection:
+            # SENET requires uniform embedding dimensions - check if all dims are the same
+            unique_dims = set(self.feature_dims.values())
+            if len(unique_dims) > 1 and not self.use_projection:
                 raise ValueError(
                     "SENET requires uniform embedding dimensions. "
-                    "Either disable 'use_variable_embeddings', enable 'embedding_projection_dim', "
+                    "Either use 'embedding_projection_dim' or ensure all features have same 'dim', "
                     "or disable 'use_senet'."
                 )
             senet_embed_dim = self.embedding_dim if self.embedding_dim else embedding_dim

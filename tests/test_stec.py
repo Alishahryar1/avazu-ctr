@@ -102,7 +102,6 @@ class TestSTECModel(unittest.TestCase):
             stec_use_ffn=True,
             stec_mlp_hidden_dims=[32, 16],
             embedding_projection_dim=16,  # Must be divisible by num_heads (4)
-            feature_embedding_overrides={}
         )
     
     def test_model_instantiation(self):
@@ -121,11 +120,14 @@ class TestSTECModel(unittest.TestCase):
         out = model(x)
         self.assertEqual(out['logits'].shape, (batch_size, 1))
     
-    def test_variable_embeddings_adaptation(self):
-        """Test model handles variable embeddings by projecting."""
+    def test_different_embedding_dims_adaptation(self):
+        """Test model handles different embedding dimensions by projecting."""
         config = make_test_config(
-            use_variable_embeddings=True,
             embedding_dim=16,
+            feature_embeddings={
+                'small': {'type': 'standard', 'dim': 8},
+                'large': {'type': 'standard', 'dim': 32},
+            },
             stec_num_heads=4,
             embedding_projection_dim=None  # Should force auto-adaptation
         )

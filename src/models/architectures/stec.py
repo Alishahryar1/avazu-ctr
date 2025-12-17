@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 
 from src.config.config import ConfigType
-from src.models.utils import compute_embedding_dim
+from src.models.utils import get_embedding
 from src.models.types import ModelOutput
 from src.models.architectures.base import BaseCTRModel
 from src.models.losses import FocalLoss
@@ -63,29 +63,17 @@ class STECModel(BaseCTRModel):
         
         self.stec_num_layers = stec_num_layers
         self.stec_num_heads = stec_num_heads
-        
-        # Variable embeddings support
-        use_variable_embeddings = config.get('use_variable_embeddings', False)
-        feature_overrides = config.get('feature_embedding_overrides', {})
         projection_dim = config.get('embedding_projection_dim', None)
         
-        # 1. Embedding Layer
+        # 1. Embedding Layer using get_embedding utility
         self.embeddings = nn.ModuleDict()
         self.feature_dims: dict[str, int] = {}
         total_embed_dim = 0
         
         for feat in feature_names:
-            if feat in feature_overrides and 'embedding_dim' in feature_overrides[feat]:
-                feat_dim = feature_overrides[feat]['embedding_dim']
-            elif use_variable_embeddings:
-                feat_dim = compute_embedding_dim(vocab_sizes[feat], config)
-            else:
-                feat_dim = embedding_dim
-            
-            self.feature_dims[feat] = feat_dim
-            emb = nn.Embedding(vocab_sizes[feat], feat_dim)
-            nn.init.xavier_uniform_(emb.weight)
+            emb, feat_dim = get_embedding(feat, vocab_sizes[feat], config)
             self.embeddings[feat] = emb
+            self.feature_dims[feat] = feat_dim
             total_embed_dim += feat_dim
         
         self.total_embed_dim = total_embed_dim
@@ -93,27 +81,27 @@ class STECModel(BaseCTRModel):
         self.projection = None
         
         # 2. Projection to uniform dimension (required for STEC attention)
-        # STEC requires uniform embedding dims for attention
-        if self.use_projection and projection_dim is not None:
+        # Check if we need projection (non-uniform dims or explicit projection)
+        unique_dims = set(self.feature_dims.values())
+        needs_projection = len(unique_dims) > 1 or projection_dim is not None
+        
+        if projection_dim is not None:
             self.projection = nn.Linear(total_embed_dim, projection_dim)
             nn.init.xavier_uniform_(self.projection.weight)
             nn.init.zeros_(self.projection.bias)
-            # working_dim per field after projection
+            self.use_projection = True
             assert projection_dim % self.num_fields == 0, \
                 f"projection_dim ({projection_dim}) must be divisible by num_fields ({self.num_fields})"
             self.embed_per_field = projection_dim // self.num_fields
+        elif needs_projection:
+            # Non-uniform embeddings without explicit projection - project to uniform
+            self.projection = nn.Linear(total_embed_dim, embedding_dim * self.num_fields)
+            nn.init.xavier_uniform_(self.projection.weight)
+            nn.init.zeros_(self.projection.bias)
+            self.use_projection = True
+            self.embed_per_field = embedding_dim
         else:
-            # Without projection, all embeddings must be same dim
-            if use_variable_embeddings:
-                # For variable embeddings without projection, use the base embedding_dim
-                # and add a projection layer
-                self.projection = nn.Linear(total_embed_dim, embedding_dim * self.num_fields)
-                nn.init.xavier_uniform_(self.projection.weight)
-                nn.init.zeros_(self.projection.bias)
-                self.use_projection = True
-                self.embed_per_field = embedding_dim
-            else:
-                self.embed_per_field = embedding_dim
+            self.embed_per_field = embedding_dim
         
         working_dim = self.embed_per_field * self.num_fields
         

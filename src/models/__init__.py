@@ -1,12 +1,12 @@
 """Models package for CTR prediction."""
-from src.models.utils import get_activation, compute_embedding_dim
-from src.models.layers import SENetLayer, FeatureGatingLayer, DCNv2, ResidualMLP, STECBlock, MultiHeadSTEC
+from src.models.utils import get_activation, get_embedding
+from src.models.layers import SENetLayer, FeatureGatingLayer, DCNv2, ResidualMLP, STECBlock, MultiHeadSTEC, HashEmbedding
 from src.models.architectures import GatedDCNModel, EnsembleModel, STECModel
 
 __all__ = [
     # Utils
     'get_activation',
-    'compute_embedding_dim',
+    'get_embedding',
     # Layers
     'SENetLayer',
     'FeatureGatingLayer',
@@ -14,6 +14,7 @@ __all__ = [
     'ResidualMLP',
     'STECBlock',
     'MultiHeadSTEC',
+    'HashEmbedding',
     # Architectures
     'GatedDCNModel',
     'EnsembleModel',

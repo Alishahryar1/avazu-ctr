@@ -19,28 +19,55 @@ def get_activation(name: str) -> nn.Module:
     return activations[name]
 
 
-def compute_embedding_dim(vocab_size: int, config: Mapping[str, Any]) -> int:
+def get_embedding(
+    feature_name: str,
+    vocab_size: int,
+    config: Mapping[str, Any],
+) -> tuple[nn.Module, int]:
     """
-    Compute optimal embedding dimension based on vocabulary size.
+    Create an embedding layer for a feature based on config.
 
-    Uses cardinality-based rules from config:
-    - Smaller vocabularies get smaller embedding dimensions
-    - Larger vocabularies get larger dimensions (more capacity needed)
+    Looks up the feature in config['feature_embeddings'] and creates either
+    a standard nn.Embedding or a HashEmbedding depending on the 'type' field.
+    Falls back to config['embedding_dim'] with type='standard' if feature not found.
 
     Args:
-        vocab_size: Number of unique values for this feature
-        config: Configuration dict containing embedding_dim_rules
+        feature_name: Name of the feature
+        vocab_size: Number of unique values (vocabulary size) for this feature
+        config: Configuration dictionary containing 'feature_embeddings' and 'embedding_dim'
 
     Returns:
-        Optimal embedding dimension for this vocabulary size
+        Tuple of (embedding_module, output_dim) where output_dim is the effective
+        embedding dimension (may differ from input dim for concatenate aggregation)
     """
-    if not config.get('use_variable_embeddings', False):
-        return config['embedding_dim']
+    from src.models.layers.hash_embedding import HashEmbedding
 
-    # Check cardinality rules (sorted ascending by max_vocab_size)
-    for max_vocab, embed_dim in config['embedding_dim_rules']:
-        if vocab_size <= max_vocab:
-            return embed_dim
+    feature_embeddings = config.get('feature_embeddings', {})
+    default_dim = config.get('embedding_dim', 16)
 
-    # Default to base embedding_dim for very large vocabularies
-    return config['embedding_dim']
+    # Get feature-specific config or use defaults
+    feat_config = feature_embeddings.get(feature_name, {})
+    embed_type = feat_config.get('type', 'standard')
+    embed_dim = feat_config.get('dim', default_dim)
+
+    if embed_type == 'hash':
+        # HashEmbedding with configurable parameters
+        num_buckets = feat_config.get('num_buckets', max(1, vocab_size // 10))
+        num_hashes = feat_config.get('num_hashes', 2)
+        aggregation_mode = feat_config.get('aggregation_mode', 'sum')
+
+        embedding = HashEmbedding(
+            num_embeddings=vocab_size,
+            embedding_dim=embed_dim,
+            num_buckets=num_buckets,
+            num_hashes=num_hashes,
+            aggregation_mode=aggregation_mode,
+        )
+        output_dim = embedding.output_dim
+    else:
+        # Standard nn.Embedding
+        embedding = nn.Embedding(vocab_size, embed_dim)
+        nn.init.xavier_uniform_(embedding.weight)
+        output_dim = embed_dim
+
+    return embedding, output_dim
