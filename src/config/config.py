@@ -57,10 +57,15 @@ class STECConfig(TypedDict):
     stec_mlp_hidden_dims: list[int]
 
 
+# EnsembleConfig must be defined before ModelConfig since ModelConfig references it
 class EnsembleConfig(TypedDict):
-    ensemble_k: int  # Number of models in ensemble
+    models: list  # List of ModelConfig (GatedDCNConfig | STECConfig | EnsembleConfig)
     ensemble_aggregation: str  # Aggregation method: 'mean' or 'median'
- 
+
+
+# Type alias for any model configuration
+ModelConfig = Union[GatedDCNConfig, EnsembleConfig, STECConfig]
+
 
 class ConfigType(TypedDict):
     # General
@@ -80,7 +85,7 @@ class ConfigType(TypedDict):
     embedding_projection_dim: int | None  # None = no projection
     
     # Model
-    model: Union[GatedDCNConfig, EnsembleConfig, STECConfig]
+    model: ModelConfig
     
     # Training
     lr: float

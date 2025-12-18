@@ -2,26 +2,68 @@
 import torch
 import torch.nn as nn
 
-from src.config.config import ConfigType
+from src.config.config import ConfigType, ModelConfig
 from src.models.types import ModelOutput
 from src.models.architectures.base import BaseCTRModel
-from src.models.architectures.gated_dcn import GatedDCNModel
 from src.models.losses import KBCELoss
+
+
+def _create_model_from_config(
+    model_config: ModelConfig,
+    vocab_sizes: dict[str, int],
+    feature_names: list[str],
+    parent_config: ConfigType,
+    seed: int
+) -> BaseCTRModel:
+    """
+    Factory function to create a model from a ModelConfig.
+    
+    Args:
+        model_config: The model-specific config (GatedDCNConfig, STECConfig, or EnsembleConfig)
+        vocab_sizes: Feature vocabulary sizes
+        feature_names: List of feature names
+        parent_config: The parent ConfigType for global settings (embedding_dim, etc.)
+        seed: Random seed for this model's initialization
+        
+    Returns:
+        Instantiated model
+    """
+    # Import here to avoid circular imports
+    from src.models.architectures.gated_dcn import GatedDCNModel
+    from src.models.architectures.stec import STECModel
+    
+    # Set seed for reproducible initialization
+    torch.manual_seed(seed)
+    
+    # Create a full config by combining parent config with model-specific config
+    full_config: ConfigType = {**parent_config, 'model': model_config}  # type: ignore
+    
+    # Detect model type by checking for unique keys
+    if 'models' in model_config:
+        # EnsembleConfig - recursive!
+        return EnsembleModel(vocab_sizes, feature_names, full_config, base_seed=seed)
+    elif 'stec_num_layers' in model_config:
+        # STECConfig
+        return STECModel(vocab_sizes, feature_names, full_config)
+    elif 'use_dcn' in model_config:
+        # GatedDCNConfig
+        return GatedDCNModel(vocab_sizes, feature_names, full_config)
+    else:
+        raise ValueError(f"Unknown model config type. Keys: {model_config.keys()}")
 
 
 class EnsembleModel(BaseCTRModel):
     """
-    Ensemble of k identical GatedDCNModel instances.
+    Ensemble of heterogeneous models for CTR prediction.
 
-    Each model is initialized with a different random seed for diversity.
-    During inference, predictions are averaged across all models.
-    During training, each model can be trained independently or jointly.
+    Supports any combination of GatedDCNModel, STECModel, or nested EnsembleModel.
+    Each model in the ensemble can have different architectures.
+    During inference, predictions are aggregated across all models.
 
     Args:
         vocab_sizes: Dictionary mapping feature names to vocabulary sizes.
         feature_names: List of feature names in order.
-        config: Configuration dictionary with model hyperparameters.
-        k: Number of models in the ensemble (default from config['ensemble_k']).
+        config: Configuration dictionary with `model.models` list of model configs.
         base_seed: Base seed for reproducibility. Model i uses seed = base_seed + i.
     """
     def __init__(
@@ -29,21 +71,32 @@ class EnsembleModel(BaseCTRModel):
         vocab_sizes: dict[str, int],
         feature_names: list[str],
         config: ConfigType,
-        k: int | None = None,
         base_seed: int | None = None
     ):
         super().__init__()
-        # Get ensemble size from config or use provided k
-        self.k: int = k if k is not None else config['model']['ensemble_k']
+        model_config = config['model']
+        
+        # Get ensemble settings
         self.base_seed: int = base_seed if base_seed is not None else config['seed']
-        self.ensemble_aggregation: str = config['model']['ensemble_aggregation']
+        self.ensemble_aggregation: str = model_config['ensemble_aggregation']
+        
+        # Get list of model configs
+        model_configs: list[ModelConfig] = model_config['models']
+        self.k: int = len(model_configs)
+        
+        if self.k == 0:
+            raise ValueError("Ensemble must have at least one model in 'models' list")
 
-        # Create k models with different random initializations
+        # Create models from configs with different seeds
         self.models = nn.ModuleList()
-        for i in range(self.k):
-            # Set unique seed for each model's initialization
-            torch.manual_seed(self.base_seed + i)
-            model = GatedDCNModel(vocab_sizes, feature_names, config)
+        for i, sub_model_config in enumerate(model_configs):
+            model = _create_model_from_config(
+                model_config=sub_model_config,
+                vocab_sizes=vocab_sizes,
+                feature_names=feature_names,
+                parent_config=config,
+                seed=self.base_seed + i
+            )
             self.models.append(model)
 
         # Reset to base seed after initialization
@@ -111,12 +164,11 @@ class EnsembleModel(BaseCTRModel):
             raise ValueError(f"model_idx must be in range [0, {self.k-1}], got {model_idx}")
         return self.models[model_idx](x)
 
-    def get_model(self, idx: int) -> GatedDCNModel:
+    def get_model(self, idx: int) -> BaseCTRModel:
         """Get a specific model from the ensemble."""
-        model = self.models[idx]
-        assert isinstance(model, GatedDCNModel)
-        return model
+        return self.models[idx]  # type: ignore
 
     def num_models(self) -> int:
         """Return the number of models in the ensemble."""
         return self.k
+
