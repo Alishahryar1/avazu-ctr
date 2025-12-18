@@ -6,6 +6,7 @@ from src.config.config import ConfigType, ModelConfig
 from src.models.types import ModelOutput
 from src.models.architectures.base import BaseCTRModel
 from src.models.losses import KBCELoss
+from src.models.layers import GatingNetwork
 
 
 def _create_model_from_config(
@@ -105,6 +106,14 @@ class EnsembleModel(BaseCTRModel):
         # Internal loss for multi-branch architecture
         self._kbce_loss = KBCELoss()
 
+        if self.ensemble_aggregation == 'moe':
+            self.gate = GatingNetwork(
+                vocab_sizes=vocab_sizes,
+                feature_names=feature_names,
+                num_experts=self.k,
+                embedding_dim=4 # Lightweight
+            )
+
     def forward(self, x: torch.Tensor) -> ModelOutput:
         """
         Forward pass through all models in the ensemble.
@@ -131,6 +140,18 @@ class EnsembleModel(BaseCTRModel):
             aggregated = stacked_logits.mean(dim=0)
         elif self.ensemble_aggregation == 'median':
             aggregated = stacked_logits.median(dim=0).values
+        elif self.ensemble_aggregation == 'moe':
+            # 1. Get weights from Gate: [Batch, K]
+            gate_weights = self.gate(x)
+            
+            # 2. Reshape for broadcasting
+            # We need weights to be [K, Batch, 1] to match stacked_logits
+            # Permute [Batch, K] -> [K, Batch] -> [K, Batch, 1]
+            gate_weights = gate_weights.permute(1, 0).unsqueeze(-1)
+            
+            # 3. Weighted Sum
+            # sum([K, B, 1] * [K, B, 1]) -> [B, 1]
+            aggregated = (stacked_logits * gate_weights).sum(dim=0)
         else:
             raise ValueError(f"Unknown aggregation method: {self.ensemble_aggregation}")
 

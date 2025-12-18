@@ -268,7 +268,7 @@ CONFIG: ConfigType = {
                         "dcn_use_layernorm": True,
                         "dcn_low_rank": 32,
                         "use_senet": True,
-                        "senet_squeeze_funcs": ["mean", "max", "min", "std", "norm"],
+                        "senet_squeeze_funcs": ["mean", "max", "min"],
                         "senet_reduction_ratio": 3,
                         "senet_hidden_activation": "gelu",
                         "senet_excitation_activation": "tanh",
@@ -288,10 +288,10 @@ CONFIG: ConfigType = {
                         "label_smoothing": 0.0,
                     },
                 ],
-                "ensemble_aggregation": "mean",
+                "ensemble_aggregation": "moe",
             },
         ],
-        "ensemble_aggregation": "mean",
+        "ensemble_aggregation": "moe",
     },
     
     # === Training ===
