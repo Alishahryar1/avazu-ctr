@@ -134,9 +134,12 @@ class SENetLayer(nn.Module):
         num_squeeze_funcs = len(self.squeeze_funcs)
         device = embeddings[0].device
 
+        # Flatten all embeddings upfront: [Batch, Total_Dim]
+        flat_emb = torch.cat(embeddings, dim=1)
+        total_dim = flat_emb.size(1)
+
         # === SQUEEZE PHASE ===
         # With groups: each embedding [B, D] -> [B, G, D/G] -> squeeze each group -> [B, G]
-        # Total squeeze output per field: G * num_squeeze_funcs
         # squeeze_results[func_idx][field_idx] = [Batch, num_groups] tensor
         squeeze_results: list[list[torch.Tensor | None]] = [
             [None] * self.num_fields for _ in range(num_squeeze_funcs)
@@ -175,28 +178,25 @@ class SENetLayer(nn.Module):
         # Learn importance weights: [Batch, Num_Fields] or [Batch, Total_Dim]
         weights = self.excitation(squeeze_concat)
 
-        # === REWEIGHT PHASE ===
-        concat_emb = torch.cat(embeddings, dim=1)  # [Batch, Total_Dim]
-
+        # === REWEIGHT PHASE (on flattened tensor) ===
         if self.reweight_mode == "feature":
             # Expand field weights to element weights
             dims_tensor = torch.tensor(self.feature_dims, device=device)
             expanded_weights = weights.repeat_interleave(dims_tensor, dim=1)  # [Batch, Total_Dim]
-            reweighted_concat = concat_emb * expanded_weights
+            output = flat_emb * expanded_weights
         else:  # element
             # Weights are already per-element
-            reweighted_concat = concat_emb * weights
+            output = flat_emb * weights
 
-        # Split back to list
-        reweighted = list(reweighted_concat.split(self.feature_dims, dim=1))
-
-        # === FUSE PHASE (optional) ===
+        # === FUSE PHASE (on flattened tensor) ===
         if self.use_fuse:
-            reweighted = [emb + reweighted[i] for i, emb in enumerate(embeddings)]
+            output = flat_emb + output  # residual: original + reweighted
 
-        # === LAYER NORM PHASE (optional) ===
+        # === LAYER NORM PHASE (on flattened tensor) ===
         if self.use_layer_norm and self.layer_norms is not None:
-            reweighted = [self.layer_norms[i](emb) for i, emb in enumerate(reweighted)]
+            # Split, apply per-field LayerNorm, and concat back
+            split_output = output.split(self.feature_dims, dim=1)
+            output = torch.cat([self.layer_norms[i](emb) for i, emb in enumerate(split_output)], dim=1)
 
-        return reweighted
-
+        # Split to list only at the very end
+        return list(output.split(self.feature_dims, dim=1))
