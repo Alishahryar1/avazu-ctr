@@ -915,23 +915,27 @@ def apply_transforms_lazy(
 # =============================================================================
 def process_data_polars() -> tuple[dict, list, int, int]:
     """
-    Main data processing pipeline using Two-Pass Hybrid approach.
+    Main data processing pipeline using Two-Pass Hybrid approach with MERGED train+test.
     
-    This approach breaks the circular dependency that prevents sink_parquet:
-    - Pass 1: Materialize statistics (counts, hourly, vocabs) into small in-memory tables
-    - Pass 2: Stream data through joins against static tables, then sink to parquet
+    This approach maximizes test scores by computing all statistics from the combined
+    train+test dataset, ensuring no unseen values in test data.
+    
+    - Pass 1: Merge train+test, materialize statistics from combined data
+    - Pass 2: Stream combined data through joins, then split back and sink to parquet
     
     Phases:
-    PASS 1 (Stats Materialization):
-    1. Define base LazyFrame with all features
-    2. Collect counts/hourly stats (small tables, safe to materialize)
-    3. Apply stats, compute bins, then collect vocabularies
+    PASS 1 (Stats Materialization from COMBINED data):
+    1. Merge train and test with a source marker column
+    2. Define base LazyFrame with all features on combined data
+    3. Collect counts/hourly stats from combined (maximizes coverage)
+    4. Apply stats, compute bins, then collect vocabularies from combined
     
-    PASS 2 (Streamable Sink):
-    4. Fresh scan with base features
-    5. Apply all transforms via joins against static (in-memory) stats
-    6. Sink directly to parquet (fully streamable now)
-    7. Recover metadata from written parquet
+    PASS 2 (Streamable Sink with Split):
+    5. Fresh scan of combined data with base features
+    6. Apply all transforms via joins against static (in-memory) stats
+    7. Split back into train/test using source marker
+    8. Sink directly to parquet
+    9. Recover metadata
     
     Output files are saved to CONFIG['processed_path']:
     - train.parquet: Training data with features and labels
@@ -945,14 +949,19 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         train_rows: Number of training rows
         test_rows: Number of test rows
     """
-    print("Loading data with Polars (Two-Pass Hybrid Pipeline)...")
+    print("Loading data with Polars (Two-Pass Hybrid Pipeline - MERGED train+test)...")
+    print("NOTE: Statistics computed from combined train+test for maximum coverage")
 
     # =========================================================================
     # Helper: Get base LazyFrame with all features (shared by both passes)
     # =========================================================================
-    def get_base_lf(path: str) -> pl.LazyFrame:
+    def get_base_lf(path: str, source_marker: str | None = None) -> pl.LazyFrame:
         """Defines the lazy graph up to the window features."""
         lf = pl.scan_csv(path, schema_overrides=SCHEMA)
+        
+        # Add source marker if provided (for splitting later)
+        if source_marker:
+            lf = lf.with_columns(pl.lit(source_marker).alias("_source"))
         
         # Base Expressions
         base_exprs = [
@@ -970,6 +979,12 @@ def process_data_polars() -> tuple[dict, list, int, int]:
             get_prev_clicks_expression("user_proxy"),
         ]
         return lf.with_columns(window_exprs).drop("_timestamp")
+    
+    def get_combined_base_lf() -> pl.LazyFrame:
+        """Get merged train+test LazyFrame with source markers."""
+        lf_train = get_base_lf(CONFIG['train_path'], source_marker="train")
+        lf_test = get_base_lf(CONFIG['test_path'], source_marker="test")
+        return pl.concat([lf_train, lf_test], how="diagonal")
 
     # Define final categorical columns list
     count_bin_cols = [f"{col}_count_bin" for col in COUNT_FEATURE_COLS]
@@ -987,16 +1002,16 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     print(f"Total categorical features: {len(final_cat_cols)}")
 
     # =========================================================================
-    # PASS 1: Collect Statistics (Materialize Metadata Only)
+    # PASS 1: Collect Statistics from COMBINED train+test
     # =========================================================================
-    print("\n--- PASS 1: Statistics Collection ---")
+    print("\n--- PASS 1: Statistics Collection (from COMBINED train+test) ---")
     
-    # Initialize base LazyFrame for train
-    lf_train_base = get_base_lf(CONFIG['train_path'])
+    # Initialize base LazyFrame for COMBINED data
+    lf_combined_base = get_combined_base_lf()
     
-    # 1.1 Collect Counts & Hourly (no vocab yet)
+    # 1.1 Collect Counts & Hourly from COMBINED (no vocab yet)
     hourly_lf, count_lfs, _ = collect_stats_pass(
-        lf_train_base, 
+        lf_combined_base, 
         COUNT_FEATURE_COLS, 
         [],  # No vocabs yet
         CONFIG['min_freq']
@@ -1004,11 +1019,11 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     
     # 1.2 Create temp LF for vocab collection (needs counts/hourly/bins applied)
     lf_temp_vocab = apply_transforms_lazy(
-        lf_train_base, hourly_lf, count_lfs, {},
+        lf_combined_base, hourly_lf, count_lfs, {},
         COUNT_FEATURE_COLS, []  # No vocab mapping yet
     )
     
-    # 1.3 Collect Vocabularies from the binned features
+    # 1.3 Collect Vocabularies from the binned features (COMBINED data)
     _, _, vocab_lfs = collect_stats_pass(
         lf_temp_vocab, 
         [],  # No counts needed (already done)
@@ -1017,28 +1032,22 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     )
     
     # Clean up temp graph
-    del lf_temp_vocab, lf_train_base
+    del lf_temp_vocab, lf_combined_base
     gc.collect()
     
     print(f"  Collected stats for {len(count_lfs)} count features and {len(vocab_lfs)} vocabularies")
 
     # =========================================================================
-    # PASS 2: Final Transform & Sink (Streamable)
+    # PASS 2: Final Transform & Sink (with split back to train/test)
     # =========================================================================
-    print("\n--- PASS 2: Final Transform & Sink ---")
+    print("\n--- PASS 2: Final Transform & Sink (split back to train/test) ---")
     
     output_path = Path(CONFIG['processed_path'])
     output_path.mkdir(parents=True, exist_ok=True)
 
-    # Fresh scans for Pass 2
-    lf_train_final = apply_transforms_lazy(
-        get_base_lf(CONFIG['train_path']), 
-        hourly_lf, count_lfs, vocab_lfs,
-        COUNT_FEATURE_COLS, final_cat_cols
-    )
-    
-    lf_test_final = apply_transforms_lazy(
-        get_base_lf(CONFIG['test_path']), 
+    # Fresh scan of COMBINED data for Pass 2
+    lf_combined_final = apply_transforms_lazy(
+        get_combined_base_lf(),  # Fresh combined scan
         hourly_lf, count_lfs, vocab_lfs,
         COUNT_FEATURE_COLS, final_cat_cols
     )
@@ -1050,13 +1059,13 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     train_parquet = output_path / "train.parquet"
     test_parquet = output_path / "test.parquet"
 
-    # SINK TRAIN (now streamable - RHS of joins are static)
+    # SINK TRAIN (filter by source marker, then drop marker)
     print(f"  Sinking Train to {train_parquet}...")
-    lf_train_final.select(train_cols).sink_parquet(train_parquet)
+    lf_combined_final.filter(pl.col("_source") == "train").select(train_cols).sink_parquet(train_parquet)
 
-    # SINK TEST
+    # SINK TEST (filter by source marker, then drop marker)
     print(f"  Sinking Test to {test_parquet}...")
-    lf_test_final.select(test_cols).sink_parquet(test_parquet)
+    lf_combined_final.filter(pl.col("_source") == "test").select(test_cols).sink_parquet(test_parquet)
 
     # =========================================================================
     # Metadata Recovery
