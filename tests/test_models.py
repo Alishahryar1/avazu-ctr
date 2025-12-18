@@ -208,10 +208,11 @@ class TestModelWithProductionConfig(unittest.TestCase):
     
     @classmethod
     def setUpClass(cls):
-        """Set up model with production config."""
+        """Set up model with production config using factory function."""
+        from src.models.architectures import create_model
         cls.vocab_sizes = {'f1': 100, 'f2': 100}
         cls.feature_names = ['f1', 'f2']
-        cls.model = GatedDCNModel(cls.vocab_sizes, cls.feature_names, CONFIG)
+        cls.model = create_model(CONFIG, cls.vocab_sizes, cls.feature_names)
     
     def test_forward_pass_with_production_config(self):
         """Verify model works with production config."""
@@ -224,18 +225,20 @@ class TestModelWithProductionConfig(unittest.TestCase):
         
         self.assertEqual(output['logits'].shape, (batch_size, 1), "Output shape mismatch")
     
-    def test_production_config_dcn_layers(self):
-        """Verify DCN layers match production config (if enabled)."""
+    def test_production_config_model_type(self):
+        """Verify production config creates the expected model type."""
         model_config = CONFIG['model']
-        if not model_config['use_dcn']:
-            self.skipTest("DCN is disabled in production config")
         
-        expected_layers = model_config['dcn_num_layers']
-        if model_config['dcn_low_rank'] is not None:
-            actual_layers = len(self.model.dcn.U)
-        else:
-            actual_layers = len(self.model.dcn.W)
-        self.assertEqual(actual_layers, expected_layers)
+        # Check if ensemble or single model
+        if 'models' in model_config:
+            from src.models.architectures.ensemble import EnsembleModel
+            self.assertIsInstance(self.model, EnsembleModel)
+        elif 'stec_num_layers' in model_config:
+            from src.models.architectures.stec import STECModel
+            self.assertIsInstance(self.model, STECModel)
+        elif 'use_dcn' in model_config:
+            self.assertIsInstance(self.model, GatedDCNModel)
+
 
 class TestDCNv2LowRank(unittest.TestCase):
     """Tests for DCNv2 low-rank decomposition."""

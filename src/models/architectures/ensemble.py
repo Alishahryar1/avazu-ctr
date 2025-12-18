@@ -146,24 +146,25 @@ class EnsembleModel(BaseCTRModel):
         y_true: torch.Tensor
     ) -> torch.Tensor:
         """
-        Compute recursive loss for ensemble architecture.
-        
-        The total loss is the sum of:
-        1. This ensemble's K-BCE loss (combined loss + weighted branch losses)
-        2. Recursive losses from any nested ensembles
-        
-        This ensures every ensemble in the hierarchy contributes its own K-BCE loss.
+        Compute recursive loss.
         """
-        # 1. Compute this ensemble's K-BCE loss
-        total_loss = self._kbce_loss(output["logits"], output["aux_logits"], y_true)
+        # 1. Compute THIS ensemble's structural loss (Aggregated + Branches)
+        # This supervises the "glue" and forces branches to be predictive
+        current_level_loss = self._kbce_loss(output["logits"], output["aux_logits"], y_true)
         
-        # 2. Recursively add losses from nested ensembles
+        total_loss = current_level_loss
+        
+        # 2. Recursively add losses from children
+        # This captures:
+        #   a) Nested Ensemble structural losses
+        #   b) Leaf model internal losses (e.g., regularization, aux tasks)
         all_outputs = output.get("_outputs", [])
-        for i, (model, sub_output) in enumerate(zip(self.models, all_outputs)):
-            if isinstance(model, EnsembleModel):
-                # Recursive call for nested ensemble
-                nested_loss = model.compute_loss(sub_output, y_true)
-                total_loss = total_loss + nested_loss
+        
+        for model, sub_output in zip(self.models, all_outputs):
+            # Assuming BaseCTRModel has a compute_loss method
+            # If the model is a simple leaf with no internal loss, it returns 0
+            child_loss = model.compute_loss(sub_output, y_true)
+            total_loss = total_loss + child_loss
         
         return total_loss
 

@@ -31,8 +31,8 @@ def create_model(
     """
     model_config = config.get('model', {})
     
-    # Check for ensemble config (has 'ensemble_k' key)
-    if 'ensemble_k' in model_config:
+    # Check for ensemble config (has 'models' key)
+    if 'models' in model_config:
         return EnsembleModel(vocab_sizes, feature_names, config)
     # Check for STEC config (has 'stec_num_layers' key)
     elif 'stec_num_layers' in model_config:

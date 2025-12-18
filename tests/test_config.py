@@ -21,30 +21,35 @@ class TestConfig(unittest.TestCase):
         for key in top_level_keys:
             self.assertIn(key, CONFIG, f"Missing required top-level config key: {key}")
         
-        # Model-level keys (nested under 'model')
+        # Model key must exist
         self.assertIn('model', CONFIG, "Missing 'model' key in config")
-        model_keys = ['dcn_num_layers', 'mlp_hidden_dims', 'mlp_dropout']
         model_config = CONFIG['model']
-        for key in model_keys:
-            self.assertIn(key, model_config, f"Missing required model config key: {key}")
+        
+        # Check for ensemble or single model structure
+        if 'models' in model_config:
+            # Ensemble config
+            self.assertIn('ensemble_aggregation', model_config)
+            self.assertIsInstance(model_config['models'], list)
+            self.assertGreater(len(model_config['models']), 0, "Ensemble must have at least one model")
+        else:
+            # Single model config (GatedDCN or STEC)
+            # Should have either 'use_dcn' (GatedDCN) or 'stec_num_layers' (STEC)
+            has_model_keys = 'use_dcn' in model_config or 'stec_num_layers' in model_config
+            self.assertTrue(has_model_keys, "Model config must have identifying keys")
 
     def test_config_value_types(self):
-        """Verify config values have correct types."""
-        model_config = CONFIG['model']
+        """Verify top-level config values have correct types."""
         self.assertIsInstance(CONFIG['embedding_dim'], int)
-        self.assertIsInstance(model_config['dcn_num_layers'], int)
-        self.assertIsInstance(model_config['mlp_hidden_dims'], (list, tuple))
-        self.assertIsInstance(model_config['mlp_dropout'], float)
+        self.assertIsInstance(CONFIG['lr'], float)
+        self.assertIsInstance(CONFIG['batch_size'], int)
+        self.assertIsInstance(CONFIG['epochs'], int)
 
     def test_config_value_ranges(self):
         """Verify config values are in valid ranges."""
-        model_config = CONFIG['model']
         self.assertGreater(CONFIG['embedding_dim'], 0, "embedding_dim must be positive")
-        self.assertGreater(model_config['dcn_num_layers'], 0, "dcn_num_layers must be positive")
-        self.assertGreaterEqual(model_config['mlp_dropout'], 0.0, "mlp_dropout must be >= 0")
-        self.assertLess(model_config['mlp_dropout'], 1.0, "mlp_dropout must be < 1")
-        if model_config['dcn_low_rank'] is not None:
-            self.assertGreater(model_config['dcn_low_rank'], 0, "dcn_low_rank must be positive if set")
+        self.assertGreater(CONFIG['lr'], 0, "lr must be positive")
+        self.assertGreater(CONFIG['batch_size'], 0, "batch_size must be positive")
+        self.assertGreater(CONFIG['epochs'], 0, "epochs must be positive")
 
 
 class TestConfigExtended(unittest.TestCase):
@@ -98,16 +103,33 @@ class TestConfigExtended(unittest.TestCase):
         self.assertGreaterEqual(CONFIG['validation_split'], 0)  # 0 means validation disabled
         self.assertLess(CONFIG['validation_split'], 1)
 
-    def test_config_senet_and_gating_mutual_exclusivity(self):
-        """Verify SENET and feature gating are mutually exclusive in production config."""
+    def test_config_model_structure(self):
+        """Verify model config has valid structure."""
         model_config = CONFIG['model']
-        # This test checks production config doesn't violate the constraint
-        if model_config['use_senet'] and model_config['use_feature_gating']:
-            self.fail("Production config has both use_senet and use_feature_gating enabled")
-
-    def test_config_mlp_hidden_dims_not_empty(self):
-        """Verify MLP has at least one hidden layer."""
-        self.assertGreater(len(CONFIG['model']['mlp_hidden_dims']), 0)
+        
+        # If ensemble, check aggregation method
+        if 'models' in model_config:
+            self.assertIn(model_config['ensemble_aggregation'], ['mean', 'median'])
+        
+    def test_config_senet_and_gating_mutual_exclusivity(self):
+        """Verify SENET and feature gating are mutually exclusive in all GatedDCN configs."""
+        def check_gated_dcn_config(cfg: dict):
+            """Check single GatedDCN config for mutual exclusivity."""
+            if 'use_senet' in cfg and 'use_feature_gating' in cfg:
+                if cfg['use_senet'] and cfg['use_feature_gating']:
+                    self.fail("Config has both use_senet and use_feature_gating enabled")
+        
+        def check_model_configs(cfg: dict):
+            """Recursively check all model configs."""
+            if 'models' in cfg:
+                # Ensemble: check each sub-model
+                for sub_cfg in cfg['models']:
+                    check_model_configs(sub_cfg)
+            elif 'use_dcn' in cfg:
+                # GatedDCN config
+                check_gated_dcn_config(cfg)
+        
+        check_model_configs(CONFIG['model'])
 
     def test_config_feature_embeddings_valid(self):
         """Verify feature_embeddings has valid structure."""
@@ -118,6 +140,11 @@ class TestConfigExtended(unittest.TestCase):
             self.assertIn(config['type'], ['standard', 'hash'], f"feature {name} has invalid type")
             self.assertIn('dim', config, f"feature {name} missing 'dim'")
             self.assertGreater(config['dim'], 0, f"feature {name} has invalid dim")
+
+
+if __name__ == "__main__":
+    unittest.main(verbosity=2)
+
 
 
 if __name__ == "__main__":
