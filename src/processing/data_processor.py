@@ -915,27 +915,12 @@ def apply_transforms_lazy(
 # =============================================================================
 def process_data_polars() -> tuple[dict, list, int, int]:
     """
-    Main data processing pipeline using Two-Pass Hybrid approach with MERGED train+test.
+    Main data processing pipeline using Three-Step Materialization approach.
     
-    This approach maximizes test scores by computing all statistics from the combined
-    train+test dataset, ensuring no unseen values in test data.
-    
-    - Pass 1: Merge train+test, materialize statistics from combined data
-    - Pass 2: Stream combined data through joins, then split back and sink to parquet
-    
-    Phases:
-    PASS 1 (Stats Materialization from COMBINED data):
-    1. Merge train and test with a source marker column
-    2. Define base LazyFrame with all features on combined data
-    3. Collect counts/hourly stats from combined (maximizes coverage)
-    4. Apply stats, compute bins, then collect vocabularies from combined
-    
-    PASS 2 (Streamable Sink with Split):
-    5. Fresh scan of combined data with base features
-    6. Apply all transforms via joins against static (in-memory) stats
-    7. Split back into train/test using source marker
-    8. Sink directly to parquet
-    9. Recover metadata
+    This approach fixes the streaming blockade caused by sort/window functions:
+    - Step 1: Materialize foundation (sort + windows) to temp parquet
+    - Step 2: Collect statistics from foundation parquet
+    - Step 3: Stream joins and sink to final parquet (fully streamable)
     
     Output files are saved to CONFIG['processed_path']:
     - train.parquet: Training data with features and labels
@@ -949,42 +934,12 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         train_rows: Number of training rows
         test_rows: Number of test rows
     """
-    print("Loading data with Polars (Two-Pass Hybrid Pipeline - MERGED train+test)...")
+    print("Loading data with Polars (Three-Step Materialization Pipeline)...")
     print("NOTE: Statistics computed from combined train+test for maximum coverage")
 
-    # =========================================================================
-    # Helper: Get base LazyFrame with all features (shared by both passes)
-    # =========================================================================
-    def get_base_lf(path: str, source_marker: str | None = None) -> pl.LazyFrame:
-        """Defines the lazy graph up to the window features."""
-        lf = pl.scan_csv(path, schema_overrides=SCHEMA)
-        
-        # Add source marker if provided (for splitting later)
-        if source_marker:
-            lf = lf.with_columns(pl.lit(source_marker).alias("_source"))
-        
-        # Base Expressions
-        base_exprs = [
-            get_user_proxy_expression(),
-            *get_interaction_feature_expressions(),
-            *get_time_feature_expressions(),
-        ]
-        lf = lf.with_columns(base_exprs).sort("hour")
-        
-        # Window Expressions
-        lf = lf.with_columns(get_time_delta_expressions())
-        window_exprs = [
-            *get_cumulative_count_expressions(CUMCOUNT_COLS),
-            *get_time_delta_window_expressions(),
-            get_prev_clicks_expression("user_proxy"),
-        ]
-        return lf.with_columns(window_exprs).drop("_timestamp")
-    
-    def get_combined_base_lf() -> pl.LazyFrame:
-        """Get merged train+test LazyFrame with source markers."""
-        lf_train = get_base_lf(CONFIG['train_path'], source_marker="train")
-        lf_test = get_base_lf(CONFIG['test_path'], source_marker="test")
-        return pl.concat([lf_train, lf_test], how="diagonal")
+    output_path = Path(CONFIG['processed_path'])
+    output_path.mkdir(parents=True, exist_ok=True)
+    temp_base_path = output_path / "base_sorted_windowed.parquet"
 
     # Define final categorical columns list
     count_bin_cols = [f"{col}_count_bin" for col in COUNT_FEATURE_COLS]
@@ -1002,28 +957,77 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     print(f"Total categorical features: {len(final_cat_cols)}")
 
     # =========================================================================
-    # PASS 1: Collect Statistics from COMBINED train+test
+    # STEP 1: Materialize Foundation (Sort + Windows)
+    # This is the ONLY way to make the rest of the pipeline streamable.
+    # We use collect().write_parquet() since sort/window aren't streamable anyway.
     # =========================================================================
-    print("\n--- PASS 1: Statistics Collection (from COMBINED train+test) ---")
+    if not temp_base_path.exists():
+        print("\n--- STEP 1: Materializing Foundation (Sort + Windows) ---")
+        
+        # Scan train and test with source markers
+        lf_train = (
+            pl.scan_csv(CONFIG['train_path'], schema_overrides=SCHEMA)
+            .with_columns(pl.lit("train").alias("_source"))
+        )
+        lf_test = (
+            pl.scan_csv(CONFIG['test_path'], schema_overrides=SCHEMA)
+            .with_columns(pl.lit("test").alias("_source"))
+        )
+        
+        lf_combined = pl.concat([lf_train, lf_test], how="diagonal")
+        
+        # Apply the "Heavy" operations (base features + sort + windows)
+        lf_foundation = (
+            lf_combined
+            .with_columns([
+                get_user_proxy_expression(),
+                *get_interaction_feature_expressions(),
+                *get_time_feature_expressions(),
+            ])
+            .sort("hour")  # THE STREAMING BLOCKADE #1
+            .with_columns(get_time_delta_expressions())
+            .with_columns([
+                *get_cumulative_count_expressions(CUMCOUNT_COLS),  # THE STREAMING BLOCKADE #2
+                *get_time_delta_window_expressions(),
+                get_prev_clicks_expression("user_proxy"),
+            ])
+            .drop("_timestamp")
+        )
+        
+        # Materialize to disk - this "cuts" the lazy graph
+        print("  Collecting and writing foundation to parquet...")
+        lf_foundation.collect().write_parquet(temp_base_path)
+        print(f"  Foundation materialized to {temp_base_path}")
+        
+        del lf_foundation, lf_combined, lf_train, lf_test
+        gc.collect()
+    else:
+        print(f"\n--- STEP 1: Foundation already exists at {temp_base_path} ---")
+
+    # =========================================================================
+    # STEP 2: Pass 1 (Collect Stats from Foundation)
+    # Statistics are collected from the pre-sorted, pre-windowed parquet.
+    # =========================================================================
+    print("\n--- STEP 2: Pass 1 (Statistics Collection from Foundation) ---")
     
-    # Initialize base LazyFrame for COMBINED data
-    lf_combined_base = get_combined_base_lf()
+    lf_foundation_scan = pl.scan_parquet(temp_base_path)
     
-    # 1.1 Collect Counts & Hourly from COMBINED (no vocab yet)
+    # 2.1 Collect Counts & Hourly (no vocab yet)
     hourly_lf, count_lfs, _ = collect_stats_pass(
-        lf_combined_base, 
+        lf_foundation_scan, 
         COUNT_FEATURE_COLS, 
         [],  # No vocabs yet
         CONFIG['min_freq']
     )
     
-    # 1.2 Create temp LF for vocab collection (needs counts/hourly/bins applied)
+    # 2.2 Create temp LF for vocab collection (needs counts/hourly/bins applied)
     lf_temp_vocab = apply_transforms_lazy(
-        lf_combined_base, hourly_lf, count_lfs, {},
+        pl.scan_parquet(temp_base_path),  # Fresh scan
+        hourly_lf, count_lfs, {},
         COUNT_FEATURE_COLS, []  # No vocab mapping yet
     )
     
-    # 1.3 Collect Vocabularies from the binned features (COMBINED data)
+    # 2.3 Collect Vocabularies from the binned features
     _, _, vocab_lfs = collect_stats_pass(
         lf_temp_vocab, 
         [],  # No counts needed (already done)
@@ -1032,22 +1036,23 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     )
     
     # Clean up temp graph
-    del lf_temp_vocab, lf_combined_base
+    del lf_temp_vocab
     gc.collect()
     
     print(f"  Collected stats for {len(count_lfs)} count features and {len(vocab_lfs)} vocabularies")
 
     # =========================================================================
-    # PASS 2: Final Transform & Sink (with split back to train/test)
+    # STEP 3: Pass 2 (Streaming Sink)
+    # This graph is NOW FULLY STREAMABLE because:
+    # 1. The source is a Parquet file (already sorted)
+    # 2. There are no .over() or .sort() calls
+    # 3. The Joins are against in-memory DataFrames (from Step 2)
     # =========================================================================
-    print("\n--- PASS 2: Final Transform & Sink (split back to train/test) ---")
-    
-    output_path = Path(CONFIG['processed_path'])
-    output_path.mkdir(parents=True, exist_ok=True)
+    print("\n--- STEP 3: Pass 2 (Final Streaming Sink) ---")
 
-    # Fresh scan of COMBINED data for Pass 2
-    lf_combined_final = apply_transforms_lazy(
-        get_combined_base_lf(),  # Fresh combined scan
+    # Fresh scan of foundation for Pass 2
+    lf_final = apply_transforms_lazy(
+        pl.scan_parquet(temp_base_path),  # Already sorted, windows computed
         hourly_lf, count_lfs, vocab_lfs,
         COUNT_FEATURE_COLS, final_cat_cols
     )
@@ -1061,11 +1066,11 @@ def process_data_polars() -> tuple[dict, list, int, int]:
 
     # SINK TRAIN (filter by source marker, then drop marker)
     print(f"  Sinking Train to {train_parquet}...")
-    lf_combined_final.filter(pl.col("_source") == "train").select(train_cols).sink_parquet(train_parquet)
+    lf_final.filter(pl.col("_source") == "train").select(train_cols).sink_parquet(train_parquet)
 
     # SINK TEST (filter by source marker, then drop marker)
     print(f"  Sinking Test to {test_parquet}...")
-    lf_combined_final.filter(pl.col("_source") == "test").select(test_cols).sink_parquet(test_parquet)
+    lf_final.filter(pl.col("_source") == "test").select(test_cols).sink_parquet(test_parquet)
 
     # =========================================================================
     # Metadata Recovery
@@ -1093,6 +1098,9 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     print(f"\nProcessing complete!")
     print(f"  Train: {train_rows:,} rows -> {train_parquet}")
     print(f"  Test:  {test_rows:,} rows -> {test_parquet}")
+    
+    # Optional: Cleanup temp file (uncomment if desired)
+    # temp_base_path.unlink()
 
     return vocab_sizes, final_cat_cols, train_rows, test_rows
 
