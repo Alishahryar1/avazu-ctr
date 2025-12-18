@@ -47,8 +47,9 @@ class KBCELoss(nn.Module):
         total_loss = loss
         for y_branch in y_branches:
             loss_i = self.bce(y_branch, y_true)
+            gap = (loss_i - loss).detach()
             # Penalize branches that perform worse than combined
-            weight_i = (loss_i - loss).clamp(min=0)
+            weight_i = 0.1 + gap.clamp(min=0)
             total_loss = total_loss + loss_i * weight_i
         
         return total_loss
