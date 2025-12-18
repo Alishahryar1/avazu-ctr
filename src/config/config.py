@@ -186,19 +186,19 @@ CONFIG: ConfigType = {
     "dcn_low_rank": 64,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
     # === Model Architecture - SENET ===
-    "use_senet": False,  # Enable/disable SENET (Squeeze-and-Excitation) layer
+    "use_senet": True,  # Enable/disable SENET (Squeeze-and-Excitation) layer
     "senet_squeeze_funcs": ["mean", "max", "min"],  # Squeeze functions to combine
     "senet_reduction_ratio": 4,  # Reduction ratio for excitation bottleneck
-    "senet_hidden_activation": "relu",  # Bottleneck hidden layer activation
+    "senet_hidden_activation": "gelu",  # Bottleneck hidden layer activation
     "senet_excitation_activation": "sigmoid",  # Final excitation output: sigmoid, tanh, softmax
     
     # === Model Architecture - Feature Gating ===   
-    "use_feature_gating": True,  # Alternative to SENET (mutually exclusive)
+    "use_feature_gating": False,  # Alternative to SENET (mutually exclusive)
     "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
     "feature_gating_low_rank": 64,  # None = full-rank, int (e.g. 32) = low-rank decomposition
     
     # === Model Architecture - STEC ===
-    "use_stec": True,
+    "use_stec": False,
     "stec_num_layers": 4,
     "stec_num_heads": 4,
     "stec_hidden_dim": None,  # Defaults to 4 * embed_dim
@@ -213,8 +213,8 @@ CONFIG: ConfigType = {
     "use_layer_norm": True,
     
     # === Training ===
-    "lr": 1e-4,  # Lower initial LR for better convergence
-    "embedding_lr": 0.5,  # Higher LR for embeddings (Adagrad style)
+    "lr": 1e-3,  # Lower initial LR for better convergence
+    "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
     "optimizer_mode": "adamw_adagrad",  # Options: 'adamw_adagrad' or 'ftrl'
     "ftrl_alpha": 0.1,  # FTRL learning rate proportionality constant
     "ftrl_beta": 1.0,  # FTRL learning rate smoothing parameter
