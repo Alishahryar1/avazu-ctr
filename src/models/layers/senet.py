@@ -40,6 +40,8 @@ class SENetLayer(nn.Module):
         "mean": lambda t: t.mean(dim=-1),
         "max": lambda t: t.max(dim=-1).values,
         "min": lambda t: t.min(dim=-1).values,
+        "std": lambda t: t.std(dim=-1),
+        "norm": lambda t: t.norm(dim=-1),
     }
 
     def __init__(
