@@ -192,7 +192,7 @@ CONFIG: ConfigType = {
     # === Model Architecture - SENET ===
     "use_senet": True,  # Enable/disable SENET (Squeeze-and-Excitation) layer
     "senet_squeeze_funcs": ["mean", "max", "min"],  # Squeeze functions to combine
-    "senet_reduction_ratio": 4,  # Reduction ratio for excitation bottleneck
+    "senet_reduction_ratio": 3,  # Reduction ratio for excitation bottleneck
     "senet_hidden_activation": "gelu",  # Bottleneck hidden layer activation
     "senet_excitation_activation": "tanh",  # Final excitation output: sigmoid, tanh, softmax
     "senet_num_groups": 2,  # SENet+: 1 = no grouping (backward compatible)
@@ -221,8 +221,8 @@ CONFIG: ConfigType = {
     "use_layer_norm": True,
     
     # === Training ===
-    "lr": 1e-3,  # Lower initial LR for better convergence
-    "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
+    "lr": 1e-4,  # Lower initial LR for better convergence
+    "embedding_lr": 1e-1,  # Higher LR for embeddings (Adagrad style)
     "optimizer_mode": "adamw_adagrad",  # Options: 'adamw_adagrad' or 'ftrl'
     "ftrl_alpha": 0.1,  # FTRL learning rate proportionality constant
     "ftrl_beta": 1.0,  # FTRL learning rate smoothing parameter
