@@ -60,7 +60,11 @@ A state-of-the-art **Click-Through Rate (CTR)** prediction system for the [Avazu
   - Early stopping with validation monitoring
 
 - ⚡ **Performance Features**
-  - Ensemble models with mean/median aggregation
+  - **Heterogeneous Recursive Ensembles**
+    - Multi-level nested ensemble support
+    - Hybrid architectures (STEC, DCNv2, and MLP-only in one ensemble)
+    - Mean/Median aggregation at every level
+    - Recursive structural loss (K-BCE) for deep supervision
   - Model compilation with `torch.compile` (PyTorch 2.0+)
   - TensorBoard integration for real-time monitoring
   - Graceful interruption handling (save best model on Ctrl+C)
@@ -81,35 +85,31 @@ A state-of-the-art **Click-Through Rate (CTR)** prediction system for the [Avazu
 graph TB
     subgraph Input["Input Layer"]
         A[Categorical Features] --> B[Embedding Layer]
-        B --> C[Projection Layer<br/>(Uniform Dim)]
+        B --> C[Projection Layer]
     end
 
-    subgraph STEC["STEC Encoder"]
-        C --> D[STEC Layer 1]
-        D --> E[STEC Layer 2]
+    subgraph Ensemble["Recursive Ensemble Structure"]
+        C --> M1[STEC Branch]
+        C --> M2[GatedDCN Branch]
+        C --> M3[Inner Ensemble]
         
-        D -.->|Bilinear| F[Interaction Collection]
-        E -.->|Bilinear| F
-    
-        subgraph Layer["Inside STEC Layer"]
-            L1[Multi-Head Attention] --> L2[Group Bilinear]
-            L1 --> L3[Add & Norm] --> L4[FFN] --> L5[Add & Norm]
+        subgraph Inner["Nested Ensemble"]
+            C --> M3A[MLP Branch]
+            C --> M3B[SENet+DCN Branch]
+            M3A & M3B --> AGG_INNER[Inner Mean/Median]
         end
+        
+        M1 & M2 & AGG_INNER --> AGG_FINAL[Final Mean/Median]
     end
     
-    subgraph Final["Output Stage"]
-        C -.->|Final Bilinear| F
-        F --> G[Concat All Interactions]
-        G --> H[Residual MLP]
-        H --> I[Prediction Head]
-    end
+    AGG_FINAL --> OUT[CTR Prediction]
 
-    style A fill:#e1f5ff
-    style I fill:#d4edda
-    style D fill:#fff3cd
-    style E fill:#fff3cd
-    style F fill:#ffebee
-    style H fill:#f8d7da
+    style Ensemble fill:#f8f9fa,stroke:#dee2e6
+    style Inner fill:#e9ecef,stroke:#adb5bd
+    style M1 fill:#fff3cd
+    style M2 fill:#d1e7dd
+    style M3A fill:#cfe2ff
+    style M3B fill:#f8d7da
 ```
 
 ### Component Details
@@ -125,6 +125,7 @@ The system is highly modular. While STEC is default, you can enable/disable othe
 - **DCNv2**: Explicit high-order interactions (`use_dcn=True`)
 - **Feature Gating**: Element-wise filtering (`use_feature_gating=True`)
 - **SENet**: Field-wise importance (`use_senet=True`)
+- **Ensemble**: Combine multiple models recursively (`"models": [...]`)
 
 ---
 
@@ -212,19 +213,35 @@ All hyperparameters are managed in `src/config/config.py`. Key configuration cat
 ### Model Architecture
 
 ```python
-# STEC Architecture (Default)
-"use_stec": True,
-"stec_num_layers": 2,
-"stec_num_heads": 2,
-"stec_hidden_dim": None,        # Defaults to 4 * embed_dim
-"stec_dropout": 0.1,
-"stec_use_ffn": True,
-"stec_mlp_hidden_dims": [1024, 512],
-
-# Legacy/Alternative Architectures
-"use_dcn": False,               # Can be combined or used separately
-"use_feature_gating": False,
-"use_senet": False,
+# The model configuration is a unified structure supporting recursive ensembles
+"model": {
+    "models": [
+        # --- Model 1: GatedDCN ---
+        {
+            "use_dcn": True,
+            "dcn_num_layers": 3,
+            "use_feature_gating": True,
+            "mlp_hidden_dims": [512, 256],
+            ...
+        },
+        # --- Model 2: STEC ---
+        {
+            "stec_num_layers": 2,
+            "stec_num_heads": 4,
+            "stec_mlp_hidden_dims": [256, 128],
+            ...
+        },
+        # --- Model 3: Nested Ensemble ---
+        {
+            "models": [
+                { "use_dcn": False, "mlp_hidden_dims": [512, 256, 128], ... },
+                { "use_dcn": True, "use_senet": True, ... }
+            ],
+            "ensemble_aggregation": "mean"
+        }
+    ],
+    "ensemble_aggregation": "mean"
+}
 
 # Embedding Configuration
 "embedding_dim": 16,            # Default dimension
@@ -233,13 +250,6 @@ All hyperparameters are managed in `src/config/config.py`. Key configuration cat
     "user_id": {"type": "hash", "dim": 32, "num_buckets": 10000},
 },
 "embedding_projection_dim": None,
-
-# MLP Configuration
-"mlp_hidden_dims": [2048, 1024, 512],
-"mlp_activation": "gelu",
-"mlp_use_skip_connections": True,
-"mlp_dropout": 0.25,
-"use_layer_norm": True,
 ```
 
 ### Training Strategy
@@ -272,12 +282,15 @@ All hyperparameters are managed in `src/config/config.py`. Key configuration cat
 "amp_dtype": "float16",                 # or "bfloat16"
 ```
 
-### Ensemble Configuration
+### Optimization
 
 ```python
-"use_ensemble": True,
-"ensemble_k": 3,                        # Number of models
-"ensemble_aggregation": "mean",         # "mean" or "median"
+"lr": 1e-4,
+"embedding_lr": 0.01,
+"optimizer_mode": "adamw_adagrad",      # Hybrid optimizer
+"ftrl_alpha": 0.1,                      # Only used if mode="ftrl"
+"weight_decay": 1e-4,
+"grad_clip": 1.0,
 ```
 
 ### Path Configuration
