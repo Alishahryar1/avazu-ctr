@@ -133,6 +133,10 @@ class SENetLayer(nn.Module):
                     val = reshaped.amax(dim=-1)
                 elif func == 'min':
                     val = reshaped.amin(dim=-1)
+                elif func == 'std':
+                    val = reshaped.std(dim=-1)
+                elif func == 'norm':
+                    val = reshaped.norm(dim=-1)
                 else:
                     raise NotImplementedError(f"Opt func {func} not implemented")
                 squeezed_list.append(val.flatten(1))
