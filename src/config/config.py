@@ -48,6 +48,10 @@ class ConfigType(TypedDict):
     senet_reduction_ratio: int
     senet_hidden_activation: str  # Bottleneck hidden layer activation
     senet_excitation_activation: str  # Final excitation output activation
+    senet_num_groups: int  # SENet+: Number of groups for grouped squeeze (1 = no grouping)
+    senet_reweight_mode: str  # SENet+: 'feature' (one weight per field) or 'element' (weight per element)
+    senet_use_fuse: bool  # SENet+: Add original to reweighted (residual)
+    senet_use_layer_norm: bool  # SENet+: Apply LayerNorm after fuse
     use_feature_gating: bool  # Alternative to SENET (mutually exclusive)
     feature_gating_activation: str  # Options: sigmoid, tanh, relu, etc.
     feature_gating_low_rank: int | None  # None = full-rank, int = low-rank dimension
@@ -190,7 +194,11 @@ CONFIG: ConfigType = {
     "senet_squeeze_funcs": ["mean", "max", "min"],  # Squeeze functions to combine
     "senet_reduction_ratio": 4,  # Reduction ratio for excitation bottleneck
     "senet_hidden_activation": "gelu",  # Bottleneck hidden layer activation
-    "senet_excitation_activation": "sigmoid",  # Final excitation output: sigmoid, tanh, softmax
+    "senet_excitation_activation": "tanh",  # Final excitation output: sigmoid, tanh, softmax
+    "senet_num_groups": 2,  # SENet+: 1 = no grouping (backward compatible)
+    "senet_reweight_mode": "element",  # SENet+: 'feature' or 'element'
+    "senet_use_fuse": True,  # SENet+: residual connection
+    "senet_use_layer_norm": True,  # SENet+: layer norm after fuse
     
     # === Model Architecture - Feature Gating ===   
     "use_feature_gating": False,  # Alternative to SENET (mutually exclusive)
@@ -215,7 +223,7 @@ CONFIG: ConfigType = {
     # === Training ===
     "lr": 1e-3,  # Lower initial LR for better convergence
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
-    "optimizer_mode": "ftrl",  # Options: 'adamw_adagrad' or 'ftrl'
+    "optimizer_mode": "adamw_adagrad",  # Options: 'adamw_adagrad' or 'ftrl'
     "ftrl_alpha": 0.1,  # FTRL learning rate proportionality constant
     "ftrl_beta": 1.0,  # FTRL learning rate smoothing parameter
     "ftrl_l1": 2.0,  # FTRL L1 regularization (enables sparsity)
