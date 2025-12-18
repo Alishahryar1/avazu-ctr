@@ -234,7 +234,7 @@ CONFIG: ConfigType = {
     "compile_model": False,  # Enable torch.compile for faster training (requires PyTorch 2.0+)
     
     # === Ensemble ===
-    "use_ensemble": False,  # Enable ensemble of k identical models
+    "use_ensemble": True,  # Enable ensemble of k identical models
     "ensemble_k": 3,  # Number of models in ensemble
     "ensemble_aggregation": "mean",  # Aggregation method: 'mean' or 'median'
     
