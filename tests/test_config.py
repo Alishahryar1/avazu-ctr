@@ -109,7 +109,7 @@ class TestConfigExtended(unittest.TestCase):
         
         # If ensemble, check aggregation method
         if 'models' in model_config:
-            self.assertIn(model_config['ensemble_aggregation'], ['mean', 'median', 'moe'])
+            self.assertIn(model_config['ensemble_aggregation'], ['mean', 'median'])
         
     def test_config_senet_and_gating_mutual_exclusivity(self):
         """Verify SENET and feature gating are mutually exclusive in all GatedDCN configs."""
