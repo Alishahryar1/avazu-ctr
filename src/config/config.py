@@ -46,7 +46,8 @@ class ConfigType(TypedDict):
     use_senet: bool
     senet_squeeze_funcs: list[str]  # Options: 'mean', 'max' - can combine multiple
     senet_reduction_ratio: int
-    senet_activation: str
+    senet_hidden_activation: str  # Bottleneck hidden layer activation
+    senet_excitation_activation: str  # Final excitation output activation
     use_feature_gating: bool  # Alternative to SENET (mutually exclusive)
     feature_gating_activation: str  # Options: sigmoid, tanh, relu, etc.
     feature_gating_low_rank: int | None  # None = full-rank, int = low-rank dimension
@@ -188,7 +189,8 @@ CONFIG: ConfigType = {
     "use_senet": False,  # Enable/disable SENET (Squeeze-and-Excitation) layer
     "senet_squeeze_funcs": ["mean", "max", "min"],  # Squeeze functions to combine
     "senet_reduction_ratio": 4,  # Reduction ratio for excitation bottleneck
-    "senet_activation": "tanh",  # Options: sigmoid, tanh, relu, softmax
+    "senet_hidden_activation": "relu",  # Bottleneck hidden layer activation
+    "senet_excitation_activation": "sigmoid",  # Final excitation output: sigmoid, tanh, softmax
     
     # === Model Architecture - Feature Gating ===   
     "use_feature_gating": True,  # Alternative to SENET (mutually exclusive)

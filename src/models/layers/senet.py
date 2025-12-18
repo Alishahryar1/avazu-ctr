@@ -41,6 +41,7 @@ class SENetLayer(nn.Module):
         feature_dims: list[int] | int,
         squeeze_funcs: list[str] = ["mean"],
         reduction_ratio: int = 3,
+        hidden_activation: str = "relu",
         excitation_activation: str = "sigmoid"
     ):
         super().__init__()
@@ -74,7 +75,7 @@ class SENetLayer(nn.Module):
         reduced_dim = max(1, num_fields // reduction_ratio)
         self.excitation = nn.Sequential(
             nn.Linear(squeeze_output_dim, reduced_dim, bias=False),
-            nn.ReLU(),
+            get_activation(hidden_activation),
             nn.Linear(reduced_dim, num_fields, bias=False),
             get_activation(excitation_activation)
         )

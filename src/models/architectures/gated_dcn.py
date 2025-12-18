@@ -35,7 +35,8 @@ class GatedDCNModel(BaseCTRModel):
         use_senet = config['use_senet']
         senet_squeeze_funcs = config['senet_squeeze_funcs']
         senet_reduction_ratio = config['senet_reduction_ratio']
-        senet_activation = config['senet_activation']
+        senet_hidden_activation = config['senet_hidden_activation']
+        senet_excitation_activation = config['senet_excitation_activation']
         use_feature_gating = config['use_feature_gating']
         feature_gating_activation = config['feature_gating_activation']
         mlp_hidden_dims = config['mlp_hidden_dims']
@@ -102,7 +103,8 @@ class GatedDCNModel(BaseCTRModel):
                 feature_dims=senet_dims,
                 squeeze_funcs=senet_squeeze_funcs,
                 reduction_ratio=senet_reduction_ratio,
-                excitation_activation=senet_activation
+                hidden_activation=senet_hidden_activation,
+                excitation_activation=senet_excitation_activation
             )
 
         # 2b. Feature Gating Layer - Optional (alternative to SENET)
