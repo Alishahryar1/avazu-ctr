@@ -1,126 +1,14 @@
 import os
 import numpy as np
 import torch
-from typing import TypedDict, Literal, Union
-
-
-class FeatureEmbeddingConfig(TypedDict, total=False):
-    type: Literal['standard', 'hash']
-    dim: int
-    num_buckets: int  # Only for type='hash'
-    num_hashes: int  # Only for type='hash', default: 2
-    aggregation_mode: Literal['sum', 'concatenate', 'median']  # Only for type='hash', default: 'sum'
-
-
-class GatedDCNConfig(TypedDict):
-
-    # Model Architecture - DCN/Attention
-    use_dcn: bool
-    dcn_num_layers: int
-    dcn_use_layernorm: bool
-    dcn_low_rank: int | None  # None = full-rank, int = low-rank dimension
-    
-    # Model Architecture - SENET
-    use_senet: bool
-    senet_squeeze_funcs: list[str]  # Options: 'mean', 'max' - can combine multiple
-    senet_reduction_ratio: int
-    senet_hidden_activation: str  # Bottleneck hidden layer activation
-    senet_excitation_activation: str  # Final excitation output activation
-    senet_num_groups: int  # SENet+: Number of groups for grouped squeeze (1 = no grouping)
-    senet_reweight_mode: str  # SENet+: 'feature' (one weight per field) or 'element' (weight per element)
-    senet_use_fuse: bool  # SENet+: Add original to reweighted (residual)
-    senet_use_layer_norm: bool  # SENet+: Apply LayerNorm after fuse
-    
-    # Model Architecture - Feature Gating
-    use_feature_gating: bool  # Alternative to SENET (mutually exclusive)
-    feature_gating_activation: str  # Options: sigmoid, tanh, relu, etc.
-    feature_gating_low_rank: int | None  # None = full-rank, int = low-rank dimension
-    
-    # Model Architecture - MLP
-    mlp_hidden_dims: list[int]
-    mlp_activation: str
-    mlp_use_skip_connections: bool  # Add residual/skip connections to MLP layers
-    use_layer_norm: bool
-    
-    # Regularization
-    mlp_dropout: float
-    focal_loss_gamma: float
-    label_smoothing: float
-
-
-class STECConfig(TypedDict):
-    stec_num_layers: int
-    stec_num_heads: int
-    stec_hidden_dim: int | None  # Defaults to 4 * embed_dim
-    stec_dropout: float
-    stec_use_ffn: bool
-    stec_mlp_hidden_dims: list[int]
-
-
-# EnsembleConfig must be defined before ModelConfig since ModelConfig references it
-class EnsembleConfig(TypedDict):
-    models: list  # List of ModelConfig (GatedDCNConfig | STECConfig | EnsembleConfig)
-    ensemble_aggregation: str  # Aggregation method: 'mean' or 'median'
-
-
-# Type alias for any model configuration
-ModelConfig = Union[GatedDCNConfig, EnsembleConfig, STECConfig]
-
-
-class ConfigType(TypedDict):
-    # General
-    seed: int
-    device: str
-    
-    # Data Loading
-    batch_size: int
-    num_workers: int
-    min_freq: int
-    validation_split: float
-    shuffle_train: bool  # Shuffle training data (set False for time-sorted datasets)
-
-    # Embeddings
-    embedding_dim: int
-    feature_embeddings: dict[str, FeatureEmbeddingConfig]
-    embedding_projection_dim: int | None  # None = no projection
-    
-    # Model
-    model: ModelConfig
-    
-    # Training
-    lr: float
-    embedding_lr: float
-    optimizer_mode: str  # Options: 'adamw_adagrad' or 'ftrl'
-    ftrl_alpha: float  # FTRL learning rate proportionality constant
-    ftrl_beta: float  # FTRL learning rate smoothing parameter
-    ftrl_l1: float  # FTRL L1 regularization (sparsity)
-    ftrl_l2: float  # FTRL L2 regularization
-    epochs: int
-    lr_warmup_epoch_ratio: float
-    early_stopping_patience: int
-    use_tensorboard: bool
-    tensorboard_logdir: str
-    tensorboard_log_interval: int  # Log every N batches
-    
-    # Automatic Mixed Precision (AMP)
-    auto_amp: bool  # Enable automatic mixed precision for faster training
-    amp_dtype: str  # Options: 'float16' or 'bfloat16'
-    
-    # Model Compilation
-    compile_model: bool  # Enable torch.compile for faster training
-
-    # Regularization
-    lr_warmup_epoch_ratio: float 
-    grad_clip: float
-    weight_decay: float
-    embedding_weight_decay: float
-    
-    # Paths
-    train_path: str
-    test_path: str
-    sub_path: str
-    processed_path: str
-    models_path: str
+from .types import (
+    FeatureEmbeddingConfig,
+    GatedDCNConfig,
+    STECConfig,
+    EnsembleConfig,
+    ModelConfig,
+    ConfigType
+)
 
 
 # --- CONFIGURATION ---
