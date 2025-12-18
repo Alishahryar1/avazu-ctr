@@ -87,31 +87,39 @@ def make_test_config(**overrides) -> ConfigType:
         'model': model_config,
 
         # Training
-        'lr': 1e-3,
-        'embedding_lr': 1.0,
-        'optimizer_mode': 'adamw_adagrad',
-        'ftrl_alpha': 0.1,
-        'ftrl_beta': 1.0,
-        'ftrl_l1': 2.0,
-        'ftrl_l2': 1.0,
         'epochs': 1,
-        'lr_warmup_epoch_ratio': 0.1,
         'early_stopping_patience': 3,
+        'grad_clip': 1.0,
         'use_tensorboard': False,
         'tensorboard_logdir': './runs',
         'tensorboard_log_interval': 1000,
 
+        # Optimizer Configuration
+        'dense_optimizer': {
+            'type': 'adamw',
+            'lr': 1e-3,
+            'warmup_epoch_ratio': 0.1,
+            'weight_decay': 1e-4,
+            'betas': (0.9, 0.999),
+            'eps': 1e-8,
+        },
+        'embedding_optimizer': {
+            'type': 'adagrad',
+            'lr': 1.0,
+            'warmup_epoch_ratio': 0.0,
+            'weight_decay': 0.0,
+            'eps': 1e-10,
+            'lr_decay': 0.0,
+        },
+
         # Automatic Mixed Precision (AMP)
-        'auto_amp': False,  # Disabled for tests (CPU)
+        'auto_amp': True,  # Disabled for tests (CPU)
         'amp_dtype': 'float16',
         
         # Model Compilation
         'compile_model': False,
 
-        # Regularization
-        'grad_clip': 1.0,
-        'weight_decay': 1e-5,
-        'embedding_weight_decay': 0.0,
+        # Loss settings (for test config reference)
         'focal_loss_gamma': 2.0,
         'label_smoothing': 0.0,
 

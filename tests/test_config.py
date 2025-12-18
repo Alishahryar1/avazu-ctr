@@ -17,7 +17,7 @@ class TestConfig(unittest.TestCase):
     def test_required_keys_exist(self):
         """Verify all required config keys are present."""
         # Top-level keys
-        top_level_keys = ['embedding_dim', 'lr', 'batch_size', 'epochs']
+        top_level_keys = ['embedding_dim', 'batch_size', 'epochs', 'dense_optimizer', 'embedding_optimizer']
         for key in top_level_keys:
             self.assertIn(key, CONFIG, f"Missing required top-level config key: {key}")
         
@@ -40,14 +40,18 @@ class TestConfig(unittest.TestCase):
     def test_config_value_types(self):
         """Verify top-level config values have correct types."""
         self.assertIsInstance(CONFIG['embedding_dim'], int)
-        self.assertIsInstance(CONFIG['lr'], float)
+        self.assertIsInstance(CONFIG['dense_optimizer'], dict)
+        self.assertIsInstance(CONFIG['embedding_optimizer'], dict)
         self.assertIsInstance(CONFIG['batch_size'], int)
         self.assertIsInstance(CONFIG['epochs'], int)
 
     def test_config_value_ranges(self):
         """Verify config values are in valid ranges."""
         self.assertGreater(CONFIG['embedding_dim'], 0, "embedding_dim must be positive")
-        self.assertGreater(CONFIG['lr'], 0, "lr must be positive")
+        # Check lr in optimizer configs
+        dense_lr = CONFIG['dense_optimizer'].get('lr')
+        if dense_lr is not None:
+            self.assertGreater(dense_lr, 0, "dense optimizer lr must be positive")
         self.assertGreater(CONFIG['batch_size'], 0, "batch_size must be positive")
         self.assertGreater(CONFIG['epochs'], 0, "epochs must be positive")
 
@@ -95,8 +99,13 @@ class TestConfigExtended(unittest.TestCase):
         self.assertGreater(CONFIG['epochs'], 0)
 
     def test_config_lr_positive(self):
-        """Verify learning rate is positive."""
-        self.assertGreater(CONFIG['lr'], 0)
+        """Verify learning rates are positive."""
+        dense_lr = CONFIG['dense_optimizer'].get('lr')
+        if dense_lr is not None:
+            self.assertGreater(dense_lr, 0)
+        embed_lr = CONFIG['embedding_optimizer'].get('lr')
+        if embed_lr is not None:
+            self.assertGreater(embed_lr, 0)
 
     def test_config_validation_split_valid(self):
         """Verify validation_split is in valid range [0, 1)."""

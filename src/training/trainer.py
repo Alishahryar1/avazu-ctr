@@ -121,24 +121,54 @@ def train():
     # 4. Optimizer, Scheduler (loss is now handled by model internally)
     print("\nStep 4: Setting up Training Components...")
 
-    # Optimizer setup based on mode
-    use_ftrl = CONFIG['optimizer_mode'] == 'ftrl'
+    # Read optimizer configs
+    dense_opt_cfg = CONFIG['dense_optimizer']
+    embed_opt_cfg = CONFIG['embedding_optimizer']
+    dense_opt_type = str(dense_opt_cfg.get('type', 'adamw'))
+    embed_opt_type = str(embed_opt_cfg.get('type', 'adagrad'))
     
-    if use_ftrl:
-        # FTRL Proximal for ALL parameters
-        from src.training.optimizers import FTRLProximal
-        optimizer = FTRLProximal(
-            model.parameters(),
-            alpha=CONFIG['ftrl_alpha'],
-            beta=CONFIG['ftrl_beta'],
-            l1=CONFIG['ftrl_l1'],
-            l2=CONFIG['ftrl_l2'],
-        )
+    # Helper to create optimizer from config
+    def create_optimizer(params, opt_cfg):  # pyrefly: ignore
+        """Create optimizer based on config type."""
+        opt_type = opt_cfg.get('type', 'adamw')
+        if opt_type == 'ftrl':
+            from src.training.optimizers import FTRLProximal
+            return FTRLProximal(
+                params,
+                alpha=opt_cfg.get('alpha', 0.1),
+                beta=opt_cfg.get('beta', 1.0),
+                l1=opt_cfg.get('l1', 0.0),
+                l2=opt_cfg.get('l2', 0.0),
+            )
+        elif opt_type == 'adagrad':
+            return optim.Adagrad(
+                params,
+                lr=opt_cfg.get('lr', 1e-2),
+                weight_decay=opt_cfg.get('weight_decay', 0.0),
+                eps=opt_cfg.get('eps', 1e-10),
+                lr_decay=opt_cfg.get('lr_decay', 0.0),
+            )
+        else:  # adamw
+            return optim.AdamW(
+                params,
+                lr=opt_cfg.get('lr', 1e-4),
+                weight_decay=opt_cfg.get('weight_decay', 1e-4),
+                betas=opt_cfg.get('betas', (0.9, 0.999)),
+                eps=opt_cfg.get('eps', 1e-8),
+            )
+    
+    # Check if both optimizers are FTRL (single optimizer mode)
+    use_single_ftrl = dense_opt_type == 'ftrl' and embed_opt_type == 'ftrl'
+    
+    if use_single_ftrl:
+        # FTRL Proximal for ALL parameters (use dense config)
+        optimizer = create_optimizer(model.parameters(), dense_opt_cfg)
         embedding_optimizer = None
         other_optimizer = None
-        print(f"Optimizer: FTRL Proximal (alpha={CONFIG['ftrl_alpha']}, beta={CONFIG['ftrl_beta']}, l1={CONFIG['ftrl_l1']}, l2={CONFIG['ftrl_l2']})")
+        print(f"Optimizer: FTRL Proximal (alpha={dense_opt_cfg.get('alpha', 0.1)}, "
+              f"beta={dense_opt_cfg.get('beta', 1.0)}, l1={dense_opt_cfg.get('l1', 0.0)}, "
+              f"l2={dense_opt_cfg.get('l2', 0.0)})")
     else:
-        # AdamW + Adagrad mode (default)
         # Separate parameters for embeddings vs other layers
         embedding_params = []
         other_params = []
@@ -151,35 +181,30 @@ def train():
         print(f"Embedding parameters: {sum(p.numel() for p in embedding_params):,}")
         print(f"Other parameters: {sum(p.numel() for p in other_params):,}")
 
-        # Adagrad for embeddings (commonly used for sparse/categorical features)
-        embedding_optimizer = optim.Adagrad(
-            embedding_params,
-            lr=CONFIG['embedding_lr'],
-            weight_decay=CONFIG['embedding_weight_decay']
-        )
-        print(f"Embedding optimizer: Adagrad (lr={CONFIG['embedding_lr']}, weight_decay={CONFIG['embedding_weight_decay']})")
+        # Create embedding optimizer
+        embedding_optimizer = create_optimizer(embedding_params, embed_opt_cfg)
+        print(f"Embedding optimizer: {embed_opt_type.upper()} (lr={embed_opt_cfg.get('lr', 'N/A')}, "
+              f"weight_decay={embed_opt_cfg.get('weight_decay', 'N/A')})")
 
-        # AdamW for other parameters (MLP, DCN, etc.)
-        other_optimizer = optim.AdamW(
-            other_params,
-            lr=CONFIG['lr'],
-            weight_decay=CONFIG['weight_decay']
-        )
-        print(f"Other optimizer: AdamW (lr={CONFIG['lr']}, weight_decay={CONFIG['weight_decay']})")
+        # Create dense optimizer
+        other_optimizer = create_optimizer(other_params, dense_opt_cfg)
+        print(f"Dense optimizer: {dense_opt_type.upper()} (lr={dense_opt_cfg.get('lr', 'N/A')}, "
+              f"weight_decay={dense_opt_cfg.get('weight_decay', 'N/A')})")
         optimizer = None
 
-    # Learning rate scheduler (only for non-embedding params in adamw_adagrad mode)
+    # Learning rate scheduler (only for non-FTRL optimizers)
     steps_per_epoch = len(train_loader)
     total_steps = steps_per_epoch * CONFIG['epochs']
-    warmup_steps = int(steps_per_epoch * CONFIG['lr_warmup_epoch_ratio'])
+    dense_warmup_ratio = float(dense_opt_cfg.get('warmup_epoch_ratio', 0.0)) if dense_opt_type != 'ftrl' else 0.0
+    warmup_steps = int(steps_per_epoch * dense_warmup_ratio)
     
-    if not use_ftrl and other_optimizer is not None:
+    if not use_single_ftrl and other_optimizer is not None and dense_opt_type != 'ftrl':
         scheduler = LRSchedulerWithWarmup(
             other_optimizer,
             warmup_steps=warmup_steps,
             total_steps=total_steps
         )
-        print(f"LR warmup steps: {warmup_steps} ({CONFIG['lr_warmup_epoch_ratio']*100:.0f}% of {steps_per_epoch} steps)")
+        print(f"LR warmup steps: {warmup_steps} ({dense_warmup_ratio*100:.0f}% of {steps_per_epoch} steps)")
     else:
         scheduler = None
         print("LR scheduler disabled (FTRL mode uses per-coordinate learning rates)")
@@ -242,7 +267,7 @@ def train():
                 y_batch = y_batch.to(CONFIG['device']).unsqueeze(1)
 
                 # Zero gradients based on optimizer mode
-                if use_ftrl and optimizer is not None:
+                if use_single_ftrl and optimizer is not None:
                     optimizer.zero_grad()
                 else:
                     if embedding_optimizer is not None:
@@ -262,7 +287,7 @@ def train():
 
                     # Gradient clipping (unscale first for proper clipping)
                     if CONFIG['grad_clip'] > 0:
-                        if use_ftrl and optimizer is not None:
+                        if use_single_ftrl and optimizer is not None:
                             scaler.unscale_(optimizer)
                         else:
                             if embedding_optimizer is not None:
@@ -272,7 +297,7 @@ def train():
                         torch.nn.utils.clip_grad_norm_(model.parameters(), CONFIG['grad_clip'])
 
                     # Step optimizers
-                    if use_ftrl and optimizer is not None:
+                    if use_single_ftrl and optimizer is not None:
                         scaler.step(optimizer)
                     else:
                         if embedding_optimizer is not None:
@@ -288,7 +313,7 @@ def train():
                         torch.nn.utils.clip_grad_norm_(model.parameters(), CONFIG['grad_clip'])
 
                     # Step optimizers
-                    if use_ftrl and optimizer is not None:
+                    if use_single_ftrl and optimizer is not None:
                         optimizer.step()
                     else:
                         if embedding_optimizer is not None:
@@ -310,7 +335,7 @@ def train():
                         writer.add_scalar('LR/learning_rate', scheduler.get_lr(), global_step)
 
                 # Update progress bar
-                current_lr = scheduler.get_lr() if scheduler is not None else CONFIG['ftrl_alpha']
+                current_lr = scheduler.get_lr() if scheduler is not None else dense_opt_cfg.get('alpha', dense_opt_cfg.get('lr', 0.0))
                 pbar.set_postfix({
                     'loss': f"{loss.item():.4f}",
                     'lr': f"{current_lr:.2e}"
@@ -337,7 +362,7 @@ def train():
                 print(f"  Val Loss:   {val_loss:.5f}")
                 print(f"  Val AUC:    {val_auc:.5f}")
                 print(f"  Val LogLoss: {val_logloss:.5f}")
-                current_lr = scheduler.get_lr() if scheduler is not None else CONFIG['ftrl_alpha']
+                current_lr = scheduler.get_lr() if scheduler is not None else dense_opt_cfg.get('alpha', dense_opt_cfg.get('lr', 0.0))
                 print(f"  LR:         {current_lr:.2e}")
                 print(f"  Time:       {epoch_time:.0f}s")
                 print(f"{'='*80}\n")
@@ -355,9 +380,10 @@ def train():
                         'val_loss': val_loss,
                         'val_auc': val_auc,
                         'val_logloss': val_logloss,
-                        'optimizer_mode': CONFIG['optimizer_mode'],
+                        'dense_optimizer_type': dense_opt_type,
+                        'embedding_optimizer_type': embed_opt_type,
                     }
-                    if use_ftrl and optimizer is not None:
+                    if use_single_ftrl and optimizer is not None:
                         checkpoint['optimizer_state_dict'] = optimizer.state_dict()
                     else:
                         if embedding_optimizer is not None:
@@ -385,9 +411,10 @@ def train():
                     'val_loss': val_loss,
                     'val_auc': val_auc,
                     'val_logloss': val_logloss,
-                    'optimizer_mode': CONFIG['optimizer_mode'],
+                    'dense_optimizer_type': dense_opt_type,
+                    'embedding_optimizer_type': embed_opt_type,
                 }
-                if use_ftrl and optimizer is not None:
+                if use_single_ftrl and optimizer is not None:
                     checkpoint['optimizer_state_dict'] = optimizer.state_dict()
                 else:
                     if embedding_optimizer is not None:
@@ -397,7 +424,7 @@ def train():
                 torch.save(checkpoint, os.path.join(models_path, "best_model.pth"))
                 print(f"✓ New best model saved! (Val AUC: {val_auc:.5f})")
 
-                current_lr = scheduler.get_lr() if scheduler is not None else CONFIG['ftrl_alpha']
+                current_lr = scheduler.get_lr() if scheduler is not None else dense_opt_cfg.get('alpha', dense_opt_cfg.get('lr', 0.0))
                 print(f"\n{'='*80}")
                 print(f"Epoch {epoch+1}/{CONFIG['epochs']} Summary:")
                 print(f"  Train Loss: {avg_train_loss:.5f}")
@@ -430,9 +457,10 @@ def train():
         'val_loss': val_loss,
         'val_auc': val_auc,
         'val_logloss': val_logloss,
-        'optimizer_mode': CONFIG['optimizer_mode'],
+        'dense_optimizer_type': dense_opt_type,
+        'embedding_optimizer_type': embed_opt_type,
     }
-    if use_ftrl and optimizer is not None:
+    if use_single_ftrl and optimizer is not None:
         checkpoint['optimizer_state_dict'] = optimizer.state_dict()
     else:
         if embedding_optimizer is not None:

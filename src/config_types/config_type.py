@@ -1,6 +1,8 @@
 from typing import TypedDict
 from .feature_embedding_config import FeatureEmbeddingConfig
 from .model_config import ModelConfig
+from .optimizer_config import OptimizerConfig
+
 
 class ConfigType(TypedDict):
     # General
@@ -26,19 +28,16 @@ class ConfigType(TypedDict):
     model: ModelConfig
     
     # Training
-    lr: float
-    embedding_lr: float
-    optimizer_mode: str  # Options: 'adamw_adagrad' or 'ftrl'
-    ftrl_alpha: float  # FTRL learning rate proportionality constant
-    ftrl_beta: float  # FTRL learning rate smoothing parameter
-    ftrl_l1: float  # FTRL L1 regularization (sparsity)
-    ftrl_l2: float  # FTRL L2 regularization
     epochs: int
-    lr_warmup_epoch_ratio: float
     early_stopping_patience: int
+    grad_clip: float
     use_tensorboard: bool
     tensorboard_logdir: str
     tensorboard_log_interval: int  # Log every N batches
+    
+    # Optimizer Configuration
+    dense_optimizer: OptimizerConfig  # For MLP, DCN, and other dense parameters
+    embedding_optimizer: OptimizerConfig  # For embedding layers
     
     # Automatic Mixed Precision (AMP)
     auto_amp: bool  # Enable automatic mixed precision for faster training
@@ -46,12 +45,6 @@ class ConfigType(TypedDict):
     
     # Model Compilation
     compile_model: bool  # Enable torch.compile for faster training
-
-    # Regularization
-    lr_warmup_epoch_ratio: float 
-    grad_clip: float
-    weight_decay: float
-    embedding_weight_decay: float
     
     # Paths
     train_path: str

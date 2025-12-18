@@ -182,18 +182,44 @@ CONFIG: ConfigType = {
     },
     
     # === Training ===
-    "lr": 1e-4,  # Lower initial LR for better convergence
-    "embedding_lr": 1e-2,  # Higher LR for embeddings (Adagrad style)
-    "optimizer_mode": "adamw_adagrad",  # Options: 'adamw_adagrad' or 'ftrl'
-    "ftrl_alpha": 0.1,  # FTRL learning rate proportionality constant
-    "ftrl_beta": 1.0,  # FTRL learning rate smoothing parameter
-    "ftrl_l1": 2.0,  # FTRL L1 regularization (enables sparsity)
-    "ftrl_l2": 1.0,  # FTRL L2 regularization
     "epochs": 1,
     "early_stopping_patience": 50,
+    "grad_clip": 1.0,
     "use_tensorboard": True,
     "tensorboard_logdir": "./runs",
     "tensorboard_log_interval": 50,  # Log every N batches (reduces I/O overhead)
+    
+    # === Optimizer Configuration ===
+    # Dense optimizer: for MLP, DCN, and other dense parameters
+    # Options: "adamw", "adagrad", "ftrl"
+    "dense_optimizer": {
+        "type": "adamw",
+        "lr": 1e-4,
+        "warmup_epoch_ratio": 0.2,
+        "weight_decay": 1e-4,
+        # AdamW-specific params
+        "betas": (0.9, 0.999),
+        "eps": 1e-8,
+    },
+    # Embedding optimizer: for embedding layers (typically benefits from adaptive LR)
+    # Options: "adamw", "adagrad", "ftrl"
+    "embedding_optimizer": {
+        "type": "adagrad",
+        "lr": 1e-2,
+        "warmup_epoch_ratio": 0.0,
+        "weight_decay": 0.0,
+        # Adagrad-specific params
+        "eps": 1e-10,
+        "lr_decay": 0.0,
+    },
+    # FTRL config example (uncomment to use):
+    # "embedding_optimizer": {
+    #     "type": "ftrl",
+    #     "alpha": 0.1,  # Learning rate proportionality constant
+    #     "beta": 1.0,   # Learning rate smoothing parameter
+    #     "l1": 2.0,     # L1 regularization (enables sparsity)
+    #     "l2": 1.0,     # L2 regularization
+    # },
     
     # === Automatic Mixed Precision (AMP) ===
     "auto_amp": True,  # Enable AMP for faster training on CUDA (uses float16/bfloat16)
@@ -201,12 +227,6 @@ CONFIG: ConfigType = {
     
     # === Model Compilation ===
     "compile_model": False,  # Enable torch.compile for faster training (requires PyTorch 2.0+)
-    
-    # === Regularization ===
-    "lr_warmup_epoch_ratio": 0.2,
-    "grad_clip": 1.0,
-    "weight_decay": 1e-4,  # L2 regularization for MLP/DCN params
-    "embedding_weight_decay": 0.0,  # L2 regularization for embeddings (usually 0)
     
     # === Paths ===
     "train_path": "data/raw/train.gz",
