@@ -91,18 +91,15 @@ class GatedDCNModel(BaseCTRModel):
             self.embed_ln = nn.LayerNorm(working_dim)
 
         if use_senet:
-            # SENET requires uniform embedding dimensions - check if all dims are the same
-            unique_dims = set(self.feature_dims.values())
-            if len(unique_dims) > 1 and not self.use_projection:
-                raise ValueError(
-                    "SENET requires uniform embedding dimensions. "
-                    "Either use 'embedding_projection_dim' or ensure all features have same 'dim', "
-                    "or disable 'use_senet'."
-                )
-            senet_embed_dim = self.embedding_dim if self.embedding_dim else embedding_dim
+            # When projection is used, SENet operates on uniform-dimension splits
+            # When not used, SENet operates on variable-dimension embeddings
+            if self.use_projection and projection_dim is not None:
+                senet_dims = self.embedding_dim  # uniform dim = projection_dim // num_fields
+            else:
+                senet_dims = [self.feature_dims[f] for f in self.feature_names]  # maintain ordering
             self.senet = SENetLayer(
                 num_fields=self.num_fields,
-                embedding_dim=senet_embed_dim,
+                feature_dims=senet_dims,
                 squeeze_funcs=senet_squeeze_funcs,
                 reduction_ratio=senet_reduction_ratio,
                 excitation_activation=senet_activation
@@ -162,7 +159,15 @@ class GatedDCNModel(BaseCTRModel):
 
         # Apply SENET (Feature Importance Reweighting) - Optional
         if self.use_senet:
-            dnn_input = self.senet(dnn_input)
+            if self.use_projection:
+                # After projection: split into uniform chunks for SENET
+                senet_input = list(dnn_input.split(self.embedding_dim, dim=1))
+                senet_output = self.senet(senet_input)
+                dnn_input = torch.cat(senet_output, dim=1)
+            else:
+                # No projection: use variable-dimension embeddings directly
+                embeds = self.senet(embeds)
+                dnn_input = torch.cat(embeds, dim=1)
 
         # Apply Feature Gating - Optional (alternative to SENET)
         if self.use_feature_gating:

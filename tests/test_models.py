@@ -440,8 +440,8 @@ class TestFeatureEmbeddings(unittest.TestCase):
         out = model(x)
         self.assertEqual(out['logits'].shape, (4, 1))
     
-    def test_senet_requires_uniform_or_projection(self):
-        """Test that SENET raises error with non-uniform embeddings and no projection."""
+    def test_senet_with_variable_embeddings_no_projection(self):
+        """Test that SENET works with non-uniform embeddings without projection."""
         config = make_test_config(
             feature_embeddings={
                 'small': {'type': 'standard', 'dim': 8},
@@ -453,9 +453,14 @@ class TestFeatureEmbeddings(unittest.TestCase):
         )
         vocab_sizes = {'small': 5, 'large': 500}
         
-        with self.assertRaises(ValueError) as context:
-            GatedDCNModel(vocab_sizes, ['small', 'large'], config)
-        self.assertIn("SENET requires uniform embedding dimensions", str(context.exception))
+        # Should now work without raising an error
+        model = GatedDCNModel(vocab_sizes, ['small', 'large'], config)
+        self.assertTrue(hasattr(model, 'senet'), "Model should have senet layer")
+        
+        # Forward pass should work
+        x = torch.randint(0, 5, (4, 2))
+        out = model(x)
+        self.assertEqual(out['logits'].shape, (4, 1))
     
     def test_default_embedding_fallback(self):
         """Test that features not in feature_embeddings use default embedding_dim."""
