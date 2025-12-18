@@ -222,9 +222,9 @@ def train():
         run_dir = os.path.join(CONFIG['tensorboard_logdir'], f"run_{timestamp}")
         writer = SummaryWriter(log_dir=run_dir)
         command = f"python -m tensorboard.main --logdir={run_dir} --reload_interval=30"
+        pyperclip.copy(command)
         print(f"TensorBoard logging to: {run_dir}")
         print(f"Run '{command}' to view training progress")
-        pyperclip.copy(command)
 
     try:
         for epoch in range(CONFIG['epochs']):

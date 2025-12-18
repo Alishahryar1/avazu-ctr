@@ -215,7 +215,7 @@ CONFIG: ConfigType = {
     # === Training ===
     "lr": 1e-3,  # Lower initial LR for better convergence
     "embedding_lr": 1.0,  # Higher LR for embeddings (Adagrad style)
-    "optimizer_mode": "adamw_adagrad",  # Options: 'adamw_adagrad' or 'ftrl'
+    "optimizer_mode": "ftrl",  # Options: 'adamw_adagrad' or 'ftrl'
     "ftrl_alpha": 0.1,  # FTRL learning rate proportionality constant
     "ftrl_beta": 1.0,  # FTRL learning rate smoothing parameter
     "ftrl_l1": 2.0,  # FTRL L1 regularization (enables sparsity)
