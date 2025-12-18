@@ -144,17 +144,13 @@ def train():
             return optim.Adagrad(
                 params,
                 lr=opt_cfg.get('lr', 1e-2),
-                weight_decay=opt_cfg.get('weight_decay', 0.0),
-                eps=opt_cfg.get('eps', 1e-10),
-                lr_decay=opt_cfg.get('lr_decay', 0.0),
+                weight_decay=opt_cfg.get('weight_decay', 0.0)
             )
         else:  # adamw
             return optim.AdamW(
                 params,
                 lr=opt_cfg.get('lr', 1e-4),
-                weight_decay=opt_cfg.get('weight_decay', 1e-4),
-                betas=opt_cfg.get('betas', (0.9, 0.999)),
-                eps=opt_cfg.get('eps', 1e-8),
+                weight_decay=opt_cfg.get('weight_decay', 1e-4)
             )
     
     # Check if both optimizers are FTRL (single optimizer mode)

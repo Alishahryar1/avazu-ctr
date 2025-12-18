@@ -196,10 +196,7 @@ CONFIG: ConfigType = {
         "type": "adamw",
         "lr": 1e-4,
         "warmup_epoch_ratio": 0.2,
-        "weight_decay": 1e-4,
-        # AdamW-specific params
-        "betas": (0.9, 0.999),
-        "eps": 1e-8,
+        "weight_decay": 1e-4
     },
     # Embedding optimizer: for embedding layers (typically benefits from adaptive LR)
     # Options: "adamw", "adagrad", "ftrl"
@@ -207,10 +204,7 @@ CONFIG: ConfigType = {
         "type": "adagrad",
         "lr": 1e-2,
         "warmup_epoch_ratio": 0.0,
-        "weight_decay": 0.0,
-        # Adagrad-specific params
-        "eps": 1e-10,
-        "lr_decay": 0.0,
+        "weight_decay": 0.0
     },
     # FTRL config example (uncomment to use):
     # "embedding_optimizer": {

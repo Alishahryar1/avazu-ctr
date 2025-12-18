@@ -7,5 +7,3 @@ class AdagradConfig(TypedDict, total=False):
     lr: float
     warmup_epoch_ratio: float
     weight_decay: float
-    eps: float
-    lr_decay: float
