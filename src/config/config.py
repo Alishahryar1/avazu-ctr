@@ -31,6 +31,7 @@ class ConfigType(TypedDict):
     num_workers: int
     min_freq: int
     validation_split: float
+    shuffle_train: bool  # Shuffle training data (set False for time-sorted datasets)
     
     # Model Architecture - Embeddings
     embedding_dim: int  # Default embedding dimension (fallback if feature not in feature_embeddings)
@@ -118,6 +119,7 @@ CONFIG: ConfigType = {
     "num_workers": 4,  # Increased for faster data loading
     "min_freq": 0,
     "validation_split": 0.0,  # Hold out 1% for validation
+    "shuffle_train": False,  # Set False for time-sorted datasets to preserve temporal order
     
     # === Model Architecture - Embeddings ===
     "embedding_dim": 16,  # Default/fallback embedding dimension

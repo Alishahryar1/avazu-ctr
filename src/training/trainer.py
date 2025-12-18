@@ -83,7 +83,7 @@ def train():
     train_loader = DataLoader(
         train_dataset,
         batch_size=CONFIG['batch_size'],
-        shuffle=True,  # Shuffle row-by-row now possible in memory
+        shuffle=CONFIG['shuffle_train'],  # Can disable for time-sorted datasets
         num_workers=CONFIG['num_workers'],
         pin_memory=True,
         persistent_workers=True
