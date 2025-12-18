@@ -114,8 +114,6 @@ class ConfigType(TypedDict):
     grad_clip: float
     weight_decay: float
     embedding_weight_decay: float
-    focal_loss_gamma: float
-    label_smoothing: float
     
     # Paths
     train_path: str
@@ -322,8 +320,6 @@ CONFIG: ConfigType = {
     "grad_clip": 1.0,
     "weight_decay": 1e-4,  # L2 regularization for MLP/DCN params
     "embedding_weight_decay": 0.0,  # L2 regularization for embeddings (usually 0)
-    "focal_loss_gamma": 0.0,  # Focal loss for imbalance
-    "label_smoothing": 0.0,  # Optional label smoothing
     
     # === Paths ===
     "train_path": "data/raw/train.gz",
