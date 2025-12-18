@@ -222,7 +222,7 @@ CONFIG: ConfigType = {
     
     # === Training ===
     "lr": 1e-4,  # Lower initial LR for better convergence
-    "embedding_lr": 1e-1,  # Higher LR for embeddings (Adagrad style)
+    "embedding_lr": 1e-2,  # Higher LR for embeddings (Adagrad style)
     "optimizer_mode": "adamw_adagrad",  # Options: 'adamw_adagrad' or 'ftrl'
     "ftrl_alpha": 0.1,  # FTRL learning rate proportionality constant
     "ftrl_beta": 1.0,  # FTRL learning rate smoothing parameter
@@ -247,8 +247,8 @@ CONFIG: ConfigType = {
     "ensemble_aggregation": "mean",  # Aggregation method: 'mean' or 'median'
     
     # === Regularization ===
-    "lr_warmup_epoch_ratio": 0.0,
-    "mlp_dropout": 0.25,
+    "lr_warmup_epoch_ratio": 0.2,
+    "mlp_dropout": 0.2,
     "grad_clip": 1.0,
     "weight_decay": 1e-4,  # L2 regularization for MLP/DCN params
     "embedding_weight_decay": 0.0,  # L2 regularization for embeddings (usually 0)
