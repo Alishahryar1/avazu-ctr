@@ -984,7 +984,7 @@ def process_data_polars() -> tuple[dict, list, int, int]:
                 *get_interaction_feature_expressions(),
                 *get_time_feature_expressions(),
             ])
-            .sort("hour")  # THE STREAMING BLOCKADE #1
+            .sort(CONFIG['data_processor_sort_keys'])  # THE STREAMING BLOCKADE #1 (configurable)
             .with_columns(get_time_delta_expressions())
             .with_columns([
                 *get_cumulative_count_expressions(CUMCOUNT_COLS),  # THE STREAMING BLOCKADE #2

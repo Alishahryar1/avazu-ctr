@@ -13,6 +13,9 @@ class ConfigType(TypedDict):
     min_freq: int
     validation_split: float
     shuffle_train: bool  # Shuffle training data (set False for time-sorted datasets)
+    
+    # Data Processing
+    data_processor_sort_keys: list[str]  # Sort keys for data processor
 
     # Embeddings
     embedding_dim: int
