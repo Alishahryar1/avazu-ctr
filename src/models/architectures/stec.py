@@ -51,15 +51,16 @@ class STECModel(BaseCTRModel):
         self.feature_names = feature_names
         self.num_fields = len(feature_names)
         
-        # Extract config
+        # Extract config (global at top level, model-specific in config['model'])
+        model_config = config.get('model', {})
         embedding_dim = config['embedding_dim']
-        stec_num_layers = config.get('stec_num_layers', 2)
-        stec_num_heads = config.get('stec_num_heads', 4)
-        stec_hidden_dim = config.get('stec_hidden_dim', None)  # None = 4x embed_dim
-        stec_dropout = config.get('stec_dropout', 0.1)
-        stec_use_ffn = config.get('stec_use_ffn', True)
-        mlp_hidden_dims = config.get('stec_mlp_hidden_dims', [256, 128])
-        mlp_dropout = config.get('mlp_dropout', 0.1)
+        stec_num_layers = model_config.get('stec_num_layers', 2)
+        stec_num_heads = model_config.get('stec_num_heads', 4)
+        stec_hidden_dim = model_config.get('stec_hidden_dim', None)  # None = 4x embed_dim
+        stec_dropout = model_config.get('stec_dropout', 0.1)
+        stec_use_ffn = model_config.get('stec_use_ffn', True)
+        mlp_hidden_dims = model_config.get('stec_mlp_hidden_dims', [256, 128])
+        mlp_dropout = model_config.get('mlp_dropout', 0.1)
         
         self.stec_num_layers = stec_num_layers
         self.stec_num_heads = stec_num_heads

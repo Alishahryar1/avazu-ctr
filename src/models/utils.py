@@ -40,8 +40,7 @@ def get_embedding(
         Tuple of (embedding_module, output_dim) where output_dim is the effective
         embedding dimension (may differ from input dim for concatenate aggregation)
     """
-    from src.models.layers.hash_embedding import HashEmbedding
-
+    
     feature_embeddings = config.get('feature_embeddings', {})
     default_dim = config.get('embedding_dim', 16)
 
@@ -55,7 +54,7 @@ def get_embedding(
         num_buckets = feat_config.get('num_buckets', max(1, vocab_size // 10))
         num_hashes = feat_config.get('num_hashes', 2)
         aggregation_mode = feat_config.get('aggregation_mode', 'sum')
-
+        from src.models.layers.hash_embedding import HashEmbedding
         embedding = HashEmbedding(
             num_embeddings=vocab_size,
             embedding_dim=embed_dim,

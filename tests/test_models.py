@@ -14,24 +14,32 @@ from src.models.layers.cross_network import DCNv2
 
 
 def make_test_config(**overrides) -> ConfigType:
-    """Create a test config with optional overrides."""
-    test_config: dict[str, object] = {
-        # General
-        'seed': 42,
-        'device': 'cpu',
-
-        # Data Loading
-        'batch_size': 32,
-        'num_workers': 0,
-        'min_freq': 5,
-        'validation_split': 0.1,
-
-        # Model Architecture - Embeddings
-        'embedding_dim': 16,
-        'feature_embeddings': {},  # Per-feature config, empty = use default embedding_dim
-        'embedding_projection_dim': None,
-
-        # Model Architecture - DCN/Attention
+    """Create a test config with optional overrides.
+    
+    The config follows the production pattern:
+    - Global settings at top level (embedding_dim, feature_embeddings, etc.)
+    - Model-specific settings nested under 'model' key
+    
+    Overrides can be passed for both levels. For model-level overrides,
+    pass keys like 'use_dcn', 'mlp_hidden_dims' directly - they'll be
+    placed in the model dict automatically.
+    """
+    # Define which keys belong in the model config
+    model_keys = {
+        'use_dcn', 'dcn_num_layers', 'dcn_use_layernorm', 'dcn_low_rank',
+        'use_senet', 'senet_squeeze_funcs', 'senet_reduction_ratio',
+        'senet_hidden_activation', 'senet_excitation_activation',
+        'senet_num_groups', 'senet_reweight_mode', 'senet_use_fuse', 'senet_use_layer_norm',
+        'use_feature_gating', 'feature_gating_activation', 'feature_gating_low_rank',
+        'mlp_hidden_dims', 'mlp_activation', 'mlp_use_skip_connections', 'mlp_dropout',
+        'use_layer_norm', 'focal_loss_gamma', 'label_smoothing',
+        # STEC-specific keys
+        'stec_num_layers', 'stec_num_heads', 'stec_hidden_dim', 'stec_dropout',
+        'stec_use_ffn', 'stec_mlp_hidden_dims',
+    }
+    
+    # Base model config (GatedDCN defaults)
+    model_config: dict[str, object] = {
         'use_dcn': True,
         'dcn_num_layers': 2,
         'dcn_use_layernorm': False,
@@ -47,12 +55,45 @@ def make_test_config(**overrides) -> ConfigType:
         'mlp_hidden_dims': [32, 16],
         'mlp_activation': 'relu',
         'mlp_use_skip_connections': False,
+        'mlp_dropout': 0.1,
         'use_layer_norm': True,
+        'focal_loss_gamma': 2.0,
+        'label_smoothing': 0.0,
+    }
+    
+    # Apply model-level overrides
+    for key, value in overrides.items():
+        if key in model_keys:
+            model_config[key] = value
+    
+    test_config: dict[str, object] = {
+        # General
+        'seed': 42,
+        'device': 'cpu',
+
+        # Data Loading
+        'batch_size': 32,
+        'num_workers': 0,
+        'min_freq': 5,
+        'validation_split': 0.1,
+        'shuffle_train': False,
+
+        # Model Architecture - Embeddings (top-level)
+        'embedding_dim': overrides.get('embedding_dim', 16),
+        'feature_embeddings': overrides.get('feature_embeddings', {}),
+        'embedding_projection_dim': overrides.get('embedding_projection_dim', None),
+        
+        # Model config (nested)
+        'model': model_config,
 
         # Training
         'lr': 1e-3,
         'embedding_lr': 1.0,
-        'embedding_optimizer': 'adagrad',
+        'optimizer_mode': 'adamw_adagrad',
+        'ftrl_alpha': 0.1,
+        'ftrl_beta': 1.0,
+        'ftrl_l1': 2.0,
+        'ftrl_l2': 1.0,
         'epochs': 1,
         'lr_warmup_epoch_ratio': 0.1,
         'early_stopping_patience': 3,
@@ -63,9 +104,11 @@ def make_test_config(**overrides) -> ConfigType:
         # Automatic Mixed Precision (AMP)
         'auto_amp': False,  # Disabled for tests (CPU)
         'amp_dtype': 'float16',
+        
+        # Model Compilation
+        'compile_model': False,
 
         # Regularization
-        'mlp_dropout': 0.1,
         'grad_clip': 1.0,
         'weight_decay': 1e-5,
         'embedding_weight_decay': 0.0,
@@ -79,9 +122,12 @@ def make_test_config(**overrides) -> ConfigType:
         'processed_path': './data',
         'models_path': './models',
     }
-    # Apply overrides
+    
+    # Apply non-model overrides directly to test_config
     for key, value in overrides.items():
-        test_config[key] = value
+        if key not in model_keys and key not in ('embedding_dim', 'feature_embeddings', 'embedding_projection_dim'):
+            test_config[key] = value
+    
     return test_config  # type: ignore[return-value]
 
 
@@ -98,11 +144,12 @@ class TestModelStructure(unittest.TestCase):
     
     def test_dcn_layers(self):
         """Verify DCN has the correct number of layers (if enabled)."""
-        if not self.config['use_dcn']:
+        model_config = self.config['model']
+        if not model_config['use_dcn']:
             self.skipTest("DCN is disabled in config")
-        expected_layers = self.config['dcn_num_layers']
+        expected_layers = model_config['dcn_num_layers']
         # Check either full-rank W or low-rank U (depending on config)
-        if self.config['dcn_low_rank'] is not None:
+        if model_config['dcn_low_rank'] is not None:
             actual_layers = len(self.model.dcn.U)
         else:
             actual_layers = len(self.model.dcn.W)
@@ -179,11 +226,12 @@ class TestModelWithProductionConfig(unittest.TestCase):
     
     def test_production_config_dcn_layers(self):
         """Verify DCN layers match production config (if enabled)."""
-        if not CONFIG['use_dcn']:
+        model_config = CONFIG['model']
+        if not model_config['use_dcn']:
             self.skipTest("DCN is disabled in production config")
         
-        expected_layers = CONFIG['dcn_num_layers']
-        if CONFIG['dcn_low_rank'] is not None:
+        expected_layers = model_config['dcn_num_layers']
+        if model_config['dcn_low_rank'] is not None:
             actual_layers = len(self.model.dcn.U)
         else:
             actual_layers = len(self.model.dcn.W)

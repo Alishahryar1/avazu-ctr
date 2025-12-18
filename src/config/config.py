@@ -1,25 +1,66 @@
 import os
 import numpy as np
 import torch
-from typing import TypedDict, Literal
+from typing import TypedDict, Literal, Union
 
 
 class FeatureEmbeddingConfig(TypedDict, total=False):
-    """Per-feature embedding configuration.
-    
-    Attributes:
-        type: Embedding type - 'standard' (nn.Embedding) or 'hash' (HashEmbedding)
-        dim: Embedding dimension (output size)
-        num_buckets: For hash embeddings: size of shared embedding pool
-        num_hashes: For hash embeddings: number of hash functions (default: 2)
-        aggregation_mode: For hash embeddings: 'sum', 'concatenate', or 'median'
-    """
     type: Literal['standard', 'hash']
     dim: int
     num_buckets: int  # Only for type='hash'
     num_hashes: int  # Only for type='hash', default: 2
     aggregation_mode: Literal['sum', 'concatenate', 'median']  # Only for type='hash', default: 'sum'
 
+
+class GatedDCNConfig(TypedDict):
+
+    # Model Architecture - DCN/Attention
+    use_dcn: bool
+    dcn_num_layers: int
+    dcn_use_layernorm: bool
+    dcn_low_rank: int | None  # None = full-rank, int = low-rank dimension
+    
+    # Model Architecture - SENET
+    use_senet: bool
+    senet_squeeze_funcs: list[str]  # Options: 'mean', 'max' - can combine multiple
+    senet_reduction_ratio: int
+    senet_hidden_activation: str  # Bottleneck hidden layer activation
+    senet_excitation_activation: str  # Final excitation output activation
+    senet_num_groups: int  # SENet+: Number of groups for grouped squeeze (1 = no grouping)
+    senet_reweight_mode: str  # SENet+: 'feature' (one weight per field) or 'element' (weight per element)
+    senet_use_fuse: bool  # SENet+: Add original to reweighted (residual)
+    senet_use_layer_norm: bool  # SENet+: Apply LayerNorm after fuse
+    
+    # Model Architecture - Feature Gating
+    use_feature_gating: bool  # Alternative to SENET (mutually exclusive)
+    feature_gating_activation: str  # Options: sigmoid, tanh, relu, etc.
+    feature_gating_low_rank: int | None  # None = full-rank, int = low-rank dimension
+    
+    # Model Architecture - MLP
+    mlp_hidden_dims: list[int]
+    mlp_activation: str
+    mlp_use_skip_connections: bool  # Add residual/skip connections to MLP layers
+    use_layer_norm: bool
+    
+    # Regularization
+    mlp_dropout: float
+    focal_loss_gamma: float
+    label_smoothing: float
+
+
+class STECConfig(TypedDict):
+    stec_num_layers: int
+    stec_num_heads: int
+    stec_hidden_dim: int | None  # Defaults to 4 * embed_dim
+    stec_dropout: float
+    stec_use_ffn: bool
+    stec_mlp_hidden_dims: list[int]
+
+
+class EnsembleConfig(TypedDict):
+    ensemble_k: int  # Number of models in ensemble
+    ensemble_aggregation: str  # Aggregation method: 'mean' or 'median'
+ 
 
 class ConfigType(TypedDict):
     # General
@@ -32,44 +73,14 @@ class ConfigType(TypedDict):
     min_freq: int
     validation_split: float
     shuffle_train: bool  # Shuffle training data (set False for time-sorted datasets)
-    
-    # Model Architecture - Embeddings
-    embedding_dim: int  # Default embedding dimension (fallback if feature not in feature_embeddings)
-    feature_embeddings: dict[str, FeatureEmbeddingConfig]  # Per-feature embedding config
-    embedding_projection_dim: int | None  # None = sum of all, int = project to this dim
-    
-    # Model Architecture - DCN/Attention
-    use_dcn: bool
-    dcn_num_layers: int
-    dcn_use_layernorm: bool
-    dcn_low_rank: int | None  # None = full-rank, int = low-rank dimension
-    use_senet: bool
-    senet_squeeze_funcs: list[str]  # Options: 'mean', 'max' - can combine multiple
-    senet_reduction_ratio: int
-    senet_hidden_activation: str  # Bottleneck hidden layer activation
-    senet_excitation_activation: str  # Final excitation output activation
-    senet_num_groups: int  # SENet+: Number of groups for grouped squeeze (1 = no grouping)
-    senet_reweight_mode: str  # SENet+: 'feature' (one weight per field) or 'element' (weight per element)
-    senet_use_fuse: bool  # SENet+: Add original to reweighted (residual)
-    senet_use_layer_norm: bool  # SENet+: Apply LayerNorm after fuse
-    use_feature_gating: bool  # Alternative to SENET (mutually exclusive)
-    feature_gating_activation: str  # Options: sigmoid, tanh, relu, etc.
-    feature_gating_low_rank: int | None  # None = full-rank, int = low-rank dimension
 
-    # === Model Architecture - STEC ===
-    use_stec: bool
-    stec_num_layers: int
-    stec_num_heads: int
-    stec_hidden_dim: int | None
-    stec_dropout: float
-    stec_use_ffn: bool
-    stec_mlp_hidden_dims: list[int]
+    # Embeddings
+    embedding_dim: int
+    feature_embeddings: dict[str, FeatureEmbeddingConfig]
+    embedding_projection_dim: int | None  # None = no projection
     
-
-    mlp_hidden_dims: list[int]
-    mlp_activation: str
-    mlp_use_skip_connections: bool  # Add residual/skip connections to MLP layers
-    use_layer_norm: bool
+    # Model
+    model: Union[GatedDCNConfig, EnsembleConfig, STECConfig]
     
     # Training
     lr: float
@@ -92,14 +103,9 @@ class ConfigType(TypedDict):
     
     # Model Compilation
     compile_model: bool  # Enable torch.compile for faster training
-    
-    # Ensemble
-    use_ensemble: bool  # Enable ensemble training
-    ensemble_k: int  # Number of models in ensemble
-    ensemble_aggregation: str  # Aggregation method: 'mean' or 'median'
-    
+
     # Regularization
-    mlp_dropout: float
+    lr_warmup_epoch_ratio: float 
     grad_clip: float
     weight_decay: float
     embedding_weight_decay: float
@@ -112,6 +118,7 @@ class ConfigType(TypedDict):
     sub_path: str
     processed_path: str
     models_path: str
+
 
 # --- CONFIGURATION ---
 CONFIG: ConfigType = {
@@ -183,42 +190,39 @@ CONFIG: ConfigType = {
     },
     "embedding_projection_dim": None,  # None = no projection, int = project to uniform dim
     
-    # === Model Architecture - DCN ===
-    "use_dcn": True,  # Enable/disable DCNv2 cross network
-    "dcn_num_layers": 6,  # Increased for more feature interactions
-    "dcn_use_layernorm": False,  # LayerNorm for cross layer stability
-    "dcn_low_rank": 64,  # None = full-rank, int (e.g. 32) = low-rank decomposition
-    
-    # === Model Architecture - SENET ===
-    "use_senet": True,  # Enable/disable SENET (Squeeze-and-Excitation) layer
-    "senet_squeeze_funcs": ["mean", "max", "min", "std", "norm"],  # Squeeze functions to combine
-    "senet_reduction_ratio": 4,  # Reduction ratio for excitation bottleneck
-    "senet_hidden_activation": "gelu",  # Bottleneck hidden layer activation
-    "senet_excitation_activation": "tanh",  # Final excitation output: sigmoid, tanh, softmax
-    "senet_num_groups": 2,  # SENet+: 1 = no grouping (backward compatible)
-    "senet_reweight_mode": "element",  # SENet+: 'feature' or 'element'
-    "senet_use_fuse": True,  # SENet+: residual connection
-    "senet_use_layer_norm": True,  # SENet+: layer norm after fuse
-    
-    # === Model Architecture - Feature Gating ===   
-    "use_feature_gating": False,  # Alternative to SENET (mutually exclusive)
-    "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
-    "feature_gating_low_rank": 64,  # None = full-rank, int (e.g. 32) = low-rank decomposition
-    
-    # === Model Architecture - STEC ===
-    "use_stec": False,
-    "stec_num_layers": 4,
-    "stec_num_heads": 4,
-    "stec_hidden_dim": None,  # Defaults to 4 * embed_dim
-    "stec_dropout": 0.0,
-    "stec_use_ffn": True,
-    "stec_mlp_hidden_dims": [2048],
-    
-    # === Model Architecture - MLP ===
-    "mlp_hidden_dims": [2048, 1024, 512],  # Deeper network
-    "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
-    "mlp_use_skip_connections": True,  # Add residual/skip connections to MLP
-    "use_layer_norm": True,
+    "model": {
+        "use_dcn": True,  # Enable/disable DCNv2 cross network
+        "dcn_num_layers": 6,  # Increased for more feature interactions
+        "dcn_use_layernorm": False,  # LayerNorm for cross layer stability
+        "dcn_low_rank": 64,  # None = full-rank, int (e.g. 32) = low-rank decomposition
+        
+        # === Model Architecture - SENET ===
+        "use_senet": False,  # Enable/disable SENET (Squeeze-and-Excitation) layer
+        "senet_squeeze_funcs": ["mean", "max", "min"],  # Squeeze functions to combine
+        "senet_reduction_ratio": 3,  # Reduction ratio for excitation bottleneck
+        "senet_hidden_activation": "gelu",  # Bottleneck hidden layer activation
+        "senet_excitation_activation": "tanh",  # Final excitation output: sigmoid, tanh, softmax
+        "senet_num_groups": 2,  # SENet+: 1 = no grouping (backward compatible)
+        "senet_reweight_mode": "element",  # SENet+: 'feature' or 'element'
+        "senet_use_fuse": True,  # SENet+: residual connection
+        "senet_use_layer_norm": True,  # SENet+: layer norm after fuse
+        
+        # === Model Architecture - Feature Gating ===   
+        "use_feature_gating": True,  # Alternative to SENET (mutually exclusive)
+        "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
+        "feature_gating_low_rank": None,  # None = full-rank, int (e.g. 32) = low-rank decomposition
+        
+        # === Model Architecture - MLP ===
+        "mlp_hidden_dims": [2048, 1024, 512],  # Deeper network
+        "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
+        "mlp_use_skip_connections": True,  # Add residual/skip connections to MLP
+        "use_layer_norm": True,
+        
+        # === Regularization (model-level) ===
+        "mlp_dropout": 0.1,  # Dropout rate for MLP layers
+        "focal_loss_gamma": 0.0,  # Focal loss gamma (0.0 = standard BCE)
+        "label_smoothing": 0.0,  # Label smoothing factor
+    },
     
     # === Training ===
     "lr": 1e-4,  # Lower initial LR for better convergence
@@ -241,14 +245,8 @@ CONFIG: ConfigType = {
     # === Model Compilation ===
     "compile_model": False,  # Enable torch.compile for faster training (requires PyTorch 2.0+)
     
-    # === Ensemble ===
-    "use_ensemble": True,  # Enable ensemble of k identical models
-    "ensemble_k": 3,  # Number of models in ensemble
-    "ensemble_aggregation": "mean",  # Aggregation method: 'mean' or 'median'
-    
     # === Regularization ===
     "lr_warmup_epoch_ratio": 0.2,
-    "mlp_dropout": 0.2,
     "grad_clip": 1.0,
     "weight_decay": 1e-4,  # L2 regularization for MLP/DCN params
     "embedding_weight_decay": 0.0,  # L2 regularization for embeddings (usually 0)

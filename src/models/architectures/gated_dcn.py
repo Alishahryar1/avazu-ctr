@@ -26,23 +26,24 @@ class GatedDCNModel(BaseCTRModel):
         super().__init__()
         self.feature_names = feature_names
 
-        # Extract config values
+        # Extract config values (global settings at top level, model-specific in config['model'])
+        model_config = config['model']
         embedding_dim = config['embedding_dim']
-        use_dcn = config['use_dcn']
-        dcn_num_layers = config['dcn_num_layers']
-        dcn_use_layernorm = config['dcn_use_layernorm']
-        dcn_low_rank = config['dcn_low_rank']
-        use_senet = config['use_senet']
-        senet_squeeze_funcs = config['senet_squeeze_funcs']
-        senet_reduction_ratio = config['senet_reduction_ratio']
-        senet_hidden_activation = config['senet_hidden_activation']
-        senet_excitation_activation = config['senet_excitation_activation']
-        use_feature_gating = config['use_feature_gating']
-        feature_gating_activation = config['feature_gating_activation']
-        mlp_hidden_dims = config['mlp_hidden_dims']
-        mlp_dropout = config['mlp_dropout']
-        use_layer_norm = config['use_layer_norm']
-        mlp_activation = config['mlp_activation']
+        use_dcn = model_config['use_dcn']
+        dcn_num_layers = model_config['dcn_num_layers']
+        dcn_use_layernorm = model_config['dcn_use_layernorm']
+        dcn_low_rank = model_config['dcn_low_rank']
+        use_senet = model_config['use_senet']
+        senet_squeeze_funcs = model_config['senet_squeeze_funcs']
+        senet_reduction_ratio = model_config['senet_reduction_ratio']
+        senet_hidden_activation = model_config['senet_hidden_activation']
+        senet_excitation_activation = model_config['senet_excitation_activation']
+        use_feature_gating = model_config['use_feature_gating']
+        feature_gating_activation = model_config['feature_gating_activation']
+        mlp_hidden_dims = model_config['mlp_hidden_dims']
+        mlp_dropout = model_config['mlp_dropout']
+        use_layer_norm = model_config['use_layer_norm']
+        mlp_activation = model_config['mlp_activation']
 
         # Validate mutual exclusivity
         if use_senet and use_feature_gating:
@@ -109,7 +110,7 @@ class GatedDCNModel(BaseCTRModel):
 
         # 2b. Feature Gating Layer - Optional (alternative to SENET)
         if use_feature_gating:
-            feature_gating_low_rank = config['feature_gating_low_rank']
+            feature_gating_low_rank = model_config['feature_gating_low_rank']
             self.feature_gating = FeatureGatingLayer(
                 input_dim=working_dim,
                 gating_activation=feature_gating_activation,
@@ -122,7 +123,7 @@ class GatedDCNModel(BaseCTRModel):
 
 
         # 5. Enhanced MLP with LayerNorm, configurable activation, and optional skip connections
-        mlp_use_skip_connections = config['mlp_use_skip_connections']
+        mlp_use_skip_connections = model_config['mlp_use_skip_connections']
         self.mlp = ResidualMLP(
             input_dim=working_dim,
             hidden_dims=mlp_hidden_dims,

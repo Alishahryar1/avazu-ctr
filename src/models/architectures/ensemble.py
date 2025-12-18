@@ -33,11 +33,10 @@ class EnsembleModel(BaseCTRModel):
         base_seed: int | None = None
     ):
         super().__init__()
-
         # Get ensemble size from config or use provided k
-        self.k: int = k if k is not None else config['ensemble_k']
+        self.k: int = k if k is not None else config['model']['ensemble_k']
         self.base_seed: int = base_seed if base_seed is not None else config['seed']
-        self.ensemble_aggregation: str = config['ensemble_aggregation']
+        self.ensemble_aggregation: str = config['model']['ensemble_aggregation']
 
         # Create k models with different random initializations
         self.models = nn.ModuleList()

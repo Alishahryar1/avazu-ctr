@@ -16,33 +16,35 @@ class TestConfig(unittest.TestCase):
 
     def test_required_keys_exist(self):
         """Verify all required config keys are present."""
-        required_keys = [
-            'embedding_dim',
-            'dcn_num_layers',
-            'mlp_hidden_dims',
-            'mlp_dropout',
-            'lr',
-            'batch_size',
-            'epochs'
-        ]
-        for key in required_keys:
-            self.assertIn(key, CONFIG, f"Missing required config key: {key}")
+        # Top-level keys
+        top_level_keys = ['embedding_dim', 'lr', 'batch_size', 'epochs']
+        for key in top_level_keys:
+            self.assertIn(key, CONFIG, f"Missing required top-level config key: {key}")
+        
+        # Model-level keys (nested under 'model')
+        self.assertIn('model', CONFIG, "Missing 'model' key in config")
+        model_keys = ['dcn_num_layers', 'mlp_hidden_dims', 'mlp_dropout']
+        model_config = CONFIG['model']
+        for key in model_keys:
+            self.assertIn(key, model_config, f"Missing required model config key: {key}")
 
     def test_config_value_types(self):
         """Verify config values have correct types."""
+        model_config = CONFIG['model']
         self.assertIsInstance(CONFIG['embedding_dim'], int)
-        self.assertIsInstance(CONFIG['dcn_num_layers'], int)
-        self.assertIsInstance(CONFIG['mlp_hidden_dims'], (list, tuple))
-        self.assertIsInstance(CONFIG['mlp_dropout'], float)
+        self.assertIsInstance(model_config['dcn_num_layers'], int)
+        self.assertIsInstance(model_config['mlp_hidden_dims'], (list, tuple))
+        self.assertIsInstance(model_config['mlp_dropout'], float)
 
     def test_config_value_ranges(self):
         """Verify config values are in valid ranges."""
+        model_config = CONFIG['model']
         self.assertGreater(CONFIG['embedding_dim'], 0, "embedding_dim must be positive")
-        self.assertGreater(CONFIG['dcn_num_layers'], 0, "dcn_num_layers must be positive")
-        self.assertGreaterEqual(CONFIG['mlp_dropout'], 0.0, "mlp_dropout must be >= 0")
-        self.assertLess(CONFIG['mlp_dropout'], 1.0, "mlp_dropout must be < 1")
-        if CONFIG['dcn_low_rank'] is not None:
-            self.assertGreater(CONFIG['dcn_low_rank'], 0, "dcn_low_rank must be positive if set")
+        self.assertGreater(model_config['dcn_num_layers'], 0, "dcn_num_layers must be positive")
+        self.assertGreaterEqual(model_config['mlp_dropout'], 0.0, "mlp_dropout must be >= 0")
+        self.assertLess(model_config['mlp_dropout'], 1.0, "mlp_dropout must be < 1")
+        if model_config['dcn_low_rank'] is not None:
+            self.assertGreater(model_config['dcn_low_rank'], 0, "dcn_low_rank must be positive if set")
 
 
 class TestConfigExtended(unittest.TestCase):
@@ -98,13 +100,14 @@ class TestConfigExtended(unittest.TestCase):
 
     def test_config_senet_and_gating_mutual_exclusivity(self):
         """Verify SENET and feature gating are mutually exclusive in production config."""
+        model_config = CONFIG['model']
         # This test checks production config doesn't violate the constraint
-        if CONFIG['use_senet'] and CONFIG['use_feature_gating']:
+        if model_config['use_senet'] and model_config['use_feature_gating']:
             self.fail("Production config has both use_senet and use_feature_gating enabled")
 
     def test_config_mlp_hidden_dims_not_empty(self):
         """Verify MLP has at least one hidden layer."""
-        self.assertGreater(len(CONFIG['mlp_hidden_dims']), 0)
+        self.assertGreater(len(CONFIG['model']['mlp_hidden_dims']), 0)
 
     def test_config_feature_embeddings_valid(self):
         """Verify feature_embeddings has valid structure."""
