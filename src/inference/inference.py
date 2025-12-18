@@ -5,7 +5,7 @@ from tqdm import tqdm
 import numpy as np
 import polars as pl
 
-from src.config.config import CONFIG, seed_everything
+from config import CONFIG, seed_everything
 from src.processing.data_processor import load_metadata, get_parquet_path
 from src.processing.dataset import ParquetFullDataset
 from src.models.architectures import create_model

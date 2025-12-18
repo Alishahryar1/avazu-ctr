@@ -6,7 +6,7 @@ Tests for EnsembleModel with different model types (GatedDCN, STEC, nested Ensem
 
 import unittest
 import torch
-from src.config.config import ConfigType, GatedDCNConfig, STECConfig, EnsembleConfig
+from config import ConfigType, GatedDCNConfig, STECConfig, EnsembleConfig
 from src.models.architectures.ensemble import EnsembleModel
 from src.models.architectures.gated_dcn import GatedDCNModel
 from src.models.architectures.stec import STECModel

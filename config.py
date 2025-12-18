@@ -1,7 +1,7 @@
 import os
 import numpy as np
 import torch
-from .types import (
+from src.config_types import (
     FeatureEmbeddingConfig,
     GatedDCNConfig,
     STECConfig,
@@ -20,7 +20,6 @@ CONFIG: ConfigType = {
     # === Data Loading ===
     "batch_size": 4096,  # Increased for faster training
     "num_workers": 4,  # Increased for faster data loading
-    "min_freq": 0,
     "validation_split": 0.0,  # Hold out 1% for validation
     "shuffle_train": False,  # Set False for time-sorted datasets to preserve temporal order
     
@@ -28,6 +27,7 @@ CONFIG: ConfigType = {
     # Sort keys for data processor (applied before feature engineering)
     # Default: app_id, site_id, banner_pos, C1, day_of_month, hour_of_day
     "data_processor_sort_keys": ["app_id", "site_id", "banner_pos", "C1", "day_of_month", "hour"],
+    "min_freq": 0,
     
     # === Model Architecture - Embeddings ===
     "embedding_dim": 16,  # Default/fallback embedding dimension

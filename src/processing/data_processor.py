@@ -12,7 +12,7 @@ This module uses FULL LAZY evaluation until the final sink:
 import polars as pl
 import gc
 from pathlib import Path
-from src.config.config import CONFIG
+from config import CONFIG
 import pickle
 
 

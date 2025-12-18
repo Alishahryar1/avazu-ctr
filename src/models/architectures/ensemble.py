@@ -2,7 +2,7 @@
 import torch
 import torch.nn as nn
 
-from src.config.config import ConfigType, ModelConfig
+from config import ConfigType, ModelConfig
 from src.models.types import ModelOutput
 from src.models.architectures.base import BaseCTRModel
 from src.models.losses import KBCELoss

@@ -11,7 +11,7 @@ import time
 import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
-from src.config.config import CONFIG, seed_everything
+from config import CONFIG, seed_everything
 from src.processing.data_processor import load_metadata, get_parquet_path, get_parquet_row_count
 from src.processing.dataset import ParquetFullDataset
 from src.models.architectures import create_model

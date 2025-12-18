@@ -8,7 +8,7 @@ and various model configurations.
 import unittest
 import torch
 import torch.nn as nn
-from src.config.config import CONFIG, ConfigType
+from config import CONFIG, ConfigType
 from src.models.architectures.gated_dcn import GatedDCNModel
 from src.models.layers.cross_network import DCNv2
 

@@ -2,7 +2,7 @@
 import torch
 import torch.nn as nn
 
-from src.config.config import ConfigType
+from config import ConfigType
 from src.models.utils import get_embedding
 from src.models.types import ModelOutput
 from src.models.architectures.base import BaseCTRModel

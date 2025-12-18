@@ -8,7 +8,7 @@ and the seed_everything function for reproducibility.
 import unittest
 import numpy as np
 import torch
-from src.config.config import CONFIG
+from config import CONFIG
 
 
 class TestConfig(unittest.TestCase):
@@ -57,7 +57,7 @@ class TestConfigExtended(unittest.TestCase):
 
     def test_seed_everything_reproducibility(self):
         """Test that seed_everything produces reproducible results."""
-        from src.config.config import seed_everything
+        from config import seed_everything
 
         seed_everything(42)
         random1 = np.random.rand(5)
@@ -72,7 +72,7 @@ class TestConfigExtended(unittest.TestCase):
 
     def test_seed_everything_different_seeds(self):
         """Test that different seeds produce different results."""
-        from src.config.config import seed_everything
+        from config import seed_everything
 
         seed_everything(42)
         random1 = np.random.rand(5)

@@ -2,7 +2,7 @@
 import unittest
 import torch
 import torch.nn as nn
-from src.config.config import CONFIG, ConfigType
+from config import CONFIG, ConfigType
 from src.models.layers.stec_block import STECBlock
 from src.models.layers.multi_head_stec import MultiHeadSTEC
 from src.models.layers.position_wise_ffn import PositionWiseFFN

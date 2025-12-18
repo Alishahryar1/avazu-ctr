@@ -18,7 +18,7 @@ import numpy as np
 from pathlib import Path
 import gc
 
-from src.config.config import CONFIG
+from config import CONFIG
 from src.processing.data_processor import (
     SCHEMA, BASE_CATEGORICAL_COLS, CATEGORICAL_COLS,
     get_user_proxy_expression, get_interaction_feature_expressions,

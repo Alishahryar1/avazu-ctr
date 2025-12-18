@@ -16,7 +16,7 @@ import pickle
 from pathlib import Path
 import math
 
-from src.config.config import CONFIG
+from config import CONFIG
 
 
 # =============================================================================
