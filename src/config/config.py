@@ -194,11 +194,11 @@ CONFIG: ConfigType = {
     "senet_squeeze_funcs": ["mean", "max", "min", "std", "norm"],  # Squeeze functions to combine
     "senet_reduction_ratio": 4,  # Reduction ratio for excitation bottleneck
     "senet_hidden_activation": "gelu",  # Bottleneck hidden layer activation
-    "senet_excitation_activation": "gelu",  # Final excitation output: sigmoid, tanh, softmax
+    "senet_excitation_activation": "tanh",  # Final excitation output: sigmoid, tanh, softmax
     "senet_num_groups": 2,  # SENet+: 1 = no grouping (backward compatible)
     "senet_reweight_mode": "element",  # SENet+: 'feature' or 'element'
     "senet_use_fuse": True,  # SENet+: residual connection
-    "senet_use_layer_norm": False,  # SENet+: layer norm after fuse
+    "senet_use_layer_norm": True,  # SENet+: layer norm after fuse
     
     # === Model Architecture - Feature Gating ===   
     "use_feature_gating": False,  # Alternative to SENET (mutually exclusive)
