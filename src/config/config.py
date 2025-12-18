@@ -195,38 +195,105 @@ CONFIG: ConfigType = {
     },
     "embedding_projection_dim": None,  # None = no projection, int = project to uniform dim
     
+    # === ENSEMBLE MODEL ===
+    # Contains: GatedDCN, STEC, and inner ensemble (MLP-only + SENET+DCN)
     "model": {
-        "use_dcn": True,  # Enable/disable DCNv2 cross network
-        "dcn_num_layers": 6,  # Increased for more feature interactions
-        "dcn_use_layernorm": False,  # LayerNorm for cross layer stability
-        "dcn_low_rank": 64,  # None = full-rank, int (e.g. 32) = low-rank decomposition
-        
-        # === Model Architecture - SENET ===
-        "use_senet": False,  # Enable/disable SENET (Squeeze-and-Excitation) layer
-        "senet_squeeze_funcs": ["mean", "max", "min"],  # Squeeze functions to combine
-        "senet_reduction_ratio": 3,  # Reduction ratio for excitation bottleneck
-        "senet_hidden_activation": "gelu",  # Bottleneck hidden layer activation
-        "senet_excitation_activation": "tanh",  # Final excitation output: sigmoid, tanh, softmax
-        "senet_num_groups": 2,  # SENet+: 1 = no grouping (backward compatible)
-        "senet_reweight_mode": "element",  # SENet+: 'feature' or 'element'
-        "senet_use_fuse": True,  # SENet+: residual connection
-        "senet_use_layer_norm": True,  # SENet+: layer norm after fuse
-        
-        # === Model Architecture - Feature Gating ===   
-        "use_feature_gating": True,  # Alternative to SENET (mutually exclusive)
-        "feature_gating_activation": "sigmoid",  # Options: sigmoid, tanh, relu, etc.
-        "feature_gating_low_rank": None,  # None = full-rank, int (e.g. 32) = low-rank decomposition
-        
-        # === Model Architecture - MLP ===
-        "mlp_hidden_dims": [2048, 1024, 512],  # Deeper network
-        "mlp_activation": "gelu",  # Options: relu, gelu, silu, leaky_relu, tanh
-        "mlp_use_skip_connections": True,  # Add residual/skip connections to MLP
-        "use_layer_norm": True,
-        
-        # === Regularization (model-level) ===
-        "mlp_dropout": 0.1,  # Dropout rate for MLP layers
-        "focal_loss_gamma": 0.0,  # Focal loss gamma (0.0 = standard BCE)
-        "label_smoothing": 0.0,  # Label smoothing factor
+        "models": [
+            # --- Model 1: Small GatedDCN (DCN + Feature Gating) ---
+            {
+                "use_dcn": True,
+                "dcn_num_layers": 3,
+                "dcn_use_layernorm": True,
+                "dcn_low_rank": 32,
+                "use_senet": False,
+                "senet_squeeze_funcs": ["mean"],
+                "senet_reduction_ratio": 3,
+                "senet_hidden_activation": "relu",
+                "senet_excitation_activation": "sigmoid",
+                "senet_num_groups": 1,
+                "senet_reweight_mode": "feature",
+                "senet_use_fuse": False,
+                "senet_use_layer_norm": False,
+                "use_feature_gating": True,
+                "feature_gating_activation": "sigmoid",
+                "feature_gating_low_rank": None,
+                "mlp_hidden_dims": [512, 256],
+                "mlp_activation": "gelu",
+                "mlp_use_skip_connections": True,
+                "mlp_dropout": 0.1,
+                "use_layer_norm": True,
+                "focal_loss_gamma": 0.0,
+                "label_smoothing": 0.0,
+            },
+            # --- Model 2: Small STEC ---
+            {
+                "stec_num_layers": 2,
+                "stec_num_heads": 4,
+                "stec_hidden_dim": None,
+                "stec_dropout": 0.1,
+                "stec_use_ffn": True,
+                "stec_mlp_hidden_dims": [256, 128],
+            },
+            # --- Model 3: Inner Ensemble (MLP-only + SENET+DCN) ---
+            {
+                "models": [
+                    # Inner Model A: Small MLP-only (no DCN, no SENET)
+                    {
+                        "use_dcn": False,
+                        "dcn_num_layers": 0,
+                        "dcn_use_layernorm": False,
+                        "dcn_low_rank": None,
+                        "use_senet": False,
+                        "senet_squeeze_funcs": ["mean"],
+                        "senet_reduction_ratio": 3,
+                        "senet_hidden_activation": "relu",
+                        "senet_excitation_activation": "sigmoid",
+                        "senet_num_groups": 1,
+                        "senet_reweight_mode": "feature",
+                        "senet_use_fuse": False,
+                        "senet_use_layer_norm": False,
+                        "use_feature_gating": False,
+                        "feature_gating_activation": "sigmoid",
+                        "feature_gating_low_rank": None,
+                        "mlp_hidden_dims": [512, 256, 128],
+                        "mlp_activation": "gelu",
+                        "mlp_use_skip_connections": True,
+                        "mlp_dropout": 0.1,
+                        "use_layer_norm": True,
+                        "focal_loss_gamma": 0.0,
+                        "label_smoothing": 0.0,
+                    },
+                    # Inner Model B: Small SENET + DCN
+                    {
+                        "use_dcn": True,
+                        "dcn_num_layers": 3,
+                        "dcn_use_layernorm": True,
+                        "dcn_low_rank": 32,
+                        "use_senet": True,
+                        "senet_squeeze_funcs": ["mean", "max"],
+                        "senet_reduction_ratio": 3,
+                        "senet_hidden_activation": "gelu",
+                        "senet_excitation_activation": "sigmoid",
+                        "senet_num_groups": 1,
+                        "senet_reweight_mode": "feature",
+                        "senet_use_fuse": True,
+                        "senet_use_layer_norm": True,
+                        "use_feature_gating": False,
+                        "feature_gating_activation": "sigmoid",
+                        "feature_gating_low_rank": None,
+                        "mlp_hidden_dims": [512, 256],
+                        "mlp_activation": "gelu",
+                        "mlp_use_skip_connections": True,
+                        "mlp_dropout": 0.1,
+                        "use_layer_norm": True,
+                        "focal_loss_gamma": 0.0,
+                        "label_smoothing": 0.0,
+                    },
+                ],
+                "ensemble_aggregation": "mean",
+            },
+        ],
+        "ensemble_aggregation": "mean",
     },
     
     # === Training ===
