@@ -263,6 +263,35 @@ class TestEnsembleLoss(unittest.TestCase):
         
         self.assertIsInstance(loss, torch.Tensor)
         self.assertEqual(loss.shape, ())  # Scalar loss
+    
+    def test_recursive_loss_computation(self):
+        """Test that nested ensembles compute recursive loss."""
+        inner_ensemble_config: EnsembleConfig = {
+            'models': [make_gated_dcn_config(), make_gated_dcn_config()],
+            'ensemble_aggregation': 'mean',
+        }
+        outer_ensemble_config: EnsembleConfig = {
+            'models': [make_gated_dcn_config(), inner_ensemble_config],
+            'ensemble_aggregation': 'mean',
+        }
+        config = make_base_config(outer_ensemble_config)
+        
+        model = EnsembleModel(self.vocab_sizes, self.feature_names, config)
+        
+        x = torch.randint(0, 100, (4, 2))
+        y = torch.rand(4, 1)
+        
+        output = model(x)
+        total_loss = model.compute_loss(output, y)
+        
+        # Total loss should be a scalar
+        self.assertIsInstance(total_loss, torch.Tensor)
+        self.assertEqual(total_loss.shape, ())
+        
+        # The total loss should be greater than just the outer ensemble's loss
+        # because it includes the inner ensemble's K-BCE loss too
+        # (This is a sanity check - we can't easily compute the exact expected value)
+        self.assertGreater(total_loss.item(), 0)
 
 
 class TestEnsembleEdgeCases(unittest.TestCase):

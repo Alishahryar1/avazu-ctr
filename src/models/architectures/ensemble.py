@@ -113,12 +113,15 @@ class EnsembleModel(BaseCTRModel):
             x: Input tensor of shape [Batch, Num_Features]
 
         Returns:
-            ModelOutput with aggregated logits and list of branch logits
+            ModelOutput with aggregated logits, branch logits, and full outputs for recursive loss
         """
         all_logits = []
+        all_outputs = []  # Store full outputs for recursive loss computation
+        
         for model in self.models:
             output = model(x)
             all_logits.append(output["logits"])
+            all_outputs.append(output)
 
         # Stack all logits: [K, Batch, 1]
         stacked_logits = torch.stack(all_logits, dim=0)
@@ -133,7 +136,8 @@ class EnsembleModel(BaseCTRModel):
 
         return {
             "logits": aggregated,
-            "aux_logits": all_logits  # List of k branch logits
+            "aux_logits": all_logits,  # List of k branch logits (for this level's K-BCE)
+            "_outputs": all_outputs,  # Full outputs for recursive loss (internal use)
         }
 
     def compute_loss(
@@ -141,8 +145,27 @@ class EnsembleModel(BaseCTRModel):
         output: ModelOutput, 
         y_true: torch.Tensor
     ) -> torch.Tensor:
-        """Compute K-BCE loss for ensemble architecture."""
-        return self._kbce_loss(output["logits"], output["aux_logits"], y_true)
+        """
+        Compute recursive loss for ensemble architecture.
+        
+        The total loss is the sum of:
+        1. This ensemble's K-BCE loss (combined loss + weighted branch losses)
+        2. Recursive losses from any nested ensembles
+        
+        This ensures every ensemble in the hierarchy contributes its own K-BCE loss.
+        """
+        # 1. Compute this ensemble's K-BCE loss
+        total_loss = self._kbce_loss(output["logits"], output["aux_logits"], y_true)
+        
+        # 2. Recursively add losses from nested ensembles
+        all_outputs = output.get("_outputs", [])
+        for i, (model, sub_output) in enumerate(zip(self.models, all_outputs)):
+            if isinstance(model, EnsembleModel):
+                # Recursive call for nested ensemble
+                nested_loss = model.compute_loss(sub_output, y_true)
+                total_loss = total_loss + nested_loss
+        
+        return total_loss
 
     @classmethod
     def model_name(cls) -> str:
