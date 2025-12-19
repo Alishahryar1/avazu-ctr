@@ -113,6 +113,18 @@ class MultiHeadDiversityModel(BaseCTRModel):
                 use_layernorm=backbone_config_dict["dcn_use_layernorm"],
                 low_rank=backbone_config_dict.get("dcn_low_rank", None),
             )
+        
+        # 6. Residual MLP (Optional)
+        if backbone_config_dict.get("mlp_hidden_dims", []):
+            self.mlp = ResidualMLP(
+                input_dim=working_dim,
+                hidden_dims=backbone_config_dict["mlp_hidden_dims"][:-1],
+                output_dim=backbone_config_dict["mlp_hidden_dims"][-1],
+                activation=backbone_config_dict["mlp_activation"],
+                dropout=backbone_config_dict["mlp_dropout"],
+                use_layer_norm=backbone_config_dict["use_layer_norm"],
+                use_skip_connections=backbone_config_dict["mlp_use_skip_connections"],
+            )
 
         self.input_dim = working_dim  # Final dimension after backbone processing
 

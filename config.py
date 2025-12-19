@@ -127,11 +127,11 @@ CONFIG: ConfigType = {
         "feature_bagging_ratio": 0.8,
         "backbone_config": {
             # Feature Gating
-            "use_feature_gating": False,
-            "feature_gating_activation": "tanh",
+            "use_feature_gating": True,
+            "feature_gating_activation": "gelu",
             "feature_gating_low_rank": None,
             # SENET
-            "use_senet": True,
+            "use_senet": False,
             "senet_squeeze_funcs": ["mean", "max", "min", "std"],
             "senet_reduction_ratio": 3,
             "senet_hidden_activation": "gelu",
@@ -146,7 +146,7 @@ CONFIG: ConfigType = {
             "dcn_use_layernorm": False,
             "dcn_low_rank": 64,
             # MLP
-            "mlp_hidden_dims": [0],
+            "mlp_hidden_dims": [2048, 1024, 512],
             "mlp_activation": "gelu",
             "mlp_use_skip_connections": True,
             "mlp_dropout": 0.0,
@@ -154,35 +154,35 @@ CONFIG: ConfigType = {
         },
         "heads": [
             {
-                "hidden_dims": [1024, 512],
+                "hidden_dims": [128],
                 "activation": "relu",
                 "dropout": 0.15,
                 "use_layer_norm": True,
                 "use_skip_connections": True,
             },
             {
-                "hidden_dims": [2048, 1024],
+                "hidden_dims": [64],
                 "activation": "gelu",
                 "dropout": 0.2,
                 "use_layer_norm": True,
                 "use_skip_connections": True,
             },
             {
-                "hidden_dims": [1024, 512, 256],
+                "hidden_dims": [32],
                 "activation": "silu",
                 "dropout": 0.1,
                 "use_layer_norm": True,
                 "use_skip_connections": True,
             },
             {
-                "hidden_dims": [512, 256, 128, 64],
+                "hidden_dims": [64],
                 "activation": "mish",
                 "dropout": 0.25,
                 "use_layer_norm": True,
                 "use_skip_connections": True,
             },
             {
-                "hidden_dims": [1024, 512, 256, 128, 64],
+                "hidden_dims": [256],
                 "activation": "gelu",
                 "dropout": 0.2,
                 "use_layer_norm": True,
