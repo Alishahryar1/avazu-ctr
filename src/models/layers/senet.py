@@ -133,8 +133,6 @@ class SENetLayer(nn.Module):
                     stat = torch.min(stacked, dim=-1).values
                 elif func_name == "std":
                     stat = torch.std(stacked, dim=-1)
-                elif func_name == "norm":
-                    stat = torch.linalg.norm(stacked, dim=-1)
                 else:
                     raise ValueError(f"Unknown squeeze function: {func_name}")
                 stats_list.append(stat)
