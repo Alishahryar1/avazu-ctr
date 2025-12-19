@@ -113,6 +113,9 @@ class EnsembleModel(BaseCTRModel):
         # Internal loss for multi-branch architecture
         self._kbce_loss = KBCELoss()
 
+        # Cached outputs for compute_loss (set during forward)
+        self._cached_outputs: list[ModelOutput] = []
+
     def forward(self, x: torch.Tensor) -> ModelOutput:
         """
         Forward pass through all models in the ensemble.
@@ -130,6 +133,9 @@ class EnsembleModel(BaseCTRModel):
             output = model(x)
             all_logits.append(output["logits"])
             all_outputs.append(output)
+
+        # Cache outputs for compute_loss
+        self._cached_outputs = all_outputs
 
         # Stack all logits: [K, Batch, 1]
         stacked_logits = torch.stack(all_logits, dim=0)
@@ -164,11 +170,10 @@ class EnsembleModel(BaseCTRModel):
         #   a) Nested Ensemble structural losses
         #   b) Leaf model internal losses (e.g., regularization, aux tasks)
 
-        for model in self.models:
-            # Assuming BaseCTRModel has a compute_loss method
-            # If the model is a simple leaf with no internal loss, it returns 0
-            # Note: We pass the same output since aux_logits contains per-model logits
-            child_loss = model.compute_loss(output, y_true)  # type: ignore[arg-type]
+        for i, model in enumerate(self.models):
+            # Use each model's own cached output for its internal loss
+            child_output = self._cached_outputs[i]
+            child_loss = model.compute_loss(child_output, y_true)  # type: ignore[operator]
             total_loss = total_loss + child_loss
 
         return total_loss
