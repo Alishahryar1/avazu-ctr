@@ -4,16 +4,18 @@ import torch.nn.functional as F
 
 class DiversityBCELoss(nn.Module):
     """
-    Loss function that encourages diversity among multiple heads.
+    Loss function using Negative Correlation Learning (NCL) for multi-head diversity.
     
-    Combines binary cross entropy for each head with a diversity penalty (variance).
-    Loss = Mean(BCE(head_i, y)) - diversity_weight * Mean(Variance(heads))
+    NCL encourages heads to make different errors by penalizing correlation between
+    each head's prediction and the ensemble mean. This is bounded and stable unlike
+    raw variance maximization.
+    
+    Loss = Mean(BCE(head_i, y)) - diversity_weight * NCL_term
+    NCL_term = Mean((prob_i - ensemble_prob)^2)
     """
     def __init__(self, diversity_weight: float = 0.1):
         super().__init__()
         self.diversity_weight = diversity_weight
-        # We use BCEWithLogitsLoss per head
-        self.bce = nn.BCEWithLogitsLoss()
 
     def forward(self, aux_logits: torch.Tensor, y_true: torch.Tensor) -> torch.Tensor:
         """
@@ -26,25 +28,32 @@ class DiversityBCELoss(nn.Module):
         """
         # aux_logits shape: [K, B, 1]
         # y_true shape: [B, 1]
-        
-        # 1. Compute BCE for each head
-        # We can expand y_true to match aux_logits or iterate. 
-        # Iterating is simple.
-        total_bce = torch.tensor(0.0, device=aux_logits.device)
         num_heads = aux_logits.shape[0]
         
+        # Convert to probabilities for NCL computation (bounded 0-1)
+        probs = torch.sigmoid(aux_logits)  # [K, B, 1]
+        ensemble_prob = probs.mean(dim=0)   # [B, 1]
+        
+        # 1. BCE loss for each head
+        total_bce = torch.tensor(0.0, device=aux_logits.device, dtype=aux_logits.dtype)
         for i in range(num_heads):
-            total_bce += self.bce(aux_logits[i], y_true)
-            
+            total_bce = total_bce + F.binary_cross_entropy_with_logits(aux_logits[i], y_true)
         avg_bce = total_bce / num_heads
         
-        # 2. Compute Variance across heads for each sample
-        # Variance of logits across the K dimension
-        # var(dim=0) returns variance across heads [B, 1]
+        # 2. NCL diversity term
         if num_heads > 1:
-            # We want to maximize variance, so we subtract it
-            variance = torch.var(aux_logits, dim=0).mean()
-            loss = avg_bce - self.diversity_weight * variance
+            # Each head's deviation from ensemble mean
+            deviations = probs - ensemble_prob  # [K, B, 1]
+            
+            # NCL: squared deviations encourage negative correlation
+            # This is bounded since probs are in [0, 1], so deviations in [-1, 1]
+            ncl_term = (deviations ** 2).mean()
+            
+            # Subtract to encourage diversity (maximize disagreement)
+            loss = avg_bce - self.diversity_weight * ncl_term
+            
+            # Safety clamp to prevent numerical issues (loss should stay positive)
+            loss = torch.clamp(loss, min=1e-7)
         else:
             loss = avg_bce
             

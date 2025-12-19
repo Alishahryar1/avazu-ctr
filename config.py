@@ -91,7 +91,7 @@ CONFIG: ConfigType = {
     "model": {
         "backbone_type": "gated_dcn",
         "diversity_weight": 0.1,
-        "feature_bagging_ratio": 0.8,
+        "feature_bagging_ratio": 0.9,
         
         # Backbone Configuration (GatedDCN w/ neutralized MLP)
         "backbone_config": {
