@@ -162,26 +162,11 @@ class MultiHeadDiversityModel(BaseCTRModel):
             dnn_input = self.embed_ln(dnn_input)
 
         # Apply SENET
-        if self.use_senet:
-            if self.use_projection:
-                # After projection: split into uniform chunks for SENET
-                senet_input = list(dnn_input.split(self.embedding_dim, dim=1))
-                senet_output = self.senet(senet_input)
-                dnn_input = torch.cat(senet_output, dim=1)
-            else:
-                # We need to reconstruct the list of embeddings from the concatenated vector?
-                # This is inefficient/hard if sizes vary.
-                # Optimization: Pass list of embeddings to this method?
-                # But dnn_input is usually concatenated.
-                # Let's assume for Feature Bagging we handle embeddings before efficient concat if possible.
-                # Current implementation of SENetLayer expects list of tensors.
-                # If we are here, we might have issue if we only passed concatenated tensor.
-                # Correct approach: logic should be in main forward to handle list vs tensor.
-                pass
-                # For now, let's assume we proceed with the tensor flow and SENET logic is handled carefully.
-                # Actually, SENetLayer implementation expects a list of tensors [B, D_i].
-                # If we already concatenated, we can't easily undo if dimensions vary.
-                # So we should pass the list of embeddings to this function or handle SENET before this.
+        if self.use_senet and self.use_projection:
+            # After projection: split into uniform chunks for SENET
+            senet_input = list(dnn_input.split(self.embedding_dim, dim=1))
+            senet_output = self.senet(senet_input)
+            dnn_input = torch.cat(senet_output, dim=1)
 
         # Apply Feature Gating (alternative to SENET, works on concatenated tensor)
         if self.use_feature_gating:
@@ -203,37 +188,13 @@ class MultiHeadDiversityModel(BaseCTRModel):
         head_logits = []
 
         for head_idx, head in enumerate(self.heads):
-            # COPY the embeddings list to avoid modifying the original for other heads
-            # No, we can just mask on the fly.
-
-            # --- Feature Bagging ---
-            # Mask out features randomly (e.g. 20% dropped -> keep 80%)
-            # We create a mask of shape [Num_Features] and broadcast to batch?
-            # Or [Batch, Num_Features]? "Feature Bagging" usually means subsampling features per estimator (Random Forest style).
-            # So the set of features is fixed for the head?
-            # OR random per batch?
-            # User request: "random mask for this head... Create a random mask for this head... torch.bernoulli(..., 0.8)"
-            # User code calculates mask per forward pass: torch.bernoulli(...) inside the loop.
-            # shape: [1, embeddings.shape[1], 1] -> [1, Num_Fields, 1] broadcasted to [Batch, Num_Fields, Embed_Dim]?
-            # Wait, self.embeddings returns a list of tensors of potentially different sizes.
-            # We can't stack them easily into [B, N, D] unless all D are same.
-
             current_head_embeds = []
 
             if self.feature_bagging_ratio < 1.0:
                 # Use pre-generated mask for this head
                 mask = getattr(self, f"head_mask_{head_idx}")
 
-                for i, emb in enumerate(embeds_list):
-                    if mask[i] > 0.5:
-                        current_head_embeds.append(emb)
-                    else:
-                        # Zero out the embedding? Or remove it?
-                        # If we remove it, the input dimension to the following layers changes.
-                        # Backbone layers (Projection, DCN) usually expect fixed input dimension.
-                        # GatedDCN/DCNv2 with fixed weights expect fixed input size.
-                        # So we MUST Zero out.
-                        current_head_embeds.append(torch.zeros_like(emb))
+                current_head_embeds = [emb * mask[i] for i, emb in enumerate(embeds_list)]
             else:
                 current_head_embeds = embeds_list
 
