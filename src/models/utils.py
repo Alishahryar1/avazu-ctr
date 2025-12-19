@@ -13,6 +13,7 @@ def get_activation(name: str) -> nn.Module:
         "tanh": nn.Tanh(),
         "sigmoid": nn.Sigmoid(),
         "softmax": nn.Softmax(dim=-1),
+        "mish": nn.Mish(),
     }
     if name not in activations:
         raise ValueError(f"Unknown activation: {name}. Choose from {list(activations.keys())}")

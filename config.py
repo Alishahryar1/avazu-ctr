@@ -156,7 +156,7 @@ CONFIG: ConfigType = {
             # Head 4
             {
                 "hidden_dims": [1024],
-                "activation": "tanh",
+                "activation": "mish",
                 "dropout": 0.25,
                 "use_layer_norm": True,
                 "use_skip_connections": True
