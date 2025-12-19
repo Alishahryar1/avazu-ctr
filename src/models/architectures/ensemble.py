@@ -1,4 +1,5 @@
 """Ensemble model for CTR prediction."""
+
 from typing import Any, cast
 import torch
 import torch.nn as nn
@@ -15,39 +16,43 @@ def _create_model_from_config(
     vocab_sizes: dict[str, int],
     feature_names: list[str],
     parent_config: ConfigType,
-    seed: int
+    seed: int,
 ) -> BaseCTRModel:
     """
     Factory function to create a model from a ModelConfig.
-    
+
     Args:
         model_config: The model-specific config (GatedDCNConfig, STECConfig, or EnsembleConfig)
         vocab_sizes: Feature vocabulary sizes
         feature_names: List of feature names
         parent_config: The parent ConfigType for global settings (embedding_dim, etc.)
         seed: Random seed for this model's initialization
-        
+
     Returns:
         Instantiated model
     """
     # Import here to avoid circular imports
     from src.models.architectures.gated_dcn import GatedDCNModel
     from src.models.architectures.stec import STECModel
-    
+    from src.models.architectures.multi_head_diversity import MultiHeadDiversityModel
+
     # Set seed for reproducible initialization
     torch.manual_seed(seed)
-    
+
     # Create a full config by combining parent config with model-specific config
-    full_config: ConfigType = {**parent_config, 'model': model_config}  # type: ignore
-    
+    full_config: ConfigType = {**parent_config, "model": model_config}  # type: ignore
+
     # Detect model type by checking for unique keys
-    if 'models' in model_config:
+    if "models" in model_config:
         # EnsembleConfig - recursive!
         return EnsembleModel(vocab_sizes, feature_names, full_config, base_seed=seed)
-    elif 'stec_num_layers' in model_config:
+    elif "stec_num_layers" in model_config:
         # STECConfig
         return STECModel(vocab_sizes, feature_names, full_config)
-    elif 'use_dcn' in model_config:
+    elif "heads" in model_config and "backbone_type" in model_config:
+        # MultiHeadDiversityConfig
+        return MultiHeadDiversityModel(vocab_sizes, feature_names, full_config)
+    elif "use_dcn" in model_config:
         # GatedDCNConfig
         return GatedDCNModel(vocab_sizes, feature_names, full_config)
     else:
@@ -68,24 +73,25 @@ class EnsembleModel(BaseCTRModel):
         config: Configuration dictionary with `model.models` list of model configs.
         base_seed: Base seed for reproducibility. Model i uses seed = base_seed + i.
     """
+
     def __init__(
         self,
         vocab_sizes: dict[str, int],
         feature_names: list[str],
         config: ConfigType,
-        base_seed: int | None = None
+        base_seed: int | None = None,
     ):
         super().__init__()
-        model_config = cast(EnsembleConfig, config['model'])
-        
+        model_config = cast(EnsembleConfig, config["model"])
+
         # Get ensemble settings
-        self.base_seed: int = base_seed if base_seed is not None else config['seed']
-        self.ensemble_aggregation: str = model_config['ensemble_aggregation']
-        
+        self.base_seed: int = base_seed if base_seed is not None else config["seed"]
+        self.ensemble_aggregation: str = model_config["ensemble_aggregation"]
+
         # Get list of model configs
-        model_configs: list[Any] = model_config['models']
+        model_configs: list[Any] = model_config["models"]
         self.k: int = len(model_configs)
-        
+
         if self.k == 0:
             raise ValueError("Ensemble must have at least one model in 'models' list")
 
@@ -97,13 +103,13 @@ class EnsembleModel(BaseCTRModel):
                 vocab_sizes=vocab_sizes,
                 feature_names=feature_names,
                 parent_config=config,
-                seed=self.base_seed + i
+                seed=self.base_seed + i,
             )
             self.models.append(model)
 
         # Reset to base seed after initialization
         torch.manual_seed(self.base_seed)
-        
+
         # Internal loss for multi-branch architecture
         self._kbce_loss = KBCELoss()
 
@@ -119,7 +125,7 @@ class EnsembleModel(BaseCTRModel):
         """
         all_logits = []
         all_outputs = []  # Store full outputs for recursive loss computation
-        
+
         for model in self.models:
             output = model(x)
             all_logits.append(output["logits"])
@@ -129,9 +135,9 @@ class EnsembleModel(BaseCTRModel):
         stacked_logits = torch.stack(all_logits, dim=0)
 
         # Aggregate predictions
-        if self.ensemble_aggregation == 'mean':
+        if self.ensemble_aggregation == "mean":
             aggregated = stacked_logits.mean(dim=0)
-        elif self.ensemble_aggregation == 'median':
+        elif self.ensemble_aggregation == "median":
             aggregated = stacked_logits.median(dim=0).values
         else:
             raise ValueError(f"Unknown aggregation method: {self.ensemble_aggregation}")
@@ -141,32 +147,30 @@ class EnsembleModel(BaseCTRModel):
             "aux_logits": all_logits,  # List of k branch logits (for this level's K-BCE)
         }
 
-    def compute_loss(
-        self, 
-        output: ModelOutput, 
-        y_true: torch.Tensor
-    ) -> torch.Tensor:
+    def compute_loss(self, output: ModelOutput, y_true: torch.Tensor) -> torch.Tensor:
         """
         Compute recursive loss.
         """
         # 1. Compute THIS ensemble's structural loss (Aggregated + Branches)
         # This supervises the "glue" and forces branches to be predictive
-        current_level_loss = self._kbce_loss(output["logits"], output["aux_logits"], y_true)
-        
+        current_level_loss = self._kbce_loss(
+            output["logits"], output["aux_logits"], y_true
+        )
+
         total_loss = current_level_loss
-        
+
         # 2. Recursively add losses from children
         # This captures:
         #   a) Nested Ensemble structural losses
         #   b) Leaf model internal losses (e.g., regularization, aux tasks)
-        
+
         for model in self.models:
             # Assuming BaseCTRModel has a compute_loss method
             # If the model is a simple leaf with no internal loss, it returns 0
             # Note: We pass the same output since aux_logits contains per-model logits
             child_loss = model.compute_loss(output, y_true)  # type: ignore[arg-type]
             total_loss = total_loss + child_loss
-        
+
         return total_loss
 
     @classmethod
@@ -186,7 +190,9 @@ class EnsembleModel(BaseCTRModel):
             ModelOutput from the specified model
         """
         if model_idx < 0 or model_idx >= self.k:
-            raise ValueError(f"model_idx must be in range [0, {self.k-1}], got {model_idx}")
+            raise ValueError(
+                f"model_idx must be in range [0, {self.k - 1}], got {model_idx}"
+            )
         return self.models[model_idx](x)
 
     def get_model(self, idx: int) -> BaseCTRModel:
@@ -196,4 +202,3 @@ class EnsembleModel(BaseCTRModel):
     def num_models(self) -> int:
         """Return the number of models in the ensemble."""
         return self.k
-

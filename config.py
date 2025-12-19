@@ -34,6 +34,17 @@ CONFIG: ConfigType = {
         "hour",
     ],
     "min_freq": 0,
+    # === Automatic Mixed Precision (AMP) ===
+    "auto_amp": True,  # Enable AMP for faster training on CUDA (uses float16/bfloat16)
+    "amp_dtype": "float16",  # Options: 'float16' (more compatible), 'bfloat16' (better numerics)
+    # === Model Compilation ===
+    "compile_model": False,  # Enable torch.compile for faster training (requires PyTorch 2.0+)
+    # === Paths ===
+    "train_path": "data/raw/train.gz",
+    "test_path": "data/raw/test.gz",
+    "sub_path": "submission.csv",
+    "processed_path": "data/processed",
+    "models_path": "./checkpoints",
     # === Model Architecture - Embeddings ===
     "embedding_dim": 16,  # Default/fallback embedding dimension
     # Per-feature embedding configuration
@@ -115,98 +126,127 @@ CONFIG: ConfigType = {
         },
     },
     "embedding_projection_dim": None,  # None = no projection, int = project to uniform dim
-    # === MULTI-HEAD DIVERSITY MODEL ===
+    # === ENSEMBLE MODEL ===
+    # Combines 3 diverse architectures: MultiHeadDiversity, STEC-Transformer, GatedDCN+SENET
     "model": {
-        "backbone_type": "gated_dcn",
-        "diversity_weight": 0.1,
-        "feature_bagging_ratio": 0.9,
-        # Backbone Configuration (GatedDCN w/ neutralized MLP)
-        "backbone_config": {
-            # Interaction Layers
-            "use_dcn": True,
-            "dcn_num_layers": 6,
-            "dcn_use_layernorm": False,
-            "dcn_low_rank": None,
-            # Feature Gating (used instead of SENET)
-            "use_feature_gating": True,
-            "feature_gating_activation": "tanh",
-            "feature_gating_low_rank": None,
-            # SENET (Disabled)
-            "use_senet": False,
-            "senet_squeeze_funcs": ["mean", "max", "min", "std"],
-            "senet_reduction_ratio": 3,
-            "senet_hidden_activation": "gelu",
-            "senet_excitation_activation": "tanh",
-            "senet_num_groups": 2,
-            "senet_reweight_mode": "element",
-            "senet_use_fuse": True,
-            "senet_use_layer_norm": True,
-            # MLP Props (Neutralized/Ignored by MultiHeadDiversityModel, but required by type)
-            "mlp_hidden_dims": [0],  # Dummy value
-            "mlp_activation": "gelu",
-            "mlp_use_skip_connections": True,
-            "mlp_dropout": 0.0,
-            "use_layer_norm": True,
-            "focal_loss_gamma": 0.0,
-            "label_smoothing": 0.0,
-        },
-        # Multiple Independent Heads
-        "heads": [
-            # Head 1
+        "ensemble_aggregation": "mean",
+        "models": [
+            # === Model 1: MultiHeadDiversity (GatedDCN backbone) ===
             {
-                "hidden_dims": [256, 128],
-                "activation": "gelu",
-                "dropout": 0.15,
+                "backbone_type": "gated_dcn",
+                "diversity_weight": 0.1,
+                "feature_bagging_ratio": 0.9,
+                "backbone_config": {
+                    "use_dcn": True,
+                    "dcn_num_layers": 6,
+                    "dcn_use_layernorm": False,
+                    "dcn_low_rank": None,
+                    "use_feature_gating": True,
+                    "feature_gating_activation": "tanh",
+                    "feature_gating_low_rank": None,
+                    "use_senet": False,
+                    "senet_squeeze_funcs": ["mean", "max", "min", "std"],
+                    "senet_reduction_ratio": 3,
+                    "senet_hidden_activation": "gelu",
+                    "senet_excitation_activation": "tanh",
+                    "senet_num_groups": 2,
+                    "senet_reweight_mode": "element",
+                    "senet_use_fuse": True,
+                    "senet_use_layer_norm": True,
+                    "mlp_hidden_dims": [0],
+                    "mlp_activation": "gelu",
+                    "mlp_use_skip_connections": True,
+                    "mlp_dropout": 0.0,
+                    "use_layer_norm": True,
+                    "focal_loss_gamma": 0.0,
+                    "label_smoothing": 0.0,
+                },
+                "heads": [
+                    {
+                        "hidden_dims": [256, 128],
+                        "activation": "gelu",
+                        "dropout": 0.15,
+                        "use_layer_norm": True,
+                        "use_skip_connections": True,
+                    },
+                    {
+                        "hidden_dims": [512, 256],
+                        "activation": "relu",
+                        "dropout": 0.2,
+                        "use_layer_norm": True,
+                        "use_skip_connections": True,
+                    },
+                    {
+                        "hidden_dims": [128, 64],
+                        "activation": "silu",
+                        "dropout": 0.1,
+                        "use_layer_norm": True,
+                        "use_skip_connections": True,
+                    },
+                    {
+                        "hidden_dims": [1024, 512],
+                        "activation": "mish",
+                        "dropout": 0.25,
+                        "use_layer_norm": True,
+                        "use_skip_connections": True,
+                    },
+                    {
+                        "hidden_dims": [256, 128, 64],
+                        "activation": "gelu",
+                        "dropout": 0.15,
+                        "use_layer_norm": False,
+                        "use_skip_connections": True,
+                    },
+                    {
+                        "hidden_dims": [512, 256, 128],
+                        "activation": "relu",
+                        "dropout": 0.2,
+                        "use_layer_norm": True,
+                        "use_skip_connections": False,
+                    },
+                    {
+                        "hidden_dims": [128, 64, 32],
+                        "activation": "sigmoid",
+                        "dropout": 0.0,
+                        "use_layer_norm": False,
+                        "use_skip_connections": False,
+                    },
+                ],
+            },
+            # === Model 2: STEC-Transformer ===
+            {
+                "stec_num_layers": 2,
+                "stec_num_heads": 4,
+                "stec_hidden_dim": None,  # Defaults to 4 * embed_dim
+                "stec_dropout": 0.0,
+                "stec_use_ffn": True,
+                "stec_mlp_hidden_dims": [256, 128],
+            },
+            # === Model 3: GatedDCN with SENET+ ===
+            {
+                "use_dcn": True,
+                "dcn_num_layers": 4,
+                "dcn_use_layernorm": True,
+                "dcn_low_rank": 64,
+                "use_senet": True,
+                "senet_squeeze_funcs": ["mean", "max", "min", "std"],
+                "senet_reduction_ratio": 3,
+                "senet_hidden_activation": "gelu",
+                "senet_excitation_activation": "tanh",
+                "senet_num_groups": 2,
+                "senet_reweight_mode": "element",
+                "senet_use_fuse": True,
+                "senet_use_layer_norm": True,
+                "use_feature_gating": False,
+                "feature_gating_activation": "sigmoid",
+                "feature_gating_low_rank": None,
+                "mlp_hidden_dims": [512, 256, 128],
+                "mlp_activation": "gelu",
+                "mlp_use_skip_connections": True,
+                "mlp_dropout": 0.15,
                 "use_layer_norm": True,
-                "use_skip_connections": True,
-            },
-            # Head 2
-            {
-                "hidden_dims": [512, 256],
-                "activation": "relu",
-                "dropout": 0.2,
-                "use_layer_norm": True,
-                "use_skip_connections": True,
-            },
-            # Head 3
-            {
-                "hidden_dims": [128, 64],
-                "activation": "silu",
-                "dropout": 0.1,
-                "use_layer_norm": True,
-                "use_skip_connections": True,
-            },
-            # Head 4
-            {
-                "hidden_dims": [1024, 512],
-                "activation": "mish",
-                "dropout": 0.25,
-                "use_layer_norm": True,
-                "use_skip_connections": True,
-            },
-            # Head 5
-            {
-                "hidden_dims": [256, 128, 64],
-                "activation": "gelu",
-                "dropout": 0.15,
-                "use_layer_norm": False,
-                "use_skip_connections": True,
-            },
-            # Head 6
-            {
-                "hidden_dims": [512, 256, 128],
-                "activation": "relu",
-                "dropout": 0.2,
-                "use_layer_norm": True,
-                "use_skip_connections": False,
-            },
-            # Head 7
-            {
-                "hidden_dims": [128, 64, 32],
-                "activation": "sigmoid",
-                "dropout": 0.0,
-                "use_layer_norm": False,
-                "use_skip_connections": False,
+                "focal_loss_gamma": 0.0,
+                "label_smoothing": 0.0,
             },
         ],
     },
@@ -241,18 +281,7 @@ CONFIG: ConfigType = {
     #     "beta": 1.0,   # Learning rate smoothing parameter
     #     "l1": 2.0,     # L1 regularization (enables sparsity)
     #     "l2": 1.0,     # L2 regularization
-    # },
-    # === Automatic Mixed Precision (AMP) ===
-    "auto_amp": True,  # Enable AMP for faster training on CUDA (uses float16/bfloat16)
-    "amp_dtype": "float16",  # Options: 'float16' (more compatible), 'bfloat16' (better numerics)
-    # === Model Compilation ===
-    "compile_model": False,  # Enable torch.compile for faster training (requires PyTorch 2.0+)
-    # === Paths ===
-    "train_path": "data/raw/train.gz",
-    "test_path": "data/raw/test.gz",
-    "sub_path": "submission.csv",
-    "processed_path": "data/processed",
-    "models_path": "./checkpoints",
+    # }
 }
 
 
