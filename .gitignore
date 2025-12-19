@@ -8,3 +8,4 @@ __pycache__
 GEMINI.md
 AGENTS.md
 .pytest_cache
+.ruff_cache
