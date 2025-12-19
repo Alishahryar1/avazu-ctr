@@ -215,12 +215,12 @@ CONFIG: ConfigType = {
             },
             # === Model 2: STEC-Transformer ===
             {
-                "stec_num_layers": 2,
+                "stec_num_layers": 4,
                 "stec_num_heads": 4,
                 "stec_hidden_dim": None,  # Defaults to 4 * embed_dim
                 "stec_dropout": 0.0,
                 "stec_use_ffn": True,
-                "stec_mlp_hidden_dims": [256, 128],
+                "stec_mlp_hidden_dims": [1024, 512],
             },
             # === Model 3: GatedDCN with SENET+ ===
             {
@@ -240,7 +240,7 @@ CONFIG: ConfigType = {
                 "use_feature_gating": False,
                 "feature_gating_activation": "sigmoid",
                 "feature_gating_low_rank": None,
-                "mlp_hidden_dims": [512, 256, 128],
+                "mlp_hidden_dims": [1024, 512, 256, 128],
                 "mlp_activation": "gelu",
                 "mlp_use_skip_connections": True,
                 "mlp_dropout": 0.15,
