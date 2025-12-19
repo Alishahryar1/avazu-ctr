@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 """Entry point for data processing."""
+
 from src.processing.data_processor import process_data_polars
 
 if __name__ == "__main__":

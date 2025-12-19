@@ -1,7 +1,9 @@
 from typing import TypedDict, List
 
+
 class ResidualMLPConfig(TypedDict):
     """Configuration for a ResidualMLP layer."""
+
     hidden_dims: List[int]
     activation: str
     dropout: float

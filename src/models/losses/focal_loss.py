@@ -1,11 +1,13 @@
 import torch
 import torch.nn as nn
 
+
 class FocalLoss(nn.Module):
     """
     Focal Loss for handling class imbalance.
     Focuses on hard examples by down-weighting easy ones.
     """
+
     def __init__(self, gamma: float = 2.0, alpha: float | None = None):
         super().__init__()
         self.gamma = gamma
@@ -13,7 +15,7 @@ class FocalLoss(nn.Module):
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         bce_loss = nn.functional.binary_cross_entropy_with_logits(
-            logits, targets, reduction='none'
+            logits, targets, reduction="none"
         )
         probs = torch.sigmoid(logits)
         pt = targets * probs + (1 - targets) * (1 - probs)

@@ -1,4 +1,5 @@
 """Evaluation utilities for model performance."""
+
 import torch
 import numpy as np
 from sklearn.metrics import roc_auc_score, log_loss
@@ -28,7 +29,9 @@ def evaluate(model, data_loader, device, use_amp=False, amp_dtype=torch.float16)
             y_batch = y_batch.to(device).unsqueeze(1)
 
             # Use autocast for mixed precision inference
-            with torch.amp.autocast(device_type='cuda', dtype=amp_dtype, enabled=use_amp):
+            with torch.amp.autocast(
+                device_type="cuda", dtype=amp_dtype, enabled=use_amp
+            ):
                 # Unified interface: all models use same methods
                 output = model(X_batch)
                 loss = model.compute_loss(output, y_batch)

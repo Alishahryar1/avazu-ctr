@@ -20,45 +20,62 @@ import pickle
 # Schema Definition
 # =============================================================================
 SCHEMA = {
-    'id': pl.String,
-    'click': pl.UInt8,
-    'hour': pl.String,
-    'C1': pl.String,
-    'banner_pos': pl.String,
-    'site_id': pl.String,
-    'site_domain': pl.String,
-    'site_category': pl.String,
-    'app_id': pl.String,
-    'app_domain': pl.String,
-    'app_category': pl.String,
-    'device_id': pl.String,
-    'device_ip': pl.String,
-    'device_model': pl.String,
-    'device_type': pl.String,
-    'device_conn_type': pl.String,
-    'C14': pl.String,
-    'C15': pl.String,
-    'C16': pl.String,
-    'C17': pl.String,
-    'C18': pl.String,
-    'C19': pl.String,
-    'C20': pl.String,
-    'C21': pl.String,
+    "id": pl.String,
+    "click": pl.UInt8,
+    "hour": pl.String,
+    "C1": pl.String,
+    "banner_pos": pl.String,
+    "site_id": pl.String,
+    "site_domain": pl.String,
+    "site_category": pl.String,
+    "app_id": pl.String,
+    "app_domain": pl.String,
+    "app_category": pl.String,
+    "device_id": pl.String,
+    "device_ip": pl.String,
+    "device_model": pl.String,
+    "device_type": pl.String,
+    "device_conn_type": pl.String,
+    "C14": pl.String,
+    "C15": pl.String,
+    "C16": pl.String,
+    "C17": pl.String,
+    "C18": pl.String,
+    "C19": pl.String,
+    "C20": pl.String,
+    "C21": pl.String,
 }
 
 # Base categorical columns from raw data
 BASE_CATEGORICAL_COLS = [
-    'C1', 'banner_pos', 'site_id', 'site_domain', 'site_category',
-    'app_id', 'app_domain', 'app_category', 'device_id', 'device_ip',
-    'device_model', 'device_type', 'device_conn_type',
-    'C14', 'C15', 'C16', 'C17', 'C18', 'C19', 'C20', 'C21'
+    "C1",
+    "banner_pos",
+    "site_id",
+    "site_domain",
+    "site_category",
+    "app_id",
+    "app_domain",
+    "app_category",
+    "device_id",
+    "device_ip",
+    "device_model",
+    "device_type",
+    "device_conn_type",
+    "C14",
+    "C15",
+    "C16",
+    "C17",
+    "C18",
+    "C19",
+    "C20",
+    "C21",
 ]
 
 # Engineered categorical columns (user proxy + interaction features)
 ENGINEERED_CATEGORICAL_COLS = [
-    'user_proxy',
-    'device_id_x_app_id',
-    'device_ip_x_C14',
+    "user_proxy",
+    "device_id_x_app_id",
+    "device_ip_x_C14",
 ]
 
 # Combined list for vocabulary building
@@ -70,7 +87,7 @@ CATEGORICAL_COLS = BASE_CATEGORICAL_COLS + ENGINEERED_CATEGORICAL_COLS
 # =============================================================================
 def get_time_feature_expressions() -> list[pl.Expr]:
     """Returns Polars expressions for time-based feature extraction.
-    
+
     The 'hour' column format is YYMMDDHH (e.g., 14102100 = 2014-10-21, hour 00).
     Note: 'year' is not extracted as dataset is entirely from 2014 (zero variance).
     """
@@ -83,39 +100,40 @@ def get_time_feature_expressions() -> list[pl.Expr]:
         pl.col("hour").str.slice(6, 2).cast(pl.UInt8).alias("hour_of_day"),
         # Calculate actual day of week (0=Monday, 6=Sunday) by parsing as datetime
         # Append "00" for minutes since Polars requires both hour and minute in format string
-        (pl.col("hour") + "00").str.to_datetime("%y%m%d%H%M").dt.weekday().cast(pl.UInt8).alias("day_of_week"),
+        (pl.col("hour") + "00")
+        .str.to_datetime("%y%m%d%H%M")
+        .dt.weekday()
+        .cast(pl.UInt8)
+        .alias("day_of_week"),
     ]
 
 
 def get_user_proxy_expression() -> pl.Expr:
     """Creates a user proxy ID from device_ip + device_model.
-    
+
     Since device_id is null for ~82% of rows, we create a proxy user identifier
     by combining device_ip and device_model. This helps identify returning users.
     """
     return pl.concat_str(
-        [pl.col("device_ip"), pl.col("device_model")],
-        separator="_"
+        [pl.col("device_ip"), pl.col("device_model")], separator="_"
     ).alias("user_proxy")
 
 
 def get_interaction_feature_expressions() -> list[pl.Expr]:
     """Creates interaction features by combining strong feature pairs.
-    
+
     Key interactions identified from competition winners:
     - device_id + app_id: Captures user-app affinity
     - device_ip + C14: Captures IP-level behavioral patterns
     - user_proxy + app_id: Similar to device_id+app_id but more coverage
     """
     return [
-        pl.concat_str(
-            [pl.col("device_id"), pl.col("app_id")],
-            separator="_"
-        ).alias("device_id_x_app_id"),
-        pl.concat_str(
-            [pl.col("device_ip"), pl.col("C14")],
-            separator="_"
-        ).alias("device_ip_x_C14"),
+        pl.concat_str([pl.col("device_id"), pl.col("app_id")], separator="_").alias(
+            "device_id_x_app_id"
+        ),
+        pl.concat_str([pl.col("device_ip"), pl.col("C14")], separator="_").alias(
+            "device_ip_x_C14"
+        ),
     ]
 
 
@@ -130,28 +148,25 @@ CUMCOUNT_COLS = ["device_ip", "device_id"]
 def get_cumulative_count_expressions(cols: list[str]) -> list[pl.Expr]:
     """
     Create cumulative count expressions for specified columns.
-    
+
     Cumulative count captures how many times a value has appeared UP TO this point
     in the dataset (when sorted chronologically). This helps distinguish:
     - New users (low cumcount) vs returning users (high cumcount)
     - First impressions vs repeat impressions
-    
+
     Args:
         cols: Columns to compute cumulative counts for
-        
+
     Returns:
         List of Polars expressions for cumulative counts
     """
-    return [
-        pl.col(col).cum_count().over(col).alias(f"{col}_cumcount")
-        for col in cols
-    ]
+    return [pl.col(col).cum_count().over(col).alias(f"{col}_cumcount") for col in cols]
 
 
 def bin_cumcount_features(cols: list[str]) -> list[pl.Expr]:
     """
     Create binned versions of cumulative count features for categorical encoding.
-    
+
     Bins: 1 (first), 2-3, 4-10, 11-50, 51-100, 100+
     These bins distinguish user engagement levels.
     """
@@ -160,11 +175,16 @@ def bin_cumcount_features(cols: list[str]) -> list[pl.Expr]:
         cumcount_col = f"{col}_cumcount"
         binned_col = f"{col}_cumcount_bin"
         expr = (
-            pl.when(pl.col(cumcount_col) == 1).then(pl.lit("first"))
-            .when(pl.col(cumcount_col) <= 3).then(pl.lit("2-3"))
-            .when(pl.col(cumcount_col) <= 10).then(pl.lit("4-10"))
-            .when(pl.col(cumcount_col) <= 50).then(pl.lit("11-50"))
-            .when(pl.col(cumcount_col) <= 100).then(pl.lit("51-100"))
+            pl.when(pl.col(cumcount_col) == 1)
+            .then(pl.lit("first"))
+            .when(pl.col(cumcount_col) <= 3)
+            .then(pl.lit("2-3"))
+            .when(pl.col(cumcount_col) <= 10)
+            .then(pl.lit("4-10"))
+            .when(pl.col(cumcount_col) <= 50)
+            .then(pl.lit("11-50"))
+            .when(pl.col(cumcount_col) <= 100)
+            .then(pl.lit("51-100"))
             .otherwise(pl.lit("100+"))
             .alias(binned_col)
         )
@@ -178,11 +198,11 @@ def bin_cumcount_features(cols: list[str]) -> list[pl.Expr]:
 def get_time_delta_expressions() -> list[pl.Expr]:
     """
     Get expressions for time delta features - hours since last click for each user.
-    
+
     This captures click velocity patterns:
     - Bots/fraudulent clicks have very short intervals
     - Normal users have longer intervals between clicks
-    
+
     Returns:
         List of Polars expressions for time delta computation
     """
@@ -195,14 +215,12 @@ def get_time_delta_expressions() -> list[pl.Expr]:
 def get_time_delta_window_expressions() -> list[pl.Expr]:
     """
     Get window expressions for time delta that require _timestamp column.
-    
+
     Returns:
         List of expressions for hours_since_last_click
     """
     return [
-        (
-            pl.col("_timestamp") - pl.col("_timestamp").shift(1).over("user_proxy")
-        )
+        (pl.col("_timestamp") - pl.col("_timestamp").shift(1).over("user_proxy"))
         .dt.total_hours()
         .fill_null(0)
         .cast(pl.UInt32)
@@ -213,19 +231,23 @@ def get_time_delta_window_expressions() -> list[pl.Expr]:
 def bin_time_delta_features() -> pl.Expr:
     """
     Bin hours_since_last_click into categorical buckets.
-    
+
     EDA-optimized bins based on percentiles (80.8% are first clicks with 0):
     - 'first': First click (0 hours delta)
     - '1-4h': Up to P50 (short interval)
-    - '5-19h': P50 to P75 (medium interval)  
+    - '5-19h': P50 to P75 (medium interval)
     - '20-53h': P75 to P90 (long interval)
     - '>53h': Top 10% (re-engagement)
     """
     return (
-        pl.when(pl.col("hours_since_last_click") == 0).then(pl.lit("first"))
-        .when(pl.col("hours_since_last_click") <= 4).then(pl.lit("1-4h"))
-        .when(pl.col("hours_since_last_click") <= 19).then(pl.lit("5-19h"))
-        .when(pl.col("hours_since_last_click") <= 53).then(pl.lit("20-53h"))
+        pl.when(pl.col("hours_since_last_click") == 0)
+        .then(pl.lit("first"))
+        .when(pl.col("hours_since_last_click") <= 4)
+        .then(pl.lit("1-4h"))
+        .when(pl.col("hours_since_last_click") <= 19)
+        .then(pl.lit("5-19h"))
+        .when(pl.col("hours_since_last_click") <= 53)
+        .then(pl.lit("20-53h"))
         .otherwise(pl.lit(">53h"))
         .alias("hours_since_last_click_bin")
     )
@@ -237,13 +259,13 @@ def bin_time_delta_features() -> pl.Expr:
 def get_prev_clicks_expression(group_col: str = "user_proxy") -> pl.Expr:
     """
     Get expression for number of previous clicks for each user.
-    
+
     This is similar to cumulative count but shifted by 1, so it represents
     "how many clicks has this user made BEFORE this one".
-    
+
     Args:
         group_col: Column to group by
-        
+
     Returns:
         Polars expression for previous click count
     """
@@ -258,7 +280,7 @@ def get_prev_clicks_expression(group_col: str = "user_proxy") -> pl.Expr:
 def bin_prev_clicks(group_col: str) -> pl.Expr:
     """
     Bin previous click counts into categorical buckets.
-    
+
     EDA-optimized bins based on percentiles:
     - new (0): 29.4% of users
     - returning (1-7): Up to P50
@@ -268,10 +290,14 @@ def bin_prev_clicks(group_col: str) -> pl.Expr:
     """
     col_name = f"{group_col}_prev_clicks"
     return (
-        pl.when(pl.col(col_name) == 0).then(pl.lit("new"))
-        .when(pl.col(col_name) <= 7).then(pl.lit("returning"))
-        .when(pl.col(col_name) <= 32).then(pl.lit("regular"))
-        .when(pl.col(col_name) <= 224).then(pl.lit("heavy"))
+        pl.when(pl.col(col_name) == 0)
+        .then(pl.lit("new"))
+        .when(pl.col(col_name) <= 7)
+        .then(pl.lit("returning"))
+        .when(pl.col(col_name) <= 32)
+        .then(pl.lit("regular"))
+        .when(pl.col(col_name) <= 224)
+        .then(pl.lit("heavy"))
         .otherwise(pl.lit("power"))
         .alias(f"{col_name}_bin")
     )
@@ -285,7 +311,7 @@ def get_string_cast_expressions(columns: list[str]) -> list[pl.Expr]:
 def bin_count_features(count_cols: list[str]) -> list[pl.Expr]:
     """
     Create binned versions of count features for use as categorical features.
-    
+
     Bins: 0, 1, 2-5, 6-10, 11-50, 51-100, 101-500, 501-1000, 1000+
     This converts continuous counts into categorical buckets.
     """
@@ -294,14 +320,22 @@ def bin_count_features(count_cols: list[str]) -> list[pl.Expr]:
         count_col = f"{col}_count"
         binned_col = f"{col}_count_bin"
         expr = (
-            pl.when(pl.col(count_col) == 0).then(pl.lit("0"))
-            .when(pl.col(count_col) == 1).then(pl.lit("1"))
-            .when(pl.col(count_col) <= 5).then(pl.lit("2-5"))
-            .when(pl.col(count_col) <= 10).then(pl.lit("6-10"))
-            .when(pl.col(count_col) <= 50).then(pl.lit("11-50"))
-            .when(pl.col(count_col) <= 100).then(pl.lit("51-100"))
-            .when(pl.col(count_col) <= 500).then(pl.lit("101-500"))
-            .when(pl.col(count_col) <= 1000).then(pl.lit("501-1000"))
+            pl.when(pl.col(count_col) == 0)
+            .then(pl.lit("0"))
+            .when(pl.col(count_col) == 1)
+            .then(pl.lit("1"))
+            .when(pl.col(count_col) <= 5)
+            .then(pl.lit("2-5"))
+            .when(pl.col(count_col) <= 10)
+            .then(pl.lit("6-10"))
+            .when(pl.col(count_col) <= 50)
+            .then(pl.lit("11-50"))
+            .when(pl.col(count_col) <= 100)
+            .then(pl.lit("51-100"))
+            .when(pl.col(count_col) <= 500)
+            .then(pl.lit("101-500"))
+            .when(pl.col(count_col) <= 1000)
+            .then(pl.lit("501-1000"))
             .otherwise(pl.lit("1000+"))
             .alias(binned_col)
         )
@@ -312,7 +346,7 @@ def bin_count_features(count_cols: list[str]) -> list[pl.Expr]:
 def bin_hourly_impressions() -> pl.Expr:
     """
     Bin hourly impressions into categorical buckets.
-    
+
     EDA-optimized bins based on percentiles (65.4% are single impressions):
     - 'single' (1): P50/median, most common
     - '2' (2): P75, returning within hour
@@ -320,9 +354,12 @@ def bin_hourly_impressions() -> pl.Expr:
     - '5+': Top 10% high-frequency users
     """
     return (
-        pl.when(pl.col("user_hourly_impressions") == 1).then(pl.lit("single"))
-        .when(pl.col("user_hourly_impressions") == 2).then(pl.lit("2"))
-        .when(pl.col("user_hourly_impressions") <= 4).then(pl.lit("3-4"))
+        pl.when(pl.col("user_hourly_impressions") == 1)
+        .then(pl.lit("single"))
+        .when(pl.col("user_hourly_impressions") == 2)
+        .then(pl.lit("2"))
+        .when(pl.col("user_hourly_impressions") <= 4)
+        .then(pl.lit("3-4"))
         .otherwise(pl.lit("5+"))
         .alias("user_hourly_impressions_bin")
     )
@@ -331,7 +368,9 @@ def bin_hourly_impressions() -> pl.Expr:
 # =============================================================================
 # Backward-Compatible Wrapper Functions (for tests)
 # =============================================================================
-def build_vocabularies(lf_train: pl.LazyFrame, cat_cols: list[str], min_freq: int) -> tuple[dict, dict]:
+def build_vocabularies(
+    lf_train: pl.LazyFrame, cat_cols: list[str], min_freq: int
+) -> tuple[dict, dict]:
     """
     Build vocabularies using memory-efficient sequential processing.
 
@@ -349,8 +388,7 @@ def build_vocabularies(lf_train: pl.LazyFrame, cat_cols: list[str], min_freq: in
 
     for i, col in enumerate(cat_cols):
         vocab_query = (
-            lf_train
-            .select(pl.col(col).cast(pl.String))
+            lf_train.select(pl.col(col).cast(pl.String))
             .group_by(col)
             .len()
             .filter(pl.col("len") >= min_freq)
@@ -358,7 +396,7 @@ def build_vocabularies(lf_train: pl.LazyFrame, cat_cols: list[str], min_freq: in
         )
 
         try:
-            counts = vocab_query.collect(engine='streaming')
+            counts = vocab_query.collect(engine="streaming")
         except Exception:
             counts = vocab_query.collect()
 
@@ -379,9 +417,7 @@ def build_vocabularies(lf_train: pl.LazyFrame, cat_cols: list[str], min_freq: in
 
 
 def compute_count_features_from_train(
-    lf_train: pl.LazyFrame,
-    lf_test: pl.LazyFrame,
-    count_cols: list[str]
+    lf_train: pl.LazyFrame, lf_test: pl.LazyFrame, count_cols: list[str]
 ) -> tuple[pl.LazyFrame, pl.LazyFrame]:
     """
     Compute count/frequency features based on training data statistics.
@@ -401,15 +437,14 @@ def compute_count_features_from_train(
 
     for i, col in enumerate(count_cols):
         count_query = (
-            lf_train
-            .select(pl.col(col).cast(pl.String))
+            lf_train.select(pl.col(col).cast(pl.String))
             .group_by(col)
             .len()
             .rename({"len": f"{col}_count"})
         )
 
         try:
-            count_df = count_query.collect(engine='streaming')
+            count_df = count_query.collect(engine="streaming")
         except Exception:
             count_df = count_query.collect()
 
@@ -424,8 +459,7 @@ def compute_count_features_from_train(
             print(f"  Computed count feature {i + 1}/{len(count_cols)}: {col}")
 
     fill_exprs = [
-        pl.col(f"{col}_count").fill_null(0).cast(pl.UInt32)
-        for col in count_cols
+        pl.col(f"{col}_count").fill_null(0).cast(pl.UInt32) for col in count_cols
     ]
     lf_train = lf_train.with_columns(fill_exprs)
     lf_test = lf_test.with_columns(fill_exprs)
@@ -434,8 +468,7 @@ def compute_count_features_from_train(
 
 
 def compute_hourly_aggregated_features(
-    lf_train: pl.LazyFrame,
-    lf_test: pl.LazyFrame
+    lf_train: pl.LazyFrame, lf_test: pl.LazyFrame
 ) -> tuple[pl.LazyFrame, pl.LazyFrame]:
     """
     Compute hourly aggregated features for user activity.
@@ -453,34 +486,25 @@ def compute_hourly_aggregated_features(
     print("  Computing hourly aggregated features...")
 
     hourly_query = (
-        lf_train
-        .select(["user_proxy", "hour"])
+        lf_train.select(["user_proxy", "hour"])
         .group_by(["user_proxy", "hour"])
         .len()
         .rename({"len": "user_hourly_impressions"})
     )
 
     try:
-        hourly_counts_df = hourly_query.collect(engine='streaming')
+        hourly_counts_df = hourly_query.collect(engine="streaming")
     except Exception:
         hourly_counts_df = hourly_query.collect()
 
     hourly_counts = hourly_counts_df.lazy()
 
-    lf_train = (
-        lf_train
-        .join(hourly_counts, on=["user_proxy", "hour"], how="left")
-        .with_columns(
-            pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32)
-        )
-    )
-    lf_test = (
-        lf_test
-        .join(hourly_counts, on=["user_proxy", "hour"], how="left")
-        .with_columns(
-            pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32)
-        )
-    )
+    lf_train = lf_train.join(
+        hourly_counts, on=["user_proxy", "hour"], how="left"
+    ).with_columns(pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32))
+    lf_test = lf_test.join(
+        hourly_counts, on=["user_proxy", "hour"], how="left"
+    ).with_columns(pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32))
 
     del hourly_counts_df, hourly_counts
     gc.collect()
@@ -489,8 +513,7 @@ def compute_hourly_aggregated_features(
 
 
 def compute_time_delta_features(
-    lf: pl.LazyFrame,
-    group_col: str = "user_proxy"
+    lf: pl.LazyFrame, group_col: str = "user_proxy"
 ) -> pl.LazyFrame:
     """
     Compute time delta features - hours since last click for each user.
@@ -506,15 +529,11 @@ def compute_time_delta_features(
         LazyFrame with time delta features added
     """
     lf = lf.with_columns(
-        (pl.col("hour") + "00")
-        .str.to_datetime("%y%m%d%H%M")
-        .alias("_timestamp")
+        (pl.col("hour") + "00").str.to_datetime("%y%m%d%H%M").alias("_timestamp")
     )
 
     lf = lf.with_columns(
-        (
-            pl.col("_timestamp") - pl.col("_timestamp").shift(1).over(group_col)
-        )
+        (pl.col("_timestamp") - pl.col("_timestamp").shift(1).over(group_col))
         .dt.total_hours()
         .fill_null(0)
         .cast(pl.UInt32)
@@ -527,8 +546,7 @@ def compute_time_delta_features(
 
 
 def compute_previous_click_count(
-    lf: pl.LazyFrame,
-    group_col: str = "user_proxy"
+    lf: pl.LazyFrame, group_col: str = "user_proxy"
 ) -> pl.LazyFrame:
     """
     Compute the number of previous clicks for each user up to (but not including) current row.
@@ -555,26 +573,23 @@ def compute_previous_click_count(
 # Statistics Collection (Single Materialization Point)
 # =============================================================================
 def collect_all_statistics(
-    lf_train: pl.LazyFrame,
-    count_cols: list[str],
-    cat_cols: list[str],
-    min_freq: int
+    lf_train: pl.LazyFrame, count_cols: list[str], cat_cols: list[str], min_freq: int
 ) -> tuple[dict[str, pl.LazyFrame], pl.LazyFrame, dict, dict]:
     """
     Collect ALL required statistics in a single batched operation.
-    
+
     This is the ONLY materialization point before the final sink.
     Collects:
     - Count statistics for count_cols
     - Hourly aggregation statistics
     - Vocabularies for cat_cols
-    
+
     Args:
         lf_train: Training LazyFrame (with all base features already added)
         count_cols: Columns to compute counts for
         cat_cols: Categorical columns for vocabulary building
         min_freq: Minimum frequency for vocabulary inclusion
-        
+
     Returns:
         count_lfs: Dict of column -> LazyFrame with counts
         hourly_lf: LazyFrame with hourly aggregations
@@ -582,89 +597,86 @@ def collect_all_statistics(
         feat_maps: Dict of column -> value->id mapping
     """
     print("Collecting statistics (single materialization point)...")
-    
+
     # =========================================================================
     # 1. Count features - batch collect all at once
     # =========================================================================
     print(f"  Computing count features for: {count_cols}")
     count_dfs = {}
-    
+
     for col in count_cols:
         count_query = (
-            lf_train
-            .select(pl.col(col).cast(pl.String))
+            lf_train.select(pl.col(col).cast(pl.String))
             .group_by(col)
             .len()
             .rename({"len": f"{col}_count"})
         )
         try:
-            count_dfs[col] = count_query.collect(engine='streaming')
+            count_dfs[col] = count_query.collect(engine="streaming")
         except Exception:
             count_dfs[col] = count_query.collect()
-    
+
     print(f"  Collected {len(count_dfs)} count statistics")
-    
+
     # =========================================================================
     # 2. Hourly aggregation
     # =========================================================================
     print("  Computing hourly aggregated features...")
     hourly_query = (
-        lf_train
-        .select(["user_proxy", "hour"])
+        lf_train.select(["user_proxy", "hour"])
         .group_by(["user_proxy", "hour"])
         .len()
         .rename({"len": "user_hourly_impressions"})
     )
-    
+
     try:
-        hourly_df = hourly_query.collect(engine='streaming')
+        hourly_df = hourly_query.collect(engine="streaming")
     except Exception:
         hourly_df = hourly_query.collect()
-    
+
     print(f"  Collected hourly statistics")
-    
+
     # =========================================================================
     # 3. Vocabularies - batch collect
     # =========================================================================
     print(f"  Building vocabularies for {len(cat_cols)} columns...")
     vocab_sizes = {}
     feat_maps = {}
-    
+
     for i, col in enumerate(cat_cols):
         vocab_query = (
-            lf_train
-            .select(pl.col(col).cast(pl.String))
+            lf_train.select(pl.col(col).cast(pl.String))
             .group_by(col)
             .len()
             .filter(pl.col("len") >= min_freq)
             .sort(col)
         )
-        
+
         try:
-            counts = vocab_query.collect(engine='streaming')
+            counts = vocab_query.collect(engine="streaming")
         except Exception:
             counts = vocab_query.collect()
-        
+
         # Build mapping: value -> sequential ID (starting at 1, 0 = <UNK>)
         values = counts[col].to_list()
         mapping = {val: idx + 1 for idx, val in enumerate(values)}
-        
+
         feat_maps[col] = mapping
         vocab_sizes[col] = len(mapping) + 1  # +1 for <UNK> token
-        
+
         del counts, values
-        
+
         if (i + 1) % 10 == 0 or i == len(cat_cols) - 1:
             print(f"    Built vocabulary for {i + 1}/{len(cat_cols)} columns")
-    
+
     # Convert count DataFrames to LazyFrames for lazy joins
     count_lfs = {col: df.lazy() for col, df in count_dfs.items()}
     hourly_lf = hourly_df.lazy()
-    
+
     # Cleanup eager DataFrames
     del count_dfs, hourly_df
     gc.collect()
-    
+
     print("Statistics collection complete!")
     return count_lfs, hourly_lf, vocab_sizes, feat_maps
 
@@ -673,42 +685,37 @@ def apply_statistics_lazy(
     lf: pl.LazyFrame,
     count_lfs: dict[str, pl.LazyFrame],
     hourly_lf: pl.LazyFrame,
-    count_cols: list[str]
+    count_cols: list[str],
 ) -> pl.LazyFrame:
     """
     Apply pre-computed statistics to a LazyFrame using lazy joins.
-    
+
     All joins are lazy - no materialization happens here.
-    
+
     Args:
         lf: Input LazyFrame
         count_lfs: Dict of column -> LazyFrame with counts
         hourly_lf: LazyFrame with hourly aggregations
         count_cols: Columns to join counts for
-        
+
     Returns:
         LazyFrame with statistics joined
     """
     # Join count features (all lazy)
     for col in count_cols:
         lf = lf.join(count_lfs[col], on=col, how="left")
-    
+
     # Fill nulls and cast counts
     fill_exprs = [
-        pl.col(f"{col}_count").fill_null(0).cast(pl.UInt32)
-        for col in count_cols
+        pl.col(f"{col}_count").fill_null(0).cast(pl.UInt32) for col in count_cols
     ]
     lf = lf.with_columns(fill_exprs)
-    
+
     # Join hourly features (lazy)
-    lf = (
-        lf
-        .join(hourly_lf, on=["user_proxy", "hour"], how="left")
-        .with_columns(
-            pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32)
-        )
+    lf = lf.join(hourly_lf, on=["user_proxy", "hour"], how="left").with_columns(
+        pl.col("user_hourly_impressions").fill_null(1).cast(pl.UInt32)
     )
-    
+
     return lf
 
 
@@ -718,21 +725,20 @@ def apply_statistics_lazy(
 def get_lazy_vocab_map(lf: pl.LazyFrame, col: str, min_freq: int) -> pl.LazyFrame:
     """
     Creates a LazyFrame mapping for a specific column.
-    
+
     Builds a vocabulary by filtering values with frequency >= min_freq,
     then assigns sequential IDs starting at 1 (0 is reserved for <UNK>).
-    
+
     Args:
         lf: Training LazyFrame to build vocabulary from
         col: Column name to build vocabulary for
         min_freq: Minimum frequency threshold for inclusion
-        
+
     Returns:
         LazyFrame with two columns: [col, '{col}_id'] where _id contains Int32 IDs
     """
     return (
-        lf
-        .group_by(col)
+        lf.group_by(col)
         .len()
         .filter(pl.col("len") >= min_freq)
         .select(pl.col(col))
@@ -744,27 +750,24 @@ def get_lazy_vocab_map(lf: pl.LazyFrame, col: str, min_freq: int) -> pl.LazyFram
 
 
 def apply_lazy_vocab(
-    lf_data: pl.LazyFrame, 
-    lf_vocab: pl.LazyFrame, 
-    col: str
+    lf_data: pl.LazyFrame, lf_vocab: pl.LazyFrame, col: str
 ) -> pl.LazyFrame:
     """
     Joins the vocabulary LazyFrame to the data LazyFrame.
-    
+
     Replaces the original string column with integer IDs via a lazy join.
     Unseen or low-frequency values get mapped to 0 (<UNK>).
-    
+
     Args:
         lf_data: Data LazyFrame to apply vocabulary to
         lf_vocab: Vocabulary LazyFrame from get_lazy_vocab_map
         col: Column name being transformed
-        
+
     Returns:
         LazyFrame with the original column replaced by integer IDs
     """
     return (
-        lf_data
-        .join(lf_vocab, on=col, how="left")
+        lf_data.join(lf_vocab, on=col, how="left")
         .drop(col)  # Drop original string column
         .rename({f"{col}_id": col})  # Rename ID column to original name
         .with_columns(pl.col(col).fill_null(0))  # Fill <UNK> with 0
@@ -772,68 +775,62 @@ def apply_lazy_vocab(
 
 
 def collect_stats_pass(
-    lf: pl.LazyFrame, 
-    count_cols: list[str], 
-    cat_cols: list[str], 
-    min_freq: int
+    lf: pl.LazyFrame, count_cols: list[str], cat_cols: list[str], min_freq: int
 ) -> tuple[pl.LazyFrame, dict[str, pl.LazyFrame], dict[str, pl.LazyFrame]]:
     """
     Pass 1: Materialize only the statistics (Vocabs, Counts, Hourly).
-    
+
     These are small tables (aggregated stats), so holding them in memory is fine.
     Returns them as LazyFrames backed by in-memory DataFrames to be joined in Pass 2.
-    
+
     This breaks the circular dependency that prevents sink_parquet from working:
     - The sink needs vocab stats to process rows
     - Vocab stats need full scan of source data
     - By materializing stats first, the sink graph becomes streamable
-    
+
     Args:
         lf: Training LazyFrame with base features
         count_cols: Columns to compute counts for
         cat_cols: Columns to build vocabularies for
         min_freq: Minimum frequency for vocabulary inclusion
-        
+
     Returns:
         hourly_lf: LazyFrame with hourly aggregations
         count_lfs: Dict of column -> LazyFrame with counts
         vocab_lfs: Dict of column -> LazyFrame with vocab mappings
     """
     print("  [Pass 1] Collecting global statistics (Counts, Hourly, Vocabs)...")
-    
+
     # 1. Hourly Impressions
     print("    Computing hourly stats...")
     hourly_df = (
-        lf
-        .group_by(["user_proxy", "hour"])
+        lf.group_by(["user_proxy", "hour"])
         .len()
         .rename({"len": "user_hourly_impressions"})
         .with_columns(pl.col("user_hourly_impressions").cast(pl.UInt32))
         .collect()  # Materialize
     )
-    
+
     # 2. Count Features
     print(f"    Computing counts for {len(count_cols)} features...")
     count_lfs = {}
     for col in count_cols:
         count_df = (
-            lf
-            .group_by(col)
+            lf.group_by(col)
             .len()
             .rename({"len": f"{col}_count"})
             .with_columns(pl.col(f"{col}_count").cast(pl.UInt32))
             .collect()  # Materialize
         )
         count_lfs[col] = count_df.lazy()  # Convert back to Lazy for joining
-    
+
     # 3. Vocabularies (if cat_cols provided)
     vocab_lfs = {}
     if cat_cols:
         print(f"    Building vocabularies for {len(cat_cols)} columns...")
         for i, col in enumerate(cat_cols):
             vocab_df = (
-                lf
-                .group_by(col)
+                lf.group_by(col)
                 .len()
                 .filter(pl.col("len") >= min_freq)
                 .select(pl.col(col))
@@ -843,10 +840,10 @@ def collect_stats_pass(
                 .collect()  # Materialize
             )
             vocab_lfs[col] = vocab_df.lazy()  # Convert back to Lazy
-            
+
             if (i + 1) % 5 == 0 or i == len(cat_cols) - 1:
                 print(f"      Built {i + 1}/{len(cat_cols)} vocabularies")
-    
+
     return hourly_df.lazy(), count_lfs, vocab_lfs
 
 
@@ -856,14 +853,14 @@ def apply_transforms_lazy(
     count_lfs: dict[str, pl.LazyFrame],
     vocab_lfs: dict[str, pl.LazyFrame],
     count_cols: list[str],
-    cat_cols: list[str]
+    cat_cols: list[str],
 ) -> pl.LazyFrame:
     """
     Pass 2: Apply the joins using the pre-computed (static) stats.
-    
+
     This graph is fully streamable because the RHS of joins are backed
     by in-memory DataFrames (materialized in Pass 1), not lazy scans.
-    
+
     Args:
         lf: LazyFrame to transform (with base features)
         hourly_lf: Pre-computed hourly stats (from collect_stats_pass)
@@ -871,20 +868,21 @@ def apply_transforms_lazy(
         vocab_lfs: Pre-computed vocabulary mappings per column
         count_cols: List of count feature columns
         cat_cols: List of categorical columns for vocab mapping
-        
+
     Returns:
         Transformed LazyFrame ready for sink
     """
     # 1. Join Hourly
     lf = lf.join(hourly_lf, on=["user_proxy", "hour"], how="left")
-    
+
     # 2. Join Counts
     for col in count_cols:
         lf = lf.join(count_lfs[col], on=col, how="left")
 
     # 3. Fill Nulls (for counts/hourly - unseen values get 0/1)
-    fill_exprs = [pl.col("user_hourly_impressions").fill_null(1)] + \
-                 [pl.col(f"{c}_count").fill_null(0) for c in count_cols]
+    fill_exprs = [pl.col("user_hourly_impressions").fill_null(1)] + [
+        pl.col(f"{c}_count").fill_null(0) for c in count_cols
+    ]
     lf = lf.with_columns(fill_exprs)
 
     # 4. Binning (Pure Expressions - stays lazy)
@@ -901,14 +899,14 @@ def apply_transforms_lazy(
     for col in cat_cols:
         vocab_lf = vocab_lfs[col]
         lf = (
-            lf
-            .join(vocab_lf, on=col, how="left")
+            lf.join(vocab_lf, on=col, how="left")
             .drop(col)  # Drop original string
             .rename({f"{col}_id": col})  # Rename ID to original
             .with_columns(pl.col(col).fill_null(0))  # Fill UNK with 0
         )
-        
+
     return lf
+
 
 # =============================================================================
 # Main Processing Pipeline (Two-Pass Hybrid)
@@ -916,12 +914,12 @@ def apply_transforms_lazy(
 def process_data_polars() -> tuple[dict, list, int, int]:
     """
     Main data processing pipeline using Three-Step Materialization approach.
-    
+
     This approach fixes the streaming blockade caused by sort/window functions:
     - Step 1: Materialize foundation (sort + windows) to temp parquet
     - Step 2: Collect statistics from foundation parquet
     - Step 3: Stream joins and sink to final parquet (fully streamable)
-    
+
     Output files are saved to CONFIG['processed_path']:
     - train.parquet: Training data with features and labels
     - test.parquet: Test data with features and IDs
@@ -937,7 +935,7 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     print("Loading data with Polars (Three-Step Materialization Pipeline)...")
     print("NOTE: Statistics computed from combined train+test for maximum coverage")
 
-    output_path = Path(CONFIG['processed_path'])
+    output_path = Path(CONFIG["processed_path"])
     output_path.mkdir(parents=True, exist_ok=True)
     temp_base_path = output_path / "base_sorted_windowed.parquet"
 
@@ -946,14 +944,14 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     cumcount_bin_cols = [f"{col}_cumcount_bin" for col in CUMCOUNT_COLS]
     final_cat_cols = (
         CATEGORICAL_COLS
-        + ['month', 'day_of_month', 'hour_of_day', 'day_of_week']
+        + ["month", "day_of_month", "hour_of_day", "day_of_week"]
         + count_bin_cols
         + cumcount_bin_cols
-        + ['user_hourly_impressions_bin']
-        + ['hours_since_last_click_bin']
-        + ['user_proxy_prev_clicks_bin']
+        + ["user_hourly_impressions_bin"]
+        + ["hours_since_last_click_bin"]
+        + ["user_proxy_prev_clicks_bin"]
     )
-    
+
     print(f"Total categorical features: {len(final_cat_cols)}")
 
     # =========================================================================
@@ -963,42 +961,47 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     # =========================================================================
     if not temp_base_path.exists():
         print("\n--- STEP 1: Materializing Foundation (Sort + Windows) ---")
-        
+
         # Scan train and test with source markers
-        lf_train = (
-            pl.scan_csv(CONFIG['train_path'], schema_overrides=SCHEMA)
-            .with_columns(pl.lit("train").alias("_source"))
-        )
-        lf_test = (
-            pl.scan_csv(CONFIG['test_path'], schema_overrides=SCHEMA)
-            .with_columns(pl.lit("test").alias("_source"))
-        )
-        
+        lf_train = pl.scan_csv(
+            CONFIG["train_path"], schema_overrides=SCHEMA
+        ).with_columns(pl.lit("train").alias("_source"))
+        lf_test = pl.scan_csv(
+            CONFIG["test_path"], schema_overrides=SCHEMA
+        ).with_columns(pl.lit("test").alias("_source"))
+
         lf_combined = pl.concat([lf_train, lf_test], how="diagonal")
-        
+
         # Apply the "Heavy" operations (base features + sort + windows)
         lf_foundation = (
-            lf_combined
-            .with_columns([
-                get_user_proxy_expression(),
-                *get_interaction_feature_expressions(),
-                *get_time_feature_expressions(),
-            ])
-            .sort(CONFIG['data_processor_sort_keys'])  # THE STREAMING BLOCKADE #1 (configurable)
+            lf_combined.with_columns(
+                [
+                    get_user_proxy_expression(),
+                    *get_interaction_feature_expressions(),
+                    *get_time_feature_expressions(),
+                ]
+            )
+            .sort(
+                CONFIG["data_processor_sort_keys"]
+            )  # THE STREAMING BLOCKADE #1 (configurable)
             .with_columns(get_time_delta_expressions())
-            .with_columns([
-                *get_cumulative_count_expressions(CUMCOUNT_COLS),  # THE STREAMING BLOCKADE #2
-                *get_time_delta_window_expressions(),
-                get_prev_clicks_expression("user_proxy"),
-            ])
+            .with_columns(
+                [
+                    *get_cumulative_count_expressions(
+                        CUMCOUNT_COLS
+                    ),  # THE STREAMING BLOCKADE #2
+                    *get_time_delta_window_expressions(),
+                    get_prev_clicks_expression("user_proxy"),
+                ]
+            )
             .drop("_timestamp")
         )
-        
+
         # Materialize to disk - this "cuts" the lazy graph
         print("  Collecting and writing foundation to parquet...")
         lf_foundation.collect().write_parquet(temp_base_path)
         print(f"  Foundation materialized to {temp_base_path}")
-        
+
         del lf_foundation, lf_combined, lf_train, lf_test
         gc.collect()
     else:
@@ -1009,37 +1012,42 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     # Statistics are collected from the pre-sorted, pre-windowed parquet.
     # =========================================================================
     print("\n--- STEP 2: Pass 1 (Statistics Collection from Foundation) ---")
-    
+
     lf_foundation_scan = pl.scan_parquet(temp_base_path)
-    
+
     # 2.1 Collect Counts & Hourly (no vocab yet)
     hourly_lf, count_lfs, _ = collect_stats_pass(
-        lf_foundation_scan, 
-        COUNT_FEATURE_COLS, 
+        lf_foundation_scan,
+        COUNT_FEATURE_COLS,
         [],  # No vocabs yet
-        CONFIG['min_freq']
+        CONFIG["min_freq"],
     )
-    
+
     # 2.2 Create temp LF for vocab collection (needs counts/hourly/bins applied)
     lf_temp_vocab = apply_transforms_lazy(
         pl.scan_parquet(temp_base_path),  # Fresh scan
-        hourly_lf, count_lfs, {},
-        COUNT_FEATURE_COLS, []  # No vocab mapping yet
+        hourly_lf,
+        count_lfs,
+        {},
+        COUNT_FEATURE_COLS,
+        [],  # No vocab mapping yet
     )
-    
+
     # 2.3 Collect Vocabularies from the binned features
     _, _, vocab_lfs = collect_stats_pass(
-        lf_temp_vocab, 
+        lf_temp_vocab,
         [],  # No counts needed (already done)
-        final_cat_cols, 
-        CONFIG['min_freq']
+        final_cat_cols,
+        CONFIG["min_freq"],
     )
-    
+
     # Clean up temp graph
     del lf_temp_vocab
     gc.collect()
-    
-    print(f"  Collected stats for {len(count_lfs)} count features and {len(vocab_lfs)} vocabularies")
+
+    print(
+        f"  Collected stats for {len(count_lfs)} count features and {len(vocab_lfs)} vocabularies"
+    )
 
     # =========================================================================
     # STEP 3: Pass 2 (Streaming Sink)
@@ -1053,30 +1061,37 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     # Fresh scan of foundation for Pass 2
     lf_final = apply_transforms_lazy(
         pl.scan_parquet(temp_base_path),  # Already sorted, windows computed
-        hourly_lf, count_lfs, vocab_lfs,
-        COUNT_FEATURE_COLS, final_cat_cols
+        hourly_lf,
+        count_lfs,
+        vocab_lfs,
+        COUNT_FEATURE_COLS,
+        final_cat_cols,
     )
 
     # Column selection
-    train_cols = ['click', 'hour'] + final_cat_cols
-    test_cols = ['id'] + final_cat_cols
-    
+    train_cols = ["click", "hour"] + final_cat_cols
+    test_cols = ["id"] + final_cat_cols
+
     train_parquet = output_path / "train.parquet"
     test_parquet = output_path / "test.parquet"
 
     # SINK TRAIN (filter by source marker, then drop marker)
     print(f"  Sinking Train to {train_parquet}...")
-    lf_final.filter(pl.col("_source") == "train").select(train_cols).sink_parquet(train_parquet)
+    lf_final.filter(pl.col("_source") == "train").select(train_cols).sink_parquet(
+        train_parquet
+    )
 
     # SINK TEST (filter by source marker, then drop marker)
     print(f"  Sinking Test to {test_parquet}...")
-    lf_final.filter(pl.col("_source") == "test").select(test_cols).sink_parquet(test_parquet)
+    lf_final.filter(pl.col("_source") == "test").select(test_cols).sink_parquet(
+        test_parquet
+    )
 
     # =========================================================================
     # Metadata Recovery
     # =========================================================================
     print("\n--- Metadata Recovery ---")
-    
+
     # Calculate vocab sizes from the static vocab LFs we already have in memory
     vocab_sizes = {}
     for col, lf in vocab_lfs.items():
@@ -1098,7 +1113,7 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     print(f"\nProcessing complete!")
     print(f"  Train: {train_rows:,} rows -> {train_parquet}")
     print(f"  Test:  {test_rows:,} rows -> {test_parquet}")
-    
+
     # Optional: Cleanup temp file (uncomment if desired)
     # temp_base_path.unlink()
 
@@ -1118,7 +1133,7 @@ def load_metadata() -> tuple[dict, list]:
         vocab_sizes: Vocabulary sizes per column
         feature_names: List of feature column names
     """
-    path = Path(CONFIG['processed_path'])
+    path = Path(CONFIG["processed_path"])
 
     try:
         with open(path / "vocab_sizes.pkl", "rb") as f:
@@ -1134,7 +1149,7 @@ def load_metadata() -> tuple[dict, list]:
         ) from e
 
 
-def get_parquet_path(split: str = 'train') -> Path:
+def get_parquet_path(split: str = "train") -> Path:
     """
     Get the path to a parquet file.
 
@@ -1144,11 +1159,11 @@ def get_parquet_path(split: str = 'train') -> Path:
     Returns:
         Path to the parquet file
     """
-    path = Path(CONFIG['processed_path'])
+    path = Path(CONFIG["processed_path"])
     return path / f"{split}.parquet"
 
 
-def get_parquet_row_count(split: str = 'train') -> int:
+def get_parquet_row_count(split: str = "train") -> int:
     """
     Get the number of rows in a parquet file.
 

@@ -1,5 +1,6 @@
 from typing import TypedDict
 
+
 class STECConfig(TypedDict):
     stec_num_layers: int
     stec_num_heads: int

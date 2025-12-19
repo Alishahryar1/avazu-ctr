@@ -5,6 +5,7 @@ Advances in Neural Information Processing Systems. 2017.
 
 Reference implementation: https://github.com/YannDubs/Hash-Embeddings
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -29,8 +30,10 @@ class HashFamily:
             raise ValueError("moduler (p) should be > bins (m)")
 
         self.bins = bins
-        self.moduler = moduler if moduler else self._next_prime(
-            np.random.randint(self.bins + 1, 2**31 - 1)
+        self.moduler = (
+            moduler
+            if moduler
+            else self._next_prime(np.random.randint(self.bins + 1, 2**31 - 1))
         )
 
         # Track sampled parameters to avoid duplicates
@@ -52,7 +55,9 @@ class HashFamily:
             n += 1
         return n
 
-    def draw_hash(self, a: int | None = None, b: int | None = None) -> Callable[[torch.Tensor], torch.Tensor]:
+    def draw_hash(
+        self, a: int | None = None, b: int | None = None
+    ) -> Callable[[torch.Tensor], torch.Tensor]:
         """Draw a single hash function from the family.
 
         Args:
@@ -199,15 +204,17 @@ class HashEmbedding(nn.Module):
         # Get bucket indices for each hash function
         # Stack results: [batch_size, ..., num_hashes]
         idx_buckets = torch.stack(
-            [h(input) % self.num_buckets for h in self.hashes],
-            dim=-1
+            [h(input) % self.num_buckets for h in self.hashes], dim=-1
         )
 
         # Look up shared embeddings for each hash
         # Result: [batch_size, ..., embedding_dim, num_hashes]
         shared_embeds = torch.stack(
-            [self.shared_embeddings(idx_buckets[..., i]) for i in range(self.num_hashes)],
-            dim=-1
+            [
+                self.shared_embeddings(idx_buckets[..., i])
+                for i in range(self.num_hashes)
+            ],
+            dim=-1,
         )
 
         # Look up importance weights

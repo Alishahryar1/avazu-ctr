@@ -1,4 +1,5 @@
 """Base Gated DCN Model for CTR prediction."""
+
 from typing import Any, cast
 import torch
 import torch.nn as nn
@@ -24,28 +25,31 @@ class GatedDCNModel(BaseCTRModel):
         feature_names: List of feature names in order.
         config: Configuration dictionary with model hyperparameters.
     """
-    def __init__(self, vocab_sizes: dict[str, int], feature_names: list[str], config: ConfigType):
+
+    def __init__(
+        self, vocab_sizes: dict[str, int], feature_names: list[str], config: ConfigType
+    ):
         super().__init__()
         self.feature_names = feature_names
 
         # Extract config values (global settings at top level, model-specific in config['model'])
-        model_config = cast(GatedDCNConfig, config['model'])
-        embedding_dim = config['embedding_dim']
-        use_dcn = model_config['use_dcn']
-        dcn_num_layers = model_config['dcn_num_layers']
-        dcn_use_layernorm = model_config['dcn_use_layernorm']
-        dcn_low_rank = model_config['dcn_low_rank']
-        use_senet = model_config['use_senet']
-        senet_squeeze_funcs = model_config['senet_squeeze_funcs']
-        senet_reduction_ratio = model_config['senet_reduction_ratio']
-        senet_hidden_activation = model_config['senet_hidden_activation']
-        senet_excitation_activation = model_config['senet_excitation_activation']
-        use_feature_gating = model_config['use_feature_gating']
-        feature_gating_activation = model_config['feature_gating_activation']
-        mlp_hidden_dims = model_config['mlp_hidden_dims']
-        mlp_dropout = model_config['mlp_dropout']
-        use_layer_norm = model_config['use_layer_norm']
-        mlp_activation = model_config['mlp_activation']
+        model_config = cast(GatedDCNConfig, config["model"])
+        embedding_dim = config["embedding_dim"]
+        use_dcn = model_config["use_dcn"]
+        dcn_num_layers = model_config["dcn_num_layers"]
+        dcn_use_layernorm = model_config["dcn_use_layernorm"]
+        dcn_low_rank = model_config["dcn_low_rank"]
+        use_senet = model_config["use_senet"]
+        senet_squeeze_funcs = model_config["senet_squeeze_funcs"]
+        senet_reduction_ratio = model_config["senet_reduction_ratio"]
+        senet_hidden_activation = model_config["senet_hidden_activation"]
+        senet_excitation_activation = model_config["senet_excitation_activation"]
+        use_feature_gating = model_config["use_feature_gating"]
+        feature_gating_activation = model_config["feature_gating_activation"]
+        mlp_hidden_dims = model_config["mlp_hidden_dims"]
+        mlp_dropout = model_config["mlp_dropout"]
+        use_layer_norm = model_config["use_layer_norm"]
+        mlp_activation = model_config["mlp_activation"]
 
         # Validate mutual exclusivity
         if use_senet and use_feature_gating:
@@ -60,7 +64,7 @@ class GatedDCNModel(BaseCTRModel):
         self.use_feature_gating = use_feature_gating
         self.num_fields = len(feature_names)
         self.base_embedding_dim = embedding_dim  # Base/fallback dimension
-        projection_dim = config.get('embedding_projection_dim', None)
+        projection_dim = config.get("embedding_projection_dim", None)
 
         # 1. Embedding Layer using get_embedding utility
         self.embeddings = nn.ModuleDict()
@@ -98,34 +102,42 @@ class GatedDCNModel(BaseCTRModel):
             # When projection is used, SENet operates on uniform-dimension splits
             # When not used, SENet operates on variable-dimension embeddings
             if self.use_projection and projection_dim is not None:
-                senet_dims = self.embedding_dim  # uniform dim = projection_dim // num_fields
+                senet_dims = (
+                    self.embedding_dim
+                )  # uniform dim = projection_dim // num_fields
             else:
-                senet_dims = [self.feature_dims[f] for f in self.feature_names]  # maintain ordering
+                senet_dims = [
+                    self.feature_dims[f] for f in self.feature_names
+                ]  # maintain ordering
             self.senet = SENetLayer(
                 num_fields=self.num_fields,
                 feature_dims=senet_dims,
                 squeeze_funcs=senet_squeeze_funcs,
                 reduction_ratio=senet_reduction_ratio,
                 hidden_activation=senet_hidden_activation,
-                excitation_activation=senet_excitation_activation
+                excitation_activation=senet_excitation_activation,
             )
 
         # 2b. Feature Gating Layer - Optional (alternative to SENET)
         if use_feature_gating:
-            feature_gating_low_rank = model_config['feature_gating_low_rank']
+            feature_gating_low_rank = model_config["feature_gating_low_rank"]
             self.feature_gating = FeatureGatingLayer(
                 input_dim=working_dim,
                 gating_activation=feature_gating_activation,
-                low_rank=feature_gating_low_rank
+                low_rank=feature_gating_low_rank,
             )
 
         # 4. DCNv2 - Optional (supports low-rank decomposition)
         if use_dcn:
-            self.dcn = DCNv2(working_dim, num_layers=dcn_num_layers, use_layernorm=dcn_use_layernorm, low_rank=dcn_low_rank)
-
+            self.dcn = DCNv2(
+                working_dim,
+                num_layers=dcn_num_layers,
+                use_layernorm=dcn_use_layernorm,
+                low_rank=dcn_low_rank,
+            )
 
         # 5. Enhanced MLP with LayerNorm, configurable activation, and optional skip connections
-        mlp_use_skip_connections = model_config['mlp_use_skip_connections']
+        mlp_use_skip_connections = model_config["mlp_use_skip_connections"]
         self.mlp = ResidualMLP(
             input_dim=working_dim,
             hidden_dims=mlp_hidden_dims,
@@ -133,11 +145,13 @@ class GatedDCNModel(BaseCTRModel):
             activation=mlp_activation,
             dropout=mlp_dropout,
             use_layer_norm=use_layer_norm,
-            use_skip_connections=mlp_use_skip_connections
+            use_skip_connections=mlp_use_skip_connections,
         )
 
         # 6. Internal loss function
-        focal_gamma: float = float(cast(dict[str, Any], config).get('focal_loss_gamma', 0))
+        focal_gamma: float = float(
+            cast(dict[str, Any], config).get("focal_loss_gamma", 0)
+        )
         if focal_gamma > 0:
             self._loss_fn: nn.Module = FocalLoss(gamma=focal_gamma)
         else:
@@ -186,11 +200,7 @@ class GatedDCNModel(BaseCTRModel):
         logits = self.mlp(dnn_input)
         return {"logits": logits, "aux_logits": None}
 
-    def compute_loss(
-        self, 
-        output: ModelOutput, 
-        y_true: torch.Tensor
-    ) -> torch.Tensor:
+    def compute_loss(self, output: ModelOutput, y_true: torch.Tensor) -> torch.Tensor:
         """Compute loss using internal loss function."""
         return self._loss_fn(output["logits"], y_true)
 

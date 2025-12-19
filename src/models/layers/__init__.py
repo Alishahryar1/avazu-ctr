@@ -10,14 +10,14 @@ from .bilinear_interaction import BilinearInteractionLayer
 from .hash_embedding import HashEmbedding
 
 __all__ = [
-    'DCNv2',
-    'FeatureGatingLayer',
-    'ResidualMLP',
-    'SENetLayer',
-    'STECBlock',
-    'STECEncoderLayer',
-    'MultiHeadSTEC',
-    'PositionWiseFFN',
-    'BilinearInteractionLayer',
-    'HashEmbedding',
+    "DCNv2",
+    "FeatureGatingLayer",
+    "ResidualMLP",
+    "SENetLayer",
+    "STECBlock",
+    "STECEncoderLayer",
+    "MultiHeadSTEC",
+    "PositionWiseFFN",
+    "BilinearInteractionLayer",
+    "HashEmbedding",
 ]

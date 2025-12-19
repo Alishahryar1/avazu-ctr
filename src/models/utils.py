@@ -1,4 +1,5 @@
 """Utility functions for model components."""
+
 import torch.nn as nn
 from typing import Any, Mapping
 
@@ -16,7 +17,9 @@ def get_activation(name: str) -> nn.Module:
         "mish": nn.Mish(),
     }
     if name not in activations:
-        raise ValueError(f"Unknown activation: {name}. Choose from {list(activations.keys())}")
+        raise ValueError(
+            f"Unknown activation: {name}. Choose from {list(activations.keys())}"
+        )
     return activations[name]
 
 
@@ -41,21 +44,22 @@ def get_embedding(
         Tuple of (embedding_module, output_dim) where output_dim is the effective
         embedding dimension (may differ from input dim for concatenate aggregation)
     """
-    
-    feature_embeddings = config.get('feature_embeddings', {})
-    default_dim = config.get('embedding_dim', 16)
+
+    feature_embeddings = config.get("feature_embeddings", {})
+    default_dim = config.get("embedding_dim", 16)
 
     # Get feature-specific config or use defaults
     feat_config = feature_embeddings.get(feature_name, {})
-    embed_type = feat_config.get('type', 'standard')
-    embed_dim = feat_config.get('dim', default_dim)
+    embed_type = feat_config.get("type", "standard")
+    embed_dim = feat_config.get("dim", default_dim)
 
-    if embed_type == 'hash':
+    if embed_type == "hash":
         # HashEmbedding with configurable parameters
-        num_buckets = feat_config.get('num_buckets', max(1, vocab_size // 10))
-        num_hashes = feat_config.get('num_hashes', 2)
-        aggregation_mode = feat_config.get('aggregation_mode', 'sum')
+        num_buckets = feat_config.get("num_buckets", max(1, vocab_size // 10))
+        num_hashes = feat_config.get("num_hashes", 2)
+        aggregation_mode = feat_config.get("aggregation_mode", "sum")
         from src.models.layers.hash_embedding import HashEmbedding
+
         embedding = HashEmbedding(
             num_embeddings=vocab_size,
             embedding_dim=embed_dim,

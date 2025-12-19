@@ -17,7 +17,9 @@ class TestSENetLayer(unittest.TestCase):
         """Test SENET forward pass with single squeeze function."""
         num_fields = 5
         embed_dim = 16
-        senet = SENetLayer(num_fields=num_fields, feature_dims=embed_dim, squeeze_funcs=['mean'])
+        senet = SENetLayer(
+            num_fields=num_fields, feature_dims=embed_dim, squeeze_funcs=["mean"]
+        )
         # Create list of embeddings
         embeddings = [torch.randn(4, embed_dim) for _ in range(num_fields)]
         out = senet(embeddings)
@@ -29,7 +31,9 @@ class TestSENetLayer(unittest.TestCase):
         """Test SENET forward pass with multiple squeeze functions (mean + max)."""
         num_fields = 5
         embed_dim = 16
-        senet = SENetLayer(num_fields=num_fields, feature_dims=embed_dim, squeeze_funcs=['mean', 'max'])
+        senet = SENetLayer(
+            num_fields=num_fields, feature_dims=embed_dim, squeeze_funcs=["mean", "max"]
+        )
         embeddings = [torch.randn(4, embed_dim) for _ in range(num_fields)]
         out = senet(embeddings)
         self.assertEqual(len(out), num_fields)
@@ -38,7 +42,9 @@ class TestSENetLayer(unittest.TestCase):
 
     def test_senet_numerical_stability(self):
         """Verify no NaN/Inf in SENET output."""
-        senet = SENetLayer(num_fields=10, feature_dims=32, squeeze_funcs=['mean', 'max'])
+        senet = SENetLayer(
+            num_fields=10, feature_dims=32, squeeze_funcs=["mean", "max"]
+        )
         for _ in range(10):
             embeddings = [torch.randn(32, 32) for _ in range(10)]
             out = senet(embeddings)
@@ -48,7 +54,7 @@ class TestSENetLayer(unittest.TestCase):
 
     def test_senet_gradient_flow(self):
         """Verify gradients flow through SENetLayer."""
-        senet = SENetLayer(num_fields=5, feature_dims=16, squeeze_funcs=['mean', 'max'])
+        senet = SENetLayer(num_fields=5, feature_dims=16, squeeze_funcs=["mean", "max"])
         embeddings = [torch.randn(4, 16, requires_grad=True) for _ in range(5)]
         out = senet(embeddings)
         loss = torch.stack([emb.sum() for emb in out]).sum()
@@ -60,17 +66,19 @@ class TestSENetLayer(unittest.TestCase):
 
     def test_senet_invalid_squeeze_func(self):
         """Verify SENET raises error for invalid squeeze function during forward."""
-        # SENetLayer doesn't validate squeeze funcs in __init__, 
+        # SENetLayer doesn't validate squeeze funcs in __init__,
         # it raises NotImplementedError during forward if unknown func is used
-        senet = SENetLayer(num_fields=5, feature_dims=16, squeeze_funcs=['invalid'])
+        senet = SENetLayer(num_fields=5, feature_dims=16, squeeze_funcs=["invalid"])
         embeddings = [torch.randn(4, 16) for _ in range(5)]
         with self.assertRaises(NotImplementedError):
             senet(embeddings)
 
     def test_senet_activations(self):
         """Test SENET with different activation functions."""
-        for activation in ['sigmoid', 'tanh', 'relu', 'softmax']:
-            senet = SENetLayer(num_fields=5, feature_dims=16, excitation_activation=activation)
+        for activation in ["sigmoid", "tanh", "relu", "softmax"]:
+            senet = SENetLayer(
+                num_fields=5, feature_dims=16, excitation_activation=activation
+            )
             embeddings = [torch.randn(4, 16) for _ in range(5)]
             out = senet(embeddings)
             self.assertEqual(len(out), 5, f"Failed for activation: {activation}")
@@ -78,7 +86,9 @@ class TestSENetLayer(unittest.TestCase):
     def test_senet_variable_dims_forward(self):
         """Test SENET with variable embedding dimensions per field."""
         feature_dims = [8, 16, 32, 16, 8]  # Variable dimensions
-        senet = SENetLayer(num_fields=5, feature_dims=feature_dims, squeeze_funcs=['mean', 'max'])
+        senet = SENetLayer(
+            num_fields=5, feature_dims=feature_dims, squeeze_funcs=["mean", "max"]
+        )
         embeddings = [torch.randn(4, dim) for dim in feature_dims]
         out = senet(embeddings)
         self.assertEqual(len(out), 5)
@@ -88,7 +98,9 @@ class TestSENetLayer(unittest.TestCase):
     def test_senet_variable_dims_gradient_flow(self):
         """Verify gradients flow through SENet with variable dimensions."""
         feature_dims = [8, 16, 32]
-        senet = SENetLayer(num_fields=3, feature_dims=feature_dims, squeeze_funcs=['mean'])
+        senet = SENetLayer(
+            num_fields=3, feature_dims=feature_dims, squeeze_funcs=["mean"]
+        )
         embeddings = [torch.randn(4, dim, requires_grad=True) for dim in feature_dims]
         out = senet(embeddings)
         loss = torch.stack([emb.sum() for emb in out]).sum()
@@ -111,7 +123,9 @@ class TestSENetLayer(unittest.TestCase):
 
     def test_senet_grouped_squeeze_multiple_groups(self):
         """Test SENet+ with num_groups=4."""
-        senet = SENetLayer(num_fields=3, feature_dims=32, num_groups=4, squeeze_funcs=['mean', 'max'])
+        senet = SENetLayer(
+            num_fields=3, feature_dims=32, num_groups=4, squeeze_funcs=["mean", "max"]
+        )
         embeddings = [torch.randn(8, 32) for _ in range(3)]
         out = senet(embeddings)
         self.assertEqual(len(out), 3)
@@ -129,7 +143,7 @@ class TestSENetLayer(unittest.TestCase):
 
     def test_senet_element_reweight_mode(self):
         """Test SENet+ with reweight_mode='element'."""
-        senet = SENetLayer(num_fields=5, feature_dims=16, reweight_mode='element')
+        senet = SENetLayer(num_fields=5, feature_dims=16, reweight_mode="element")
         embeddings = [torch.randn(4, 16) for _ in range(5)]
         out = senet(embeddings)
         self.assertEqual(len(out), 5)
@@ -139,7 +153,9 @@ class TestSENetLayer(unittest.TestCase):
     def test_senet_element_reweight_variable_dims(self):
         """Test element reweight mode with variable dimensions."""
         feature_dims = [8, 16, 24]
-        senet = SENetLayer(num_fields=3, feature_dims=feature_dims, reweight_mode='element')
+        senet = SENetLayer(
+            num_fields=3, feature_dims=feature_dims, reweight_mode="element"
+        )
         embeddings = [torch.randn(4, dim) for dim in feature_dims]
         out = senet(embeddings)
         for i, emb in enumerate(out):
@@ -170,11 +186,11 @@ class TestSENetLayer(unittest.TestCase):
         senet = SENetLayer(
             num_fields=4,
             feature_dims=16,
-            squeeze_funcs=['mean', 'max'],
+            squeeze_funcs=["mean", "max"],
             num_groups=2,
-            reweight_mode='element',
+            reweight_mode="element",
             use_fuse=True,
-            use_layer_norm=True
+            use_layer_norm=True,
         )
         embeddings = [torch.randn(8, 16) for _ in range(4)]
         out = senet(embeddings)
@@ -186,24 +202,26 @@ class TestSENetLayer(unittest.TestCase):
     def test_senet_backward_compatibility(self):
         """Test that default params preserve original behavior."""
         # Original behavior: no grouping, feature reweight, no fuse, no layer norm
-        senet = SENetLayer(num_fields=5, feature_dims=16, squeeze_funcs=['mean'])
+        senet = SENetLayer(num_fields=5, feature_dims=16, squeeze_funcs=["mean"])
         self.assertEqual(senet.num_groups, 1)
-        self.assertEqual(senet.reweight_mode, 'feature')
+        self.assertEqual(senet.reweight_mode, "feature")
         self.assertFalse(senet.use_fuse)
         self.assertFalse(senet.use_layer_norm)
         # layer_norms attribute only exists when use_layer_norm=True and not uniform dims
-        self.assertFalse(hasattr(senet, 'layer_norms'))
+        self.assertFalse(hasattr(senet, "layer_norms"))
 
     def test_senet_invalid_groups(self):
         """Verify SENet raises error when num_groups doesn't divide embed_dim."""
         with self.assertRaises(AssertionError):
-            SENetLayer(num_fields=5, feature_dims=15, num_groups=4)  # 15 not divisible by 4
+            SENetLayer(
+                num_fields=5, feature_dims=15, num_groups=4
+            )  # 15 not divisible by 4
 
     def test_senet_invalid_reweight_mode(self):
         """Verify SENet uses element mode for unrecognized reweight_mode."""
         # Implementation doesn't validate reweight_mode - unrecognized values
         # fall through to element mode (weights applied directly)
-        senet = SENetLayer(num_fields=5, feature_dims=16, reweight_mode='invalid')  # type: ignore[arg-type]
+        senet = SENetLayer(num_fields=5, feature_dims=16, reweight_mode="invalid")  # type: ignore[arg-type]
         embeddings = [torch.randn(4, 16) for _ in range(5)]
         # Should work without error, using element-level reweighting
         out = senet(embeddings)
@@ -215,9 +233,9 @@ class TestSENetLayer(unittest.TestCase):
             num_fields=3,
             feature_dims=16,
             num_groups=2,
-            reweight_mode='element',
+            reweight_mode="element",
             use_fuse=True,
-            use_layer_norm=True
+            use_layer_norm=True,
         )
         embeddings = [torch.randn(4, 16, requires_grad=True) for _ in range(3)]
         out = senet(embeddings)
@@ -235,7 +253,7 @@ class TestFeatureGatingLayer(unittest.TestCase):
     def test_feature_gating_forward(self):
         """Test Feature Gating forward pass (full-rank)."""
         input_dim = 80
-        gating = FeatureGatingLayer(input_dim=input_dim, gating_activation='sigmoid')
+        gating = FeatureGatingLayer(input_dim=input_dim, gating_activation="sigmoid")
         x = torch.randn(4, input_dim)
         out = gating(x)
         self.assertEqual(out.shape, x.shape)
@@ -243,7 +261,9 @@ class TestFeatureGatingLayer(unittest.TestCase):
     def test_feature_gating_low_rank_forward(self):
         """Test Feature Gating forward pass with low-rank decomposition."""
         input_dim = 80
-        gating = FeatureGatingLayer(input_dim=input_dim, gating_activation='sigmoid', low_rank=16)
+        gating = FeatureGatingLayer(
+            input_dim=input_dim, gating_activation="sigmoid", low_rank=16
+        )
         x = torch.randn(4, input_dim)
         out = gating(x)
         self.assertEqual(out.shape, x.shape)
@@ -259,25 +279,29 @@ class TestFeatureGatingLayer(unittest.TestCase):
         full_params = sum(p.numel() for p in gating_full.parameters())
         low_params = sum(p.numel() for p in gating_low.parameters())
 
-        self.assertLess(low_params, full_params, "Low-rank should have fewer parameters")
+        self.assertLess(
+            low_params, full_params, "Low-rank should have fewer parameters"
+        )
 
     def test_feature_gating_low_rank_has_U_V_matrices(self):
         """Verify low-rank FeatureGatingLayer has U, V, and bias."""
         gating = FeatureGatingLayer(input_dim=64, low_rank=16)
-        self.assertTrue(hasattr(gating, 'U'), "Low-rank should have U matrix")
-        self.assertTrue(hasattr(gating, 'V'), "Low-rank should have V matrix")
-        self.assertTrue(hasattr(gating, 'bias'), "Low-rank should have bias")
+        self.assertTrue(hasattr(gating, "U"), "Low-rank should have U matrix")
+        self.assertTrue(hasattr(gating, "V"), "Low-rank should have V matrix")
+        self.assertTrue(hasattr(gating, "bias"), "Low-rank should have bias")
         self.assertEqual(gating.U.shape, (64, 16), "U shape mismatch")
         self.assertEqual(gating.V.shape, (16, 64), "V shape mismatch")
 
     def test_feature_gating_full_rank_has_linear(self):
         """Verify full-rank FeatureGatingLayer has gate_linear."""
         gating = FeatureGatingLayer(input_dim=64, low_rank=None)
-        self.assertTrue(hasattr(gating, 'gate_linear'), "Full-rank should have gate_linear")
+        self.assertTrue(
+            hasattr(gating, "gate_linear"), "Full-rank should have gate_linear"
+        )
 
     def test_feature_gating_numerical_stability(self):
         """Verify no NaN/Inf in Feature Gating output."""
-        gating = FeatureGatingLayer(input_dim=320, gating_activation='sigmoid')
+        gating = FeatureGatingLayer(input_dim=320, gating_activation="sigmoid")
         for _ in range(10):
             x = torch.randn(32, 320)
             out = gating(x)
@@ -286,7 +310,9 @@ class TestFeatureGatingLayer(unittest.TestCase):
 
     def test_feature_gating_low_rank_numerical_stability(self):
         """Verify no NaN/Inf in low-rank Feature Gating output."""
-        gating = FeatureGatingLayer(input_dim=320, gating_activation='sigmoid', low_rank=32)
+        gating = FeatureGatingLayer(
+            input_dim=320, gating_activation="sigmoid", low_rank=32
+        )
         for _ in range(10):
             x = torch.randn(32, 320)
             out = gating(x)
@@ -295,7 +321,7 @@ class TestFeatureGatingLayer(unittest.TestCase):
 
     def test_feature_gating_gradient_flow(self):
         """Verify gradients flow through FeatureGatingLayer (full-rank)."""
-        gating = FeatureGatingLayer(input_dim=80, gating_activation='sigmoid')
+        gating = FeatureGatingLayer(input_dim=80, gating_activation="sigmoid")
         x = torch.randn(4, 80, requires_grad=True)
         out = gating(x)
         loss = out.sum()
@@ -307,7 +333,9 @@ class TestFeatureGatingLayer(unittest.TestCase):
 
     def test_feature_gating_low_rank_gradient_flow(self):
         """Verify gradients flow through low-rank FeatureGatingLayer."""
-        gating = FeatureGatingLayer(input_dim=80, gating_activation='sigmoid', low_rank=16)
+        gating = FeatureGatingLayer(
+            input_dim=80, gating_activation="sigmoid", low_rank=16
+        )
         x = torch.randn(4, 80, requires_grad=True)
         out = gating(x)
         loss = out.sum()
@@ -319,7 +347,7 @@ class TestFeatureGatingLayer(unittest.TestCase):
 
     def test_feature_gating_activations(self):
         """Test Feature Gating with different activation functions."""
-        for activation in ['sigmoid', 'tanh', 'relu', 'gelu', 'silu']:
+        for activation in ["sigmoid", "tanh", "relu", "gelu", "silu"]:
             gating = FeatureGatingLayer(input_dim=80, gating_activation=activation)
             x = torch.randn(4, 80)
             out = gating(x)
@@ -327,8 +355,10 @@ class TestFeatureGatingLayer(unittest.TestCase):
 
     def test_feature_gating_low_rank_activations(self):
         """Test low-rank Feature Gating with different activation functions."""
-        for activation in ['sigmoid', 'tanh', 'relu', 'gelu', 'silu']:
-            gating = FeatureGatingLayer(input_dim=80, gating_activation=activation, low_rank=16)
+        for activation in ["sigmoid", "tanh", "relu", "gelu", "silu"]:
+            gating = FeatureGatingLayer(
+                input_dim=80, gating_activation=activation, low_rank=16
+            )
             x = torch.randn(4, 80)
             out = gating(x)
             self.assertEqual(out.shape, x.shape, f"Failed for activation: {activation}")

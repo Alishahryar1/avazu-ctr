@@ -12,17 +12,19 @@ from src.models.architectures import create_model
 
 
 def inference():
-    seed_everything(CONFIG['seed'])
+    seed_everything(CONFIG["seed"])
 
     # 1. Load Metadata (data stays in parquet)
     print("Step 1: Loading Metadata...")
     try:
         vocab_sizes, feature_names = load_metadata()
     except FileNotFoundError:
-        print("Processed data not found. Please run 'python data_processor.py' to generate it.")
+        print(
+            "Processed data not found. Please run 'python data_processor.py' to generate it."
+        )
         return
 
-    test_parquet = get_parquet_path('test')
+    test_parquet = get_parquet_path("test")
     print(f"Test parquet: {test_parquet}")
 
     # 2. Dataset and DataLoader
@@ -30,17 +32,17 @@ def inference():
     test_dataset = ParquetFullDataset(
         parquet_path=test_parquet,
         feature_cols=feature_names,
-        label_col=None  # No labels for test data
+        label_col=None,  # No labels for test data
     )
 
     print(f"Test samples: {len(test_dataset):,}")
 
     test_loader = DataLoader(
         test_dataset,
-        batch_size=CONFIG['batch_size'],
+        batch_size=CONFIG["batch_size"],
         shuffle=False,
-        num_workers=CONFIG['num_workers'],
-        pin_memory=True
+        num_workers=CONFIG["num_workers"],
+        pin_memory=True,
     )
 
     # 3. Model Initialization and Loading
@@ -49,23 +51,31 @@ def inference():
     print(f"Using {model.model_name()} model")
 
     # Try to load best model first, fall back to model.pth
-    model_path = os.path.join(CONFIG['models_path'], "best_model.pth")
+    model_path = os.path.join(CONFIG["models_path"], "best_model.pth")
     try:
-        checkpoint = torch.load(model_path, map_location=CONFIG['device'], weights_only=False)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model.to(CONFIG['device'])
-        print(f"Best model loaded successfully (epoch {checkpoint['epoch']+1})")
-        if 'val_auc' in checkpoint:
-            print(f"  Val AUC: {checkpoint['val_auc']:.5f}, Val LogLoss: {checkpoint['val_logloss']:.5f}")
+        checkpoint = torch.load(
+            model_path, map_location=CONFIG["device"], weights_only=False
+        )
+        model.load_state_dict(checkpoint["model_state_dict"])
+        model.to(CONFIG["device"])
+        print(f"Best model loaded successfully (epoch {checkpoint['epoch'] + 1})")
+        if "val_auc" in checkpoint:
+            print(
+                f"  Val AUC: {checkpoint['val_auc']:.5f}, Val LogLoss: {checkpoint['val_logloss']:.5f}"
+            )
     except FileNotFoundError:
         try:
-            model_path = os.path.join(CONFIG['models_path'], "model.pth")
-            checkpoint = torch.load(model_path, map_location=CONFIG['device'], weights_only=False)
-            model.load_state_dict(checkpoint['model_state_dict'])
-            model.to(CONFIG['device'])
+            model_path = os.path.join(CONFIG["models_path"], "model.pth")
+            checkpoint = torch.load(
+                model_path, map_location=CONFIG["device"], weights_only=False
+            )
+            model.load_state_dict(checkpoint["model_state_dict"])
+            model.to(CONFIG["device"])
             print(f"Model loaded from {model_path}")
         except FileNotFoundError:
-            print(f"Error: No model found in {CONFIG['models_path']}. Please run train.py first.")
+            print(
+                f"Error: No model found in {CONFIG['models_path']}. Please run train.py first."
+            )
             return
 
     # 4. Inference
@@ -75,7 +85,7 @@ def inference():
 
     with torch.no_grad():
         for X_batch in tqdm(test_loader, desc="Predicting"):
-            X_batch = X_batch.to(CONFIG['device'])
+            X_batch = X_batch.to(CONFIG["device"])
 
             # Unified interface: get_predictions returns probabilities for all models
             preds = model.get_predictions(X_batch)
@@ -84,20 +94,19 @@ def inference():
 
     # Concatenate predictions
     predictions = np.concatenate(predictions).flatten()
-    print(f"Prediction stats - Min: {predictions.min():.6f}, Max: {predictions.max():.6f}, Mean: {predictions.mean():.6f}")
+    print(
+        f"Prediction stats - Min: {predictions.min():.6f}, Max: {predictions.max():.6f}, Mean: {predictions.mean():.6f}"
+    )
 
     # 5. Read test IDs from parquet and save submission
     print("Step 5: Creating submission file...")
 
     # Read IDs from parquet (memory efficient - only read ID column)
-    test_ids = pl.scan_parquet(test_parquet).select('id').collect()['id'].to_numpy()
+    test_ids = pl.scan_parquet(test_parquet).select("id").collect()["id"].to_numpy()
 
-    submission = pl.DataFrame({
-        "id": test_ids,
-        "click": predictions
-    })
+    submission = pl.DataFrame({"id": test_ids, "click": predictions})
 
-    submission.write_csv(CONFIG['sub_path'])
+    submission.write_csv(CONFIG["sub_path"])
     print(f"Submission saved to {CONFIG['sub_path']}")
     print(submission.head())
 

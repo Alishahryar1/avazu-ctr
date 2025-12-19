@@ -17,6 +17,7 @@ class TestFocalLoss(unittest.TestCase):
     def setUpClass(cls):
         """Import FocalLoss from losses module."""
         from src.training.losses import FocalLoss
+
         cls.FocalLoss = FocalLoss
 
     def test_focal_loss_forward_basic(self):
@@ -108,6 +109,7 @@ class TestLRSchedulerWithWarmup(unittest.TestCase):
     def setUpClass(cls):
         """Import LRSchedulerWithWarmup from schedulers module."""
         from src.training.schedulers import LRSchedulerWithWarmup
+
         cls.LRSchedulerWithWarmup = LRSchedulerWithWarmup
 
     def test_warmup_phase(self):
@@ -196,7 +198,7 @@ class TestLRSchedulerWithWarmup(unittest.TestCase):
             scheduler.step()
 
         reported_lr = scheduler.get_lr()
-        actual_lr = optimizer.param_groups[0]['lr']
+        actual_lr = optimizer.param_groups[0]["lr"]
         self.assertEqual(reported_lr, actual_lr)
 
 

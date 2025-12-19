@@ -1,4 +1,3 @@
-
 """
 DEPRECATED: This module is kept for backward compatibility.
 
@@ -21,13 +20,13 @@ from src.models.architectures.gated_dcn import GatedDCNModel
 from src.models.architectures.ensemble import EnsembleModel
 
 __all__ = [
-    'get_activation',
-    'get_embedding',
-    'SENetLayer',
-    'FeatureGatingLayer',
-    'DCNv2',
-    'ResidualMLP',
-    'HashEmbedding',
-    'GatedDCNModel',
-    'EnsembleModel',
+    "get_activation",
+    "get_embedding",
+    "SENetLayer",
+    "FeatureGatingLayer",
+    "DCNv2",
+    "ResidualMLP",
+    "HashEmbedding",
+    "GatedDCNModel",
+    "EnsembleModel",
 ]

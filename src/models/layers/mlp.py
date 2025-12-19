@@ -1,4 +1,5 @@
 """Residual MLP layer with skip connections."""
+
 import torch.nn as nn
 
 from src.models.utils import get_activation
@@ -21,6 +22,7 @@ class ResidualMLP(nn.Module):
         use_layer_norm: Whether to apply layer normalization
         use_skip_connections: Whether to use residual/skip connections
     """
+
     def __init__(
         self,
         input_dim: int,
@@ -29,7 +31,7 @@ class ResidualMLP(nn.Module):
         activation: str = "relu",
         dropout: float = 0.0,
         use_layer_norm: bool = False,
-        use_skip_connections: bool = False
+        use_skip_connections: bool = False,
     ):
         super().__init__()
         self.use_skip_connections = use_skip_connections
@@ -65,7 +67,9 @@ class ResidualMLP(nn.Module):
                 self.projections.append(nn.Identity())
 
         # Final output layer (no skip connection, no activation)
-        self.output_layer = nn.Linear(hidden_dims[-1] if hidden_dims else input_dim, output_dim)
+        self.output_layer = nn.Linear(
+            hidden_dims[-1] if hidden_dims else input_dim, output_dim
+        )
 
         # Initialize weights
         self._init_weights()

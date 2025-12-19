@@ -1,4 +1,5 @@
 """Feature gating layer for element-wise gating."""
+
 import torch
 import torch.nn as nn
 
@@ -14,7 +15,10 @@ class FeatureGatingLayer(nn.Module):
     Supports low-rank decomposition: W = U @ V where U is (input_dim, rank)
     and V is (rank, input_dim). This reduces parameters from O(d^2) to O(2*d*r).
     """
-    def __init__(self, input_dim, gating_activation: str = "sigmoid", low_rank: int | None = None):
+
+    def __init__(
+        self, input_dim, gating_activation: str = "sigmoid", low_rank: int | None = None
+    ):
         super().__init__()
         self.input_dim = input_dim
         self.low_rank = low_rank

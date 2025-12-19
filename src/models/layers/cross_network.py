@@ -1,4 +1,5 @@
 """Deep Cross Network V2 (DCNv2) layer."""
+
 import torch
 import torch.nn as nn
 
@@ -11,6 +12,7 @@ class DCNv2(nn.Module):
     Supports low-rank decomposition: W = U @ V where U is (input_dim, rank)
     and V is (rank, input_dim). This reduces parameters from O(d^2) to O(2*d*r).
     """
+
     def __init__(self, input_dim, num_layers=2, use_layernorm=False, low_rank=None):
         super().__init__()
         self.num_layers = num_layers
@@ -21,17 +23,36 @@ class DCNv2(nn.Module):
         # Parameters for Cross Layers
         if low_rank is not None:
             # Low-rank decomposition: W = U @ V
-            self.U = nn.ParameterList([nn.Parameter(torch.randn(input_dim, low_rank)) for _ in range(num_layers)])
-            self.V = nn.ParameterList([nn.Parameter(torch.randn(low_rank, input_dim)) for _ in range(num_layers)])
+            self.U = nn.ParameterList(
+                [
+                    nn.Parameter(torch.randn(input_dim, low_rank))
+                    for _ in range(num_layers)
+                ]
+            )
+            self.V = nn.ParameterList(
+                [
+                    nn.Parameter(torch.randn(low_rank, input_dim))
+                    for _ in range(num_layers)
+                ]
+            )
         else:
             # Full-rank weight matrix
-            self.W = nn.ParameterList([nn.Parameter(torch.randn(input_dim, input_dim)) for _ in range(num_layers)])
+            self.W = nn.ParameterList(
+                [
+                    nn.Parameter(torch.randn(input_dim, input_dim))
+                    for _ in range(num_layers)
+                ]
+            )
 
-        self.b = nn.ParameterList([nn.Parameter(torch.zeros(input_dim)) for _ in range(num_layers)])
+        self.b = nn.ParameterList(
+            [nn.Parameter(torch.zeros(input_dim)) for _ in range(num_layers)]
+        )
 
         # Optional LayerNorm for stability
         if use_layernorm:
-            self.layer_norms = nn.ModuleList([nn.LayerNorm(input_dim) for _ in range(num_layers)])
+            self.layer_norms = nn.ModuleList(
+                [nn.LayerNorm(input_dim) for _ in range(num_layers)]
+            )
 
         # Init
         self._init_weights()
@@ -57,7 +78,10 @@ class DCNv2(nn.Module):
             # x_next = x0 * (W * xi_normed + b) + xi
             if self.low_rank is not None:
                 # Low-rank: xi_normed @ U @ V + b
-                feature_crossing = torch.matmul(torch.matmul(xi_normed, self.U[i]), self.V[i]) + self.b[i]
+                feature_crossing = (
+                    torch.matmul(torch.matmul(xi_normed, self.U[i]), self.V[i])
+                    + self.b[i]
+                )
             else:
                 # Full-rank: xi_normed @ W + b
                 feature_crossing = torch.matmul(xi_normed, self.W[i]) + self.b[i]
