@@ -161,8 +161,7 @@ class MultiHeadDiversityModel(BaseCTRModel):
         if self.use_senet and self.use_projection:
             # After projection: split into uniform chunks for SENET
             senet_input = list(dnn_input.split(self.embedding_dim, dim=1))
-            senet_output = self.senet(senet_input)
-            dnn_input = torch.cat(senet_output, dim=1)
+            dnn_input = self.senet(senet_input)
 
         # Apply Feature Gating (alternative to SENET, works on concatenated tensor)
         if self.use_feature_gating:
@@ -185,25 +184,18 @@ class MultiHeadDiversityModel(BaseCTRModel):
 
         for head_idx, head in enumerate(self.heads):
             current_head_embeds = []
-
             if self.feature_bagging_ratio < 1.0:
                 # Use pre-generated mask for this head
                 mask = getattr(self, f"head_mask_{head_idx}")
-
-                current_head_embeds = [emb * mask[i] for i, emb in enumerate(embeds_list)]
+                current_head_embeds = [
+                    emb * mask[i] for i, emb in enumerate(embeds_list)
+                ]
             else:
                 current_head_embeds = embeds_list
 
             # --- Backbone Processing for this Head ---
             # Now we have the masked embeddings.
-
-            # Handle SENET here because it needs list input
-            if self.use_senet and not self.use_projection:
-                # SENET on variable dimensions
-                senet_out = self.senet(current_head_embeds)
-                dnn_input = torch.cat(senet_out, dim=1)
-            else:
-                dnn_input = torch.cat(current_head_embeds, dim=1)
+            dnn_input = torch.cat(current_head_embeds, dim=1)
 
             # Rest of backbone (Projection -> SENET(uniform) -> Gating -> DCN)
             # Apply Projection
@@ -215,10 +207,13 @@ class MultiHeadDiversityModel(BaseCTRModel):
                 dnn_input = self.embed_ln(dnn_input)
 
             # Apply SENET (Uniform)
-            if self.use_senet and self.use_projection:
-                senet_input = list(dnn_input.split(self.embedding_dim, dim=1))
-                senet_output = self.senet(senet_input)
-                dnn_input = torch.cat(senet_output, dim=1)
+            if self.use_senet:
+                if self.use_projection:
+                    senet_input = list(dnn_input.split(self.embedding_dim, dim=1))
+                    dnn_input = self.senet(senet_input)
+                else:
+                    # SENet expects a list of embeddings, not concatenated tensor
+                    dnn_input = self.senet(current_head_embeds)
 
             # Apply Feature Gating
             if self.use_feature_gating:

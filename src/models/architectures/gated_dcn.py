@@ -181,12 +181,10 @@ class GatedDCNModel(BaseCTRModel):
             if self.use_projection:
                 # After projection: split into uniform chunks for SENET
                 senet_input = list(dnn_input.split(self.embedding_dim, dim=1))
-                senet_output = self.senet(senet_input)
-                dnn_input = torch.cat(senet_output, dim=1)
+                dnn_input = self.senet(senet_input)
             else:
                 # No projection: use variable-dimension embeddings directly
-                embeds = self.senet(embeds)
-                dnn_input = torch.cat(embeds, dim=1)
+                dnn_input = self.senet(embeds)
 
         # Apply Feature Gating - Optional (alternative to SENET)
         if self.use_feature_gating:

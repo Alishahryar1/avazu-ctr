@@ -23,9 +23,8 @@ class TestSENetLayer(unittest.TestCase):
         # Create list of embeddings
         embeddings = [torch.randn(4, embed_dim) for _ in range(num_fields)]
         out = senet(embeddings)
-        self.assertEqual(len(out), num_fields)
-        for i, emb in enumerate(out):
-            self.assertEqual(emb.shape, (4, embed_dim))
+        # Output is now a single flattened tensor [batch, total_dim]
+        self.assertEqual(out.shape, (4, num_fields * embed_dim))
 
     def test_senet_forward_multiple_squeeze(self):
         """Test SENET forward pass with multiple squeeze functions (mean + max)."""
@@ -36,9 +35,8 @@ class TestSENetLayer(unittest.TestCase):
         )
         embeddings = [torch.randn(4, embed_dim) for _ in range(num_fields)]
         out = senet(embeddings)
-        self.assertEqual(len(out), num_fields)
-        for emb in out:
-            self.assertEqual(emb.shape, (4, embed_dim))
+        # Output is now a single flattened tensor [batch, total_dim]
+        self.assertEqual(out.shape, (4, num_fields * embed_dim))
 
     def test_senet_numerical_stability(self):
         """Verify no NaN/Inf in SENET output."""
@@ -48,16 +46,15 @@ class TestSENetLayer(unittest.TestCase):
         for _ in range(10):
             embeddings = [torch.randn(32, 32) for _ in range(10)]
             out = senet(embeddings)
-            for emb in out:
-                self.assertFalse(torch.isnan(emb).any(), "NaN in output")
-                self.assertFalse(torch.isinf(emb).any(), "Inf in output")
+            self.assertFalse(torch.isnan(out).any(), "NaN in output")
+            self.assertFalse(torch.isinf(out).any(), "Inf in output")
 
     def test_senet_gradient_flow(self):
         """Verify gradients flow through SENetLayer."""
         senet = SENetLayer(num_fields=5, feature_dims=16, squeeze_funcs=["mean", "max"])
         embeddings = [torch.randn(4, 16, requires_grad=True) for _ in range(5)]
         out = senet(embeddings)
-        loss = torch.stack([emb.sum() for emb in out]).sum()
+        loss = out.sum()
         loss.backward()
 
         for name, param in senet.named_parameters():
@@ -67,10 +64,10 @@ class TestSENetLayer(unittest.TestCase):
     def test_senet_invalid_squeeze_func(self):
         """Verify SENET raises error for invalid squeeze function during forward."""
         # SENetLayer doesn't validate squeeze funcs in __init__,
-        # it raises NotImplementedError during forward if unknown func is used
+        # it raises ValueError during forward if unknown func is used
         senet = SENetLayer(num_fields=5, feature_dims=16, squeeze_funcs=["invalid"])
         embeddings = [torch.randn(4, 16) for _ in range(5)]
-        with self.assertRaises(NotImplementedError):
+        with self.assertRaises(ValueError):
             senet(embeddings)
 
     def test_senet_activations(self):
@@ -81,7 +78,8 @@ class TestSENetLayer(unittest.TestCase):
             )
             embeddings = [torch.randn(4, 16) for _ in range(5)]
             out = senet(embeddings)
-            self.assertEqual(len(out), 5, f"Failed for activation: {activation}")
+            # Output is [batch, total_dim]
+            self.assertEqual(out.shape, (4, 80), f"Failed for activation: {activation}")
 
     def test_senet_variable_dims_forward(self):
         """Test SENET with variable embedding dimensions per field."""
@@ -91,9 +89,8 @@ class TestSENetLayer(unittest.TestCase):
         )
         embeddings = [torch.randn(4, dim) for dim in feature_dims]
         out = senet(embeddings)
-        self.assertEqual(len(out), 5)
-        for i, emb in enumerate(out):
-            self.assertEqual(emb.shape, (4, feature_dims[i]))
+        # Output is [batch, sum(feature_dims)]
+        self.assertEqual(out.shape, (4, sum(feature_dims)))
 
     def test_senet_variable_dims_gradient_flow(self):
         """Verify gradients flow through SENet with variable dimensions."""
@@ -103,7 +100,7 @@ class TestSENetLayer(unittest.TestCase):
         )
         embeddings = [torch.randn(4, dim, requires_grad=True) for dim in feature_dims]
         out = senet(embeddings)
-        loss = torch.stack([emb.sum() for emb in out]).sum()
+        loss = out.sum()
         loss.backward()
 
         for name, param in senet.named_parameters():
@@ -117,9 +114,8 @@ class TestSENetLayer(unittest.TestCase):
         senet = SENetLayer(num_fields=5, feature_dims=16, num_groups=2)
         embeddings = [torch.randn(4, 16) for _ in range(5)]
         out = senet(embeddings)
-        self.assertEqual(len(out), 5)
-        for emb in out:
-            self.assertEqual(emb.shape, (4, 16))
+        # Output is [batch, total_dim]
+        self.assertEqual(out.shape, (4, 80))
 
     def test_senet_grouped_squeeze_multiple_groups(self):
         """Test SENet+ with num_groups=4."""
@@ -128,9 +124,8 @@ class TestSENetLayer(unittest.TestCase):
         )
         embeddings = [torch.randn(8, 32) for _ in range(3)]
         out = senet(embeddings)
-        self.assertEqual(len(out), 3)
-        for emb in out:
-            self.assertEqual(emb.shape, (8, 32))
+        # Output is [batch, total_dim]
+        self.assertEqual(out.shape, (8, 96))
 
     def test_senet_groups_with_variable_dims(self):
         """Test SENet+ grouped squeeze with variable dimensions."""
@@ -138,17 +133,16 @@ class TestSENetLayer(unittest.TestCase):
         senet = SENetLayer(num_fields=3, feature_dims=feature_dims, num_groups=2)
         embeddings = [torch.randn(4, dim) for dim in feature_dims]
         out = senet(embeddings)
-        for i, emb in enumerate(out):
-            self.assertEqual(emb.shape, (4, feature_dims[i]))
+        # Output is [batch, sum(feature_dims)]
+        self.assertEqual(out.shape, (4, sum(feature_dims)))
 
     def test_senet_element_reweight_mode(self):
         """Test SENet+ with reweight_mode='element'."""
         senet = SENetLayer(num_fields=5, feature_dims=16, reweight_mode="element")
         embeddings = [torch.randn(4, 16) for _ in range(5)]
         out = senet(embeddings)
-        self.assertEqual(len(out), 5)
-        for emb in out:
-            self.assertEqual(emb.shape, (4, 16))
+        # Output is [batch, total_dim]
+        self.assertEqual(out.shape, (4, 80))
 
     def test_senet_element_reweight_variable_dims(self):
         """Test element reweight mode with variable dimensions."""
@@ -158,28 +152,27 @@ class TestSENetLayer(unittest.TestCase):
         )
         embeddings = [torch.randn(4, dim) for dim in feature_dims]
         out = senet(embeddings)
-        for i, emb in enumerate(out):
-            self.assertEqual(emb.shape, (4, feature_dims[i]))
+        # Output is [batch, sum(feature_dims)]
+        self.assertEqual(out.shape, (4, sum(feature_dims)))
 
     def test_senet_fuse(self):
         """Test SENet+ fuse (residual connection)."""
         senet = SENetLayer(num_fields=3, feature_dims=16, use_fuse=True)
         embeddings = [torch.randn(4, 16) for _ in range(3)]
         out = senet(embeddings)
-        self.assertEqual(len(out), 3)
-        for emb in out:
-            self.assertEqual(emb.shape, (4, 16))
+        # Output is [batch, total_dim]
+        self.assertEqual(out.shape, (4, 48))
 
     def test_senet_layer_norm(self):
         """Test SENet+ with layer normalization."""
         # Use variable dims to trigger layer_norms (ModuleList)
         feature_dims = [8, 16, 32]
         senet = SENetLayer(num_fields=3, feature_dims=feature_dims, use_layer_norm=True)
-        self.assertIsNotNone(senet.layer_norms)
-        self.assertEqual(len(senet.layer_norms), 3)
+        self.assertIsNotNone(senet.layer_norm)
         embeddings = [torch.randn(4, dim) for dim in feature_dims]
         out = senet(embeddings)
-        self.assertEqual(len(out), 3)
+        # Output is [batch, sum(feature_dims)]
+        self.assertEqual(out.shape, (4, sum(feature_dims)))
 
     def test_senet_full_senetplus(self):
         """Test SENet+ with all features enabled."""
@@ -194,10 +187,9 @@ class TestSENetLayer(unittest.TestCase):
         )
         embeddings = [torch.randn(8, 16) for _ in range(4)]
         out = senet(embeddings)
-        self.assertEqual(len(out), 4)
-        for emb in out:
-            self.assertEqual(emb.shape, (8, 16))
-            self.assertFalse(torch.isnan(emb).any())
+        # Output is [batch, total_dim]
+        self.assertEqual(out.shape, (8, 64))
+        self.assertFalse(torch.isnan(out).any())
 
     def test_senet_backward_compatibility(self):
         """Test that default params preserve original behavior."""
@@ -207,8 +199,8 @@ class TestSENetLayer(unittest.TestCase):
         self.assertEqual(senet.reweight_mode, "feature")
         self.assertFalse(senet.use_fuse)
         self.assertFalse(senet.use_layer_norm)
-        # layer_norms attribute only exists when use_layer_norm=True and not uniform dims
-        self.assertFalse(hasattr(senet, "layer_norms"))
+        # layer_norm attribute only exists when use_layer_norm=True
+        self.assertFalse(hasattr(senet, "layer_norm") and senet.use_layer_norm)
 
     def test_senet_invalid_groups(self):
         """Verify SENet raises error when num_groups doesn't divide embed_dim."""
@@ -225,7 +217,8 @@ class TestSENetLayer(unittest.TestCase):
         embeddings = [torch.randn(4, 16) for _ in range(5)]
         # Should work without error, using element-level reweighting
         out = senet(embeddings)
-        self.assertEqual(len(out), 5)
+        # Output is [batch, total_dim]
+        self.assertEqual(out.shape, (4, 80))
 
     def test_senet_senetplus_gradient_flow(self):
         """Verify gradients flow through full SENet+ configuration."""
@@ -239,7 +232,7 @@ class TestSENetLayer(unittest.TestCase):
         )
         embeddings = [torch.randn(4, 16, requires_grad=True) for _ in range(3)]
         out = senet(embeddings)
-        loss = torch.stack([emb.sum() for emb in out]).sum()
+        loss = out.sum()
         loss.backward()
 
         for name, param in senet.named_parameters():

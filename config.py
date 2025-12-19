@@ -129,17 +129,17 @@ CONFIG: ConfigType = {
     # === MULTIHEAD DIVERSITY MODEL ===
     "model": {
         "backbone_type": "gated_dcn",
-        "diversity_weight": 0.1,
+        "diversity_weight": 0.2,
         "feature_bagging_ratio": 0.9,
         "backbone_config": {
             "use_dcn": True,
             "dcn_num_layers": 6,
             "dcn_use_layernorm": False,
             "dcn_low_rank": None,
-            "use_feature_gating": True,
+            "use_feature_gating": False,
             "feature_gating_activation": "tanh",
             "feature_gating_low_rank": None,
-            "use_senet": False,
+            "use_senet": True,
             "senet_squeeze_funcs": ["mean", "max", "min", "std"],
             "senet_reduction_ratio": 3,
             "senet_hidden_activation": "gelu",
