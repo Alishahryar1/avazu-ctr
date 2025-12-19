@@ -16,7 +16,7 @@ from config import ConfigType
 from src.models.utils import get_embedding
 from src.models.types import ModelOutput
 from src.models.architectures.base import BaseCTRModel
-from src.models.losses import FocalLoss
+
 from src.models.layers.stec_encoder import STECEncoderLayer
 from src.models.layers.multi_head_stec import MultiHeadSTEC
 
@@ -178,13 +178,7 @@ class STECModel(BaseCTRModel):
                     nn.init.zeros_(m.bias)
 
         # 8. Loss function
-        focal_gamma: float = float(
-            cast(dict[str, Any], config).get("focal_loss_gamma", 0)
-        )
-        if focal_gamma > 0:
-            self._loss_fn: nn.Module = FocalLoss(gamma=focal_gamma)
-        else:
-            self._loss_fn = nn.BCEWithLogitsLoss()
+        self._loss_fn = nn.BCEWithLogitsLoss()
 
     def forward(self, x: torch.Tensor) -> ModelOutput:
         """

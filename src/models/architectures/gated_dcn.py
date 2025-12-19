@@ -1,6 +1,6 @@
 """Base Gated DCN Model for CTR prediction."""
 
-from typing import Any, cast
+from typing import cast
 import torch
 import torch.nn as nn
 
@@ -9,7 +9,7 @@ from src.config_types import GatedDCNConfig
 from src.models.utils import get_embedding
 from src.models.types import ModelOutput
 from src.models.architectures.base import BaseCTRModel
-from src.models.losses import FocalLoss
+
 from src.models.layers.senet import SENetLayer
 from src.models.layers.gating import FeatureGatingLayer
 from src.models.layers.cross_network import DCNv2
@@ -149,13 +149,7 @@ class GatedDCNModel(BaseCTRModel):
         )
 
         # 6. Internal loss function
-        focal_gamma: float = float(
-            cast(dict[str, Any], config).get("focal_loss_gamma", 0)
-        )
-        if focal_gamma > 0:
-            self._loss_fn: nn.Module = FocalLoss(gamma=focal_gamma)
-        else:
-            self._loss_fn = nn.BCEWithLogitsLoss()
+        self._loss_fn = nn.BCEWithLogitsLoss()
 
     def forward(self, x: torch.Tensor) -> ModelOutput:
         # x shape: [Batch, Num_Features]

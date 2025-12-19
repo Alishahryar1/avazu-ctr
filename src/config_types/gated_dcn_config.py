@@ -34,5 +34,3 @@ class GatedDCNConfig(TypedDict):
 
     # Regularization
     mlp_dropout: float
-    focal_loss_gamma: float
-    label_smoothing: float

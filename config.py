@@ -129,16 +129,14 @@ CONFIG: ConfigType = {
     # === MULTIHEAD DIVERSITY MODEL ===
     "model": {
         "backbone_type": "gated_dcn",
-        "diversity_weight": 0.2,
+        "diversity_weight": 0.1,
         "feature_bagging_ratio": 0.9,
         "backbone_config": {
-            "use_dcn": True,
-            "dcn_num_layers": 6,
-            "dcn_use_layernorm": False,
-            "dcn_low_rank": None,
+            # Feature Gating
             "use_feature_gating": False,
             "feature_gating_activation": "tanh",
             "feature_gating_low_rank": None,
+            # SENET
             "use_senet": True,
             "senet_squeeze_funcs": ["mean", "max", "min", "std"],
             "senet_reduction_ratio": 3,
@@ -148,13 +146,17 @@ CONFIG: ConfigType = {
             "senet_reweight_mode": "element",
             "senet_use_fuse": True,
             "senet_use_layer_norm": True,
+            # DCN
+            "use_dcn": True,
+            "dcn_num_layers": 6,
+            "dcn_use_layernorm": True,
+            "dcn_low_rank": None,
+            # MLP
             "mlp_hidden_dims": [0],
             "mlp_activation": "gelu",
             "mlp_use_skip_connections": True,
             "mlp_dropout": 0.0,
             "use_layer_norm": True,
-            "focal_loss_gamma": 0.0,
-            "label_smoothing": 0.0,
         },
         "heads": [
             {

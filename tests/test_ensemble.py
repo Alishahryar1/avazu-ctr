@@ -37,8 +37,6 @@ def make_gated_dcn_config() -> GatedDCNConfig:
         "mlp_use_skip_connections": False,
         "mlp_dropout": 0.1,
         "use_layer_norm": False,
-        "focal_loss_gamma": 0.0,
-        "label_smoothing": 0.0,
     }
 
 

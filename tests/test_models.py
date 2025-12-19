@@ -48,8 +48,6 @@ def make_test_config(**overrides) -> ConfigType:
         "mlp_use_skip_connections",
         "mlp_dropout",
         "use_layer_norm",
-        "focal_loss_gamma",
-        "label_smoothing",
         # STEC-specific keys
         "stec_num_layers",
         "stec_num_heads",
@@ -78,8 +76,6 @@ def make_test_config(**overrides) -> ConfigType:
         "mlp_use_skip_connections": False,
         "mlp_dropout": 0.1,
         "use_layer_norm": True,
-        "focal_loss_gamma": 2.0,
-        "label_smoothing": 0.0,
     }
 
     # Apply model-level overrides
@@ -132,9 +128,6 @@ def make_test_config(**overrides) -> ConfigType:
         "amp_dtype": "float16",
         # Model Compilation
         "compile_model": False,
-        # Loss settings (for test config reference)
-        "focal_loss_gamma": 2.0,
-        "label_smoothing": 0.0,
         # Paths
         "train_path": "./data/train.gz",
         "test_path": "./data/test.gz",

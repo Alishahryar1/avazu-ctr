@@ -1,105 +1,12 @@
 """
 Test suite for training components.
 
-This module tests the FocalLoss implementation and
-LRSchedulerWithWarmup for learning rate scheduling.
+This module tests the LRSchedulerWithWarmup for learning rate scheduling.
 """
 
 import unittest
 import torch
 import torch.nn as nn
-
-
-class TestFocalLoss(unittest.TestCase):
-    """Tests for Focal Loss implementation."""
-
-    @classmethod
-    def setUpClass(cls):
-        """Import FocalLoss from losses module."""
-        from src.training.losses import FocalLoss
-
-        cls.FocalLoss = FocalLoss
-
-    def test_focal_loss_forward_basic(self):
-        """Test basic forward pass."""
-        focal = self.FocalLoss(gamma=2.0)
-        logits = torch.randn(4, 1)
-        targets = torch.randint(0, 2, (4, 1)).float()
-        loss = focal(logits, targets)
-
-        self.assertEqual(loss.dim(), 0)  # Scalar output
-        self.assertFalse(torch.isnan(loss))
-        self.assertFalse(torch.isinf(loss))
-
-    def test_focal_loss_gamma_zero_equals_bce(self):
-        """Verify gamma=0 is equivalent to standard BCE."""
-        focal = self.FocalLoss(gamma=0.0)
-        bce = nn.BCEWithLogitsLoss()
-
-        logits = torch.randn(32, 1)
-        targets = torch.randint(0, 2, (32, 1)).float()
-
-        focal_loss = focal(logits, targets)
-        bce_loss = bce(logits, targets)
-
-        self.assertAlmostEqual(focal_loss.item(), bce_loss.item(), places=5)
-
-    def test_focal_loss_down_weights_easy_examples(self):
-        """Verify focal loss down-weights confident predictions."""
-        focal_high_gamma = self.FocalLoss(gamma=5.0)
-        focal_low_gamma = self.FocalLoss(gamma=0.0)
-
-        # Easy example: prediction and target are the same (high confidence)
-        easy_logits = torch.tensor([[10.0]])  # Very confident positive
-        easy_targets = torch.tensor([[1.0]])
-
-        focal_high = focal_high_gamma(easy_logits, easy_targets)
-        focal_low = focal_low_gamma(easy_logits, easy_targets)
-
-        # High gamma should have lower loss for easy examples
-        self.assertLess(focal_high.item(), focal_low.item())
-
-    def test_focal_loss_with_alpha(self):
-        """Test focal loss with class weights (alpha)."""
-        focal = self.FocalLoss(gamma=2.0, alpha=0.75)
-        logits = torch.randn(4, 1)
-        targets = torch.randint(0, 2, (4, 1)).float()
-        loss = focal(logits, targets)
-
-        self.assertFalse(torch.isnan(loss))
-        self.assertGreater(loss.item(), 0)
-
-    def test_focal_loss_all_zeros_targets(self):
-        """Test focal loss when all targets are 0."""
-        focal = self.FocalLoss(gamma=2.0)
-        logits = torch.randn(8, 1)
-        targets = torch.zeros(8, 1)
-        loss = focal(logits, targets)
-
-        self.assertFalse(torch.isnan(loss))
-        self.assertGreater(loss.item(), 0)
-
-    def test_focal_loss_all_ones_targets(self):
-        """Test focal loss when all targets are 1."""
-        focal = self.FocalLoss(gamma=2.0)
-        logits = torch.randn(8, 1)
-        targets = torch.ones(8, 1)
-        loss = focal(logits, targets)
-
-        self.assertFalse(torch.isnan(loss))
-        self.assertGreater(loss.item(), 0)
-
-    def test_focal_loss_gradient_flow(self):
-        """Verify gradients flow through focal loss."""
-        focal = self.FocalLoss(gamma=2.0)
-        logits = torch.randn(4, 1, requires_grad=True)
-        targets = torch.randint(0, 2, (4, 1)).float()
-
-        loss = focal(logits, targets)
-        loss.backward()
-
-        self.assertIsNotNone(logits.grad)
-        self.assertFalse(torch.isnan(logits.grad).any())
 
 
 class TestLRSchedulerWithWarmup(unittest.TestCase):
