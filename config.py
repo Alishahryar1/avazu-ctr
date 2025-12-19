@@ -187,7 +187,7 @@ CONFIG: ConfigType = {
                 "dropout": 0.2,
                 "use_layer_norm": True,
                 "use_skip_connections": True,
-            }
+            },
         ],
     },
     # === Training ===
