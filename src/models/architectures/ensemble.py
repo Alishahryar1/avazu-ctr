@@ -170,11 +170,31 @@ class EnsembleModel(BaseCTRModel):
         #   a) Nested Ensemble structural losses
         #   b) Leaf model internal losses (e.g., regularization, aux tasks)
 
+        # 2. Recursively add losses from children ONLY if they have continuous internal structure/losses
+        # (e.g. other Ensembles or MultiHeadDiversity models).
+        # Standard leaf models (GatedDCN, STEC) are already fully supervised by KBCELoss above.
+        # Adding their compute_loss() again would double-count the supervision (static + dynamic).
+
         for i, model in enumerate(self.models):
+            # Check if model requires recursive loss
+            # We use model_name() or existence of specific attributes
+            # Safe allowlist approach:
+
             # Use each model's own cached output for its internal loss
             child_output = self._cached_outputs[i]
-            child_loss = model.compute_loss(child_output, y_true)  # type: ignore[operator]
-            total_loss = total_loss + child_loss
+
+            # Cast to BaseCTRModel to access model_name
+            ctr_model = cast(BaseCTRModel, model)
+            if ctr_model.model_name() in ["ensemble", "multi_head_diversity"]:
+                child_loss = ctr_model.compute_loss(child_output, y_true)
+                total_loss = total_loss + child_loss
+            else:
+                # For standard models (gated_dcn, stec), KBCELoss coverage is sufficient.
+                # However, if they had internal regularization losses (l2, etc) that return
+                # separate from main task loss, we might miss them.
+                # Current implementations of compute_loss in simple models return the full task loss.
+                # So skipping is correct to avoid double counting task loss.
+                pass
 
         return total_loss
 
