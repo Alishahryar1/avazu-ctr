@@ -15,6 +15,7 @@ def get_activation(name: str) -> nn.Module:
         "sigmoid": nn.Sigmoid(),
         "softmax": nn.Softmax(dim=-1),
         "mish": nn.Mish(),
+        "linear": nn.Identity(),
     }
     if name not in activations:
         raise ValueError(

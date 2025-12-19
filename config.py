@@ -143,7 +143,7 @@ CONFIG: ConfigType = {
             "senet_squeeze_funcs": ["mean", "max", "min", "std"],
             "senet_reduction_ratio": 3,
             "senet_hidden_activation": "gelu",
-            "senet_excitation_activation": "tanh",
+            "senet_excitation_activation": "linear",
             "senet_num_groups": 2,
             "senet_reweight_mode": "element",
             "senet_use_fuse": True,
