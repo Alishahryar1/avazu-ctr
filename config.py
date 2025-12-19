@@ -47,12 +47,6 @@ CONFIG: ConfigType = {
     "models_path": "./checkpoints",
     # === Model Architecture - Embeddings ===
     "embedding_dim": 16,  # Default/fallback embedding dimension
-    # Per-feature embedding configuration
-    # - type: 'standard' (nn.Embedding) or 'hash' (HashEmbedding)
-    # - dim: embedding dimension
-    # - num_buckets: for hash only, size of shared pool
-    # - num_hashes: for hash only, number of hash functions (default: 2)
-    # - aggregation_mode: for hash only, 'sum'/'concatenate'/'median' (default: 'sum')
     "feature_embeddings": {
         # --- Standard embeddings (low-medium cardinality) ---
         # Very low cardinality (dim 8)
@@ -129,8 +123,8 @@ CONFIG: ConfigType = {
     # === MULTIHEAD DIVERSITY MODEL ===
     "model": {
         "backbone_type": "gated_dcn",
-        "diversity_weight": 0.1,
-        "feature_bagging_ratio": 0.9,
+        "diversity_weight": 0.2,
+        "feature_bagging_ratio": 0.8,
         "backbone_config": {
             # Feature Gating
             "use_feature_gating": False,
@@ -141,7 +135,7 @@ CONFIG: ConfigType = {
             "senet_squeeze_funcs": ["mean", "max", "min", "std"],
             "senet_reduction_ratio": 3,
             "senet_hidden_activation": "gelu",
-            "senet_excitation_activation": "linear",
+            "senet_excitation_activation": "gelu",
             "senet_num_groups": 2,
             "senet_reweight_mode": "element",
             "senet_use_fuse": True,
@@ -149,8 +143,8 @@ CONFIG: ConfigType = {
             # DCN
             "use_dcn": True,
             "dcn_num_layers": 6,
-            "dcn_use_layernorm": True,
-            "dcn_low_rank": None,
+            "dcn_use_layernorm": False,
+            "dcn_low_rank": 64,
             # MLP
             "mlp_hidden_dims": [0],
             "mlp_activation": "gelu",
@@ -187,6 +181,13 @@ CONFIG: ConfigType = {
                 "use_layer_norm": True,
                 "use_skip_connections": True,
             },
+            {
+                "hidden_dims": [1024, 512, 256, 128, 64],
+                "activation": "gelu",
+                "dropout": 0.2,
+                "use_layer_norm": True,
+                "use_skip_connections": True,
+            }
         ],
     },
     # === Training ===
@@ -197,16 +198,12 @@ CONFIG: ConfigType = {
     "tensorboard_logdir": "./runs",
     "tensorboard_log_interval": 50,  # Log every N batches (reduces I/O overhead)
     # === Optimizer Configuration ===
-    # Dense optimizer: for MLP, DCN, and other dense parameters
-    # Options: "adamw", "adagrad", "ftrl"
     "dense_optimizer": {
         "type": "adamw",
         "lr": 1e-4,
         "warmup_epoch_ratio": 0.2,
         "weight_decay": 1e-4,
     },
-    # Embedding optimizer: for embedding layers (typically benefits from adaptive LR)
-    # Options: "adamw", "adagrad", "ftrl"
     "embedding_optimizer": {
         "type": "adagrad",
         "lr": 1e-2,
