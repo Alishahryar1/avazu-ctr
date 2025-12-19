@@ -67,8 +67,6 @@ class STECModel(BaseCTRModel):
 
         self.stec_num_layers = stec_num_layers
         self.stec_num_heads = stec_num_heads
-        projection_dim = config.get("embedding_projection_dim", None)
-
         # 1. Embedding Layer using get_embedding utility
         self.embeddings = nn.ModuleDict()
         self.feature_dims: dict[str, int] = {}
@@ -81,24 +79,15 @@ class STECModel(BaseCTRModel):
             total_embed_dim += feat_dim
 
         self.total_embed_dim = total_embed_dim
-        self.use_projection = projection_dim is not None
         self.projection = None
+        self.use_projection = False
 
         # 2. Projection to uniform dimension (required for STEC attention)
-        # Check if we need projection (non-uniform dims or explicit projection)
+        # Check if we need projection (non-uniform dims)
         unique_dims = set(self.feature_dims.values())
-        needs_projection = len(unique_dims) > 1 or projection_dim is not None
+        needs_projection = len(unique_dims) > 1
 
-        if projection_dim is not None:
-            self.projection = nn.Linear(total_embed_dim, projection_dim)
-            nn.init.xavier_uniform_(self.projection.weight)
-            nn.init.zeros_(self.projection.bias)
-            self.use_projection = True
-            assert projection_dim % self.num_fields == 0, (
-                f"projection_dim ({projection_dim}) must be divisible by num_fields ({self.num_fields})"
-            )
-            self.embed_per_field = projection_dim // self.num_fields
-        elif needs_projection:
+        if needs_projection:
             # Non-uniform embeddings without explicit projection - project to uniform
             self.projection = nn.Linear(
                 total_embed_dim, embedding_dim * self.num_fields

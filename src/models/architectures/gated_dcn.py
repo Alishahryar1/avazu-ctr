@@ -64,7 +64,6 @@ class GatedDCNModel(BaseCTRModel):
         self.use_feature_gating = use_feature_gating
         self.num_fields = len(feature_names)
         self.base_embedding_dim = embedding_dim  # Base/fallback dimension
-        projection_dim = config.get("embedding_projection_dim", None)
 
         # 1. Embedding Layer using get_embedding utility
         self.embeddings = nn.ModuleDict()
@@ -79,36 +78,19 @@ class GatedDCNModel(BaseCTRModel):
 
         # Store dimensions for later use
         self.total_embed_dim = total_embed_dim
-        self.use_projection = projection_dim is not None
-
-        # 2. Optional Projection Layer to unify dimensions
-        if self.use_projection and projection_dim is not None:
-            self.projection = nn.Linear(total_embed_dim, projection_dim)
-            nn.init.xavier_uniform_(self.projection.weight)
-            nn.init.zeros_(self.projection.bias)
-            working_dim = projection_dim
-            # For SENET, we need uniform embedding dim after projection
-            self.embedding_dim = projection_dim // self.num_fields
-        else:
-            working_dim = total_embed_dim
-            # For SENET compatibility
-            self.embedding_dim = embedding_dim
+        working_dim = total_embed_dim
+        # For SENET compatibility
+        self.embedding_dim = embedding_dim
 
         # Layer norm after embeddings (before or after projection)
         if use_layer_norm:
             self.embed_ln = nn.LayerNorm(working_dim)
 
         if use_senet:
-            # When projection is used, SENet operates on uniform-dimension splits
-            # When not used, SENet operates on variable-dimension embeddings
-            if self.use_projection and projection_dim is not None:
-                senet_dims = (
-                    self.embedding_dim
-                )  # uniform dim = projection_dim // num_fields
-            else:
-                senet_dims = [
-                    self.feature_dims[f] for f in self.feature_names
-                ]  # maintain ordering
+            # SENet operates on variable-dimension embeddings
+            senet_dims = [
+                self.feature_dims[f] for f in self.feature_names
+            ]  # maintain ordering
             self.senet = SENetLayer(
                 num_fields=self.num_fields,
                 feature_dims=senet_dims,
@@ -162,23 +144,14 @@ class GatedDCNModel(BaseCTRModel):
         # Concatenate: [Batch, Total_Embed_Dim]
         dnn_input = torch.cat(embeds, dim=1)
 
-        # Apply optional projection to unify dimensions
-        if self.use_projection:
-            dnn_input = self.projection(dnn_input)
-
         # Apply layer norm to embeddings
         if self.use_layer_norm:
             dnn_input = self.embed_ln(dnn_input)
 
         # Apply SENET (Feature Importance Reweighting) - Optional
         if self.use_senet:
-            if self.use_projection:
-                # After projection: split into uniform chunks for SENET
-                senet_input = list(dnn_input.split(self.embedding_dim, dim=1))
-                dnn_input = self.senet(senet_input)
-            else:
-                # No projection: use variable-dimension embeddings directly
-                dnn_input = self.senet(embeds)
+            # Use variable-dimension embeddings directly
+            dnn_input = self.senet(embeds)
 
         # Apply Feature Gating - Optional (alternative to SENET)
         if self.use_feature_gating:

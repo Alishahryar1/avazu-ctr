@@ -102,7 +102,6 @@ class TestSTECModel(unittest.TestCase):
             stec_dropout=0.1,
             stec_use_ffn=True,
             stec_mlp_hidden_dims=[32, 16],
-            embedding_projection_dim=16,  # Must be divisible by num_heads (4)
         )
 
     def test_model_instantiation(self):
@@ -130,7 +129,6 @@ class TestSTECModel(unittest.TestCase):
                 "large": {"type": "standard", "dim": 32},
             },
             stec_num_heads=4,
-            embedding_projection_dim=None,  # Should force auto-adaptation
         )
 
         vocab_sizes = {"small": 10, "large": 1000}
@@ -154,7 +152,6 @@ class TestSTECModel(unittest.TestCase):
         config = make_test_config(
             embedding_dim=17,  # Prime number, hard to divide
             stec_num_heads=4,
-            embedding_projection_dim=None,
         )
 
         vocab_sizes = {"f1": 10}

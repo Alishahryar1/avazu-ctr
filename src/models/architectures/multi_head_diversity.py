@@ -42,19 +42,8 @@ class MultiHeadDiversityModel(BaseCTRModel):
             self.feature_dims[feat] = feat_dim
             total_embed_dim += feat_dim
 
-        projection_dim = config.get("embedding_projection_dim", None)
-        self.use_projection = projection_dim is not None
-
-        # 2. Projection (Optional)
-        if self.use_projection and projection_dim is not None:
-            self.projection = nn.Linear(total_embed_dim, projection_dim)
-            nn.init.xavier_uniform_(self.projection.weight)
-            nn.init.zeros_(self.projection.bias)
-            working_dim = projection_dim
-            self.embedding_dim = projection_dim // len(feature_names)
-        else:
-            working_dim = total_embed_dim
-            self.embedding_dim = embedding_dim
+        working_dim = total_embed_dim
+        self.embedding_dim = embedding_dim
 
         # 3. Layer Norm
         self.use_layer_norm = backbone_config_dict.get("use_layer_norm", False)
@@ -68,10 +57,7 @@ class MultiHeadDiversityModel(BaseCTRModel):
         if self.use_senet:
             from src.models.layers.senet import SENetLayer
 
-            if self.use_projection and projection_dim is not None:
-                senet_dims = self.embedding_dim
-            else:
-                senet_dims = [self.feature_dims[f] for f in self.feature_names]
+            senet_dims = [self.feature_dims[f] for f in self.feature_names]
 
             self.senet = SENetLayer(
                 num_fields=len(feature_names),
@@ -113,7 +99,7 @@ class MultiHeadDiversityModel(BaseCTRModel):
                 use_layernorm=backbone_config_dict["dcn_use_layernorm"],
                 low_rank=backbone_config_dict.get("dcn_low_rank", None),
             )
-        
+
         # 6. Residual MLP (Optional)
         if backbone_config_dict.get("mlp_hidden_dims", []):
             self.mlp = ResidualMLP(
@@ -160,20 +146,11 @@ class MultiHeadDiversityModel(BaseCTRModel):
         )
 
     def shared_backbone_forward(self, dnn_input: torch.Tensor) -> torch.Tensor:
-        """Applies the shared backbone layers (Projection, SENET/Gating, DCN)."""
-        # Apply optional projection
-        if self.use_projection:
-            dnn_input = self.projection(dnn_input)
+        """Applies the shared backbone layers (SENET/Gating, DCN)."""
 
         # Apply layer norm
         if self.use_layer_norm:
             dnn_input = self.embed_ln(dnn_input)
-
-        # Apply SENET
-        if self.use_senet and self.use_projection:
-            # After projection: split into uniform chunks for SENET
-            senet_input = list(dnn_input.split(self.embedding_dim, dim=1))
-            dnn_input = self.senet(senet_input)
 
         # Apply Feature Gating (alternative to SENET, works on concatenated tensor)
         if self.use_feature_gating:
@@ -209,23 +186,14 @@ class MultiHeadDiversityModel(BaseCTRModel):
             # Now we have the masked embeddings.
             dnn_input = torch.cat(current_head_embeds, dim=1)
 
-            # Rest of backbone (Projection -> SENET(uniform) -> Gating -> DCN)
-            # Apply Projection
-            if self.use_projection:
-                dnn_input = self.projection(dnn_input)
-
             # Apply Layer Norm
             if self.use_layer_norm:
                 dnn_input = self.embed_ln(dnn_input)
 
-            # Apply SENET (Uniform)
+            # Apply SENET
             if self.use_senet:
-                if self.use_projection:
-                    senet_input = list(dnn_input.split(self.embedding_dim, dim=1))
-                    dnn_input = self.senet(senet_input)
-                else:
-                    # SENet expects a list of embeddings, not concatenated tensor
-                    dnn_input = self.senet(current_head_embeds)
+                # SENet expects a list of embeddings, not concatenated tensor
+                dnn_input = self.senet(current_head_embeds)
 
             # Apply Feature Gating
             if self.use_feature_gating:

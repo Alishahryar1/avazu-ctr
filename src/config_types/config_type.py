@@ -22,7 +22,6 @@ class ConfigType(TypedDict):
     # Embeddings
     embedding_dim: int
     feature_embeddings: dict[str, FeatureEmbeddingConfig]
-    embedding_projection_dim: int | None  # None = no projection
 
     # Model
     model: ModelConfig

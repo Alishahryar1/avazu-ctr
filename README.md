@@ -249,7 +249,6 @@ All hyperparameters are managed in `src/config/config.py`. Key configuration cat
     "site_id": {"type": "standard", "dim": 32},
     "user_id": {"type": "hash", "dim": 32, "num_buckets": 10000},
 },
-"embedding_projection_dim": None,
 ```
 
 ### Training Strategy

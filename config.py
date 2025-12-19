@@ -119,7 +119,6 @@ CONFIG: ConfigType = {
             "num_hashes": 2,
         },
     },
-    "embedding_projection_dim": None,  # None = no projection, int = project to uniform dim
     # === MULTIHEAD DIVERSITY MODEL ===
     "model": {
         "backbone_type": "gated_dcn",
@@ -135,7 +134,7 @@ CONFIG: ConfigType = {
             "senet_squeeze_funcs": ["mean", "max", "min", "std"],
             "senet_reduction_ratio": 3,
             "senet_hidden_activation": "gelu",
-            "senet_excitation_activation": "gelu",
+            "senet_excitation_activation": "tanh",
             "senet_num_groups": 2,
             "senet_reweight_mode": "element",
             "senet_use_fuse": True,
@@ -149,7 +148,7 @@ CONFIG: ConfigType = {
             "mlp_hidden_dims": [2048, 1024, 512],
             "mlp_activation": "gelu",
             "mlp_use_skip_connections": True,
-            "mlp_dropout": 0.0,
+            "mlp_dropout": 0.1,
             "use_layer_norm": True,
         },
         "heads": [
@@ -183,7 +182,7 @@ CONFIG: ConfigType = {
             },
             {
                 "hidden_dims": [256],
-                "activation": "gelu",
+                "activation": "tanh",
                 "dropout": 0.2,
                 "use_layer_norm": True,
                 "use_skip_connections": True,
@@ -200,23 +199,30 @@ CONFIG: ConfigType = {
     # === Optimizer Configuration ===
     "dense_optimizer": {
         "type": "adamw",
-        "lr": 1e-4,
+        "lr": 1e-3,
         "warmup_epoch_ratio": 0.2,
         "weight_decay": 1e-4,
     },
     "embedding_optimizer": {
         "type": "adagrad",
-        "lr": 1e-2,
+        "lr": 0.1,
         "warmup_epoch_ratio": 0.0,
         "weight_decay": 0.0,
     },
     # FTRL config example (uncomment to use):
+    # "dense_optimizer": {
+    #     "type": "ftrl",
+    #     "alpha": 0.1,
+    #     "beta": 1.0,
+    #     "l1": 2.0,
+    #     "l2": 1.0,
+    # },
     # "embedding_optimizer": {
     #     "type": "ftrl",
-    #     "alpha": 0.1,  # Learning rate proportionality constant
+    #     "alpha": 0.001,  # Learning rate proportionality constant
     #     "beta": 1.0,   # Learning rate smoothing parameter
-    #     "l1": 2.0,     # L1 regularization (enables sparsity)
-    #     "l2": 1.0,     # L2 regularization
+    #     "l1": 0.0,     # L1 regularization (enables sparsity)
+    #     "l2": 0.0,     # L2 regularization
     # }
 }
 

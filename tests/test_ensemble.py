@@ -69,7 +69,6 @@ def make_base_config(
             "shuffle_train": False,
             "embedding_dim": 16,
             "feature_embeddings": {},
-            "embedding_projection_dim": None,
             "model": model_config,
             "epochs": 1,
             "early_stopping_patience": 3,

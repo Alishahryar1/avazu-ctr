@@ -35,7 +35,6 @@ class TestMultiHeadDiversityModel(unittest.TestCase):
 
         self.config = {
             "embedding_dim": 8,
-            "embedding_projection_dim": None,
             "feature_embeddings": {
                 "feat_1": {"type": "standard", "dim": 8},
                 "feat_2": {"type": "standard", "dim": 8},

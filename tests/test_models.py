@@ -96,7 +96,6 @@ def make_test_config(**overrides) -> ConfigType:
         # Model Architecture - Embeddings (top-level)
         "embedding_dim": overrides.get("embedding_dim", 16),
         "feature_embeddings": overrides.get("feature_embeddings", {}),
-        "embedding_projection_dim": overrides.get("embedding_projection_dim", None),
         # Model config (nested)
         "model": model_config,
         # Training
@@ -138,11 +137,7 @@ def make_test_config(**overrides) -> ConfigType:
 
     # Apply non-model overrides directly to test_config
     for key, value in overrides.items():
-        if key not in model_keys and key not in (
-            "embedding_dim",
-            "feature_embeddings",
-            "embedding_projection_dim",
-        ):
+        if key not in model_keys and key not in ("embedding_dim", "feature_embeddings"):
             test_config[key] = value
 
     return test_config  # type: ignore[return-value]
@@ -488,55 +483,13 @@ class TestFeatureEmbeddings(unittest.TestCase):
         out = model(x)
         self.assertEqual(out["logits"].shape, (4, 1))
 
-    def test_projection_layer(self):
-        """Test that projection layer unifies feature embedding dimensions."""
-        config = make_test_config(
-            feature_embeddings={
-                "small": {"type": "standard", "dim": 8},
-                "medium": {"type": "standard", "dim": 16},
-            },
-            embedding_projection_dim=64,  # Project to 64 dims
-            use_senet=False,
-            use_feature_gating=False,
-        )
-        vocab_sizes = {"small": 5, "medium": 50}
-        model = GatedDCNModel(vocab_sizes, ["small", "medium"], config)
-
-        self.assertTrue(model.use_projection)
-        self.assertTrue(hasattr(model, "projection"))
-
-        # Forward pass should work
-        x = torch.randint(0, 5, (4, 2))
-        out = model(x)
-        self.assertEqual(out["logits"].shape, (4, 1))
-
-    def test_projection_with_senet(self):
-        """Test that SENET works with projection layer."""
-        config = make_test_config(
-            feature_embeddings={
-                "feat1": {"type": "standard", "dim": 8},
-                "feat2": {"type": "standard", "dim": 16},
-            },
-            embedding_projection_dim=64,  # Must divide evenly by num_fields for SENET
-            use_senet=True,
-            use_feature_gating=False,
-        )
-        vocab_sizes = {"feat1": 5, "feat2": 50}  # 2 fields
-        model = GatedDCNModel(vocab_sizes, ["feat1", "feat2"], config)
-
-        self.assertTrue(hasattr(model, "senet"))
-        x = torch.randint(0, 5, (4, 2))
-        out = model(x)
-        self.assertEqual(out["logits"].shape, (4, 1))
-
-    def test_senet_with_variable_embeddings_no_projection(self):
-        """Test that SENET works with non-uniform embeddings without projection."""
+    def test_senet_with_variable_embeddings(self):
+        """Test that SENET works with non-uniform embeddings."""
         config = make_test_config(
             feature_embeddings={
                 "small": {"type": "standard", "dim": 8},
                 "large": {"type": "standard", "dim": 32},
             },
-            embedding_projection_dim=None,
             use_senet=True,
             use_feature_gating=False,
         )
