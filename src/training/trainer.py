@@ -1,5 +1,6 @@
 """Training script for CTR prediction model."""
 import pyperclip
+from typing import Any, cast
 from torch.optim import optimizer
 import os
 import torch
@@ -191,7 +192,7 @@ def train():
     # Learning rate scheduler (only for non-FTRL optimizers)
     steps_per_epoch = len(train_loader)
     total_steps = steps_per_epoch * CONFIG['epochs']
-    dense_warmup_ratio = float(dense_opt_cfg.get('warmup_epoch_ratio', 0.0)) if dense_opt_type != 'ftrl' else 0.0
+    dense_warmup_ratio = float(cast(dict[str, Any], dense_opt_cfg).get('warmup_epoch_ratio', 0.0)) if dense_opt_type != 'ftrl' else 0.0
     warmup_steps = int(steps_per_epoch * dense_warmup_ratio)
     
     if not use_single_ftrl and other_optimizer is not None and dense_opt_type != 'ftrl':
@@ -275,7 +276,7 @@ def train():
                 with torch.amp.autocast(device_type='cuda', dtype=amp_dtype, enabled=use_amp):
                     # Unified interface: all models handle their own loss internally
                     output = model(X_batch)
-                    loss = model.compute_loss(output, y_batch)
+                    loss = model.compute_loss(output, y_batch)  # type: ignore[operator]
 
                 # Backward pass with gradient scaling for AMP
                 if use_amp and scaler is not None:

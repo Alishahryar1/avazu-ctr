@@ -51,7 +51,7 @@ class TestSENetLayer(unittest.TestCase):
         senet = SENetLayer(num_fields=5, feature_dims=16, squeeze_funcs=['mean', 'max'])
         embeddings = [torch.randn(4, 16, requires_grad=True) for _ in range(5)]
         out = senet(embeddings)
-        loss = sum(emb.sum() for emb in out)
+        loss = torch.stack([emb.sum() for emb in out]).sum()
         loss.backward()
 
         for name, param in senet.named_parameters():
@@ -91,7 +91,7 @@ class TestSENetLayer(unittest.TestCase):
         senet = SENetLayer(num_fields=3, feature_dims=feature_dims, squeeze_funcs=['mean'])
         embeddings = [torch.randn(4, dim, requires_grad=True) for dim in feature_dims]
         out = senet(embeddings)
-        loss = sum(emb.sum() for emb in out)
+        loss = torch.stack([emb.sum() for emb in out]).sum()
         loss.backward()
 
         for name, param in senet.named_parameters():
@@ -203,7 +203,7 @@ class TestSENetLayer(unittest.TestCase):
         """Verify SENet uses element mode for unrecognized reweight_mode."""
         # Implementation doesn't validate reweight_mode - unrecognized values
         # fall through to element mode (weights applied directly)
-        senet = SENetLayer(num_fields=5, feature_dims=16, reweight_mode='invalid')
+        senet = SENetLayer(num_fields=5, feature_dims=16, reweight_mode='invalid')  # type: ignore[arg-type]
         embeddings = [torch.randn(4, 16) for _ in range(5)]
         # Should work without error, using element-level reweighting
         out = senet(embeddings)
@@ -221,7 +221,7 @@ class TestSENetLayer(unittest.TestCase):
         )
         embeddings = [torch.randn(4, 16, requires_grad=True) for _ in range(3)]
         out = senet(embeddings)
-        loss = sum(emb.sum() for emb in out)
+        loss = torch.stack([emb.sum() for emb in out]).sum()
         loss.backward()
 
         for name, param in senet.named_parameters():

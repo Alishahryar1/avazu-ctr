@@ -1,6 +1,7 @@
 """Squeeze-and-Excitation Network layer (SENet+) - Optimized."""
 from typing import Literal
 import torch
+from torch import Tensor
 import torch.nn as nn
 from src.models.utils import get_activation
 
@@ -78,7 +79,8 @@ class SENetLayer(nn.Module):
             # We count occurrences of each group ID
             ones = torch.ones(len(segment_indices), dtype=torch.float32)
             group_sizes = torch.zeros(self.num_segments, dtype=torch.float32)
-            group_sizes.scatter_add_(0, self.segment_indices, ones)
+            segment_idx_tensor = torch.tensor(segment_indices, dtype=torch.long)
+            group_sizes.scatter_add_(0, segment_idx_tensor, ones)
             self.register_buffer('group_sizes', group_sizes)
 
         # --- 3. Network Architecture ---
@@ -149,7 +151,8 @@ class SENetLayer(nn.Module):
             # We treat the batch as one large index operation
             
             # Expand indices for batch: [Batch, Total_Dim]
-            idx_expanded = self.segment_indices.unsqueeze(0).expand(batch_size, -1)
+            segment_indices: Tensor = self.segment_indices  # type: ignore[assignment]
+            idx_expanded = segment_indices.unsqueeze(0).expand(batch_size, -1)
             
             squeezed_list = []
             for func in self.squeeze_funcs:
@@ -161,7 +164,8 @@ class SENetLayer(nn.Module):
                     # scatter_add_ sums elements into the group buckets
                     out.scatter_add_(1, idx_expanded, flat_emb)
                     # Divide by precomputed group sizes
-                    out = out / self.group_sizes.unsqueeze(0)
+                    group_sizes: Tensor = self.group_sizes  # type: ignore[assignment]
+                    out = out / group_sizes.unsqueeze(0)
                 elif func == 'max':
                     # scatter_reduce_ with 'amax'
                     # Note: init with very small number or handle carefully. 
@@ -191,7 +195,8 @@ class SENetLayer(nn.Module):
                 # Use index_select to map field weights to element positions
                 # self.field_indices maps every element to its field ID
                 # weights: [Batch, Fields] -> index_select -> [Batch, Total_Dim]
-                weights_expanded = torch.index_select(weights, 1, self.field_indices)
+                field_indices: Tensor = self.field_indices  # type: ignore[assignment]
+                weights_expanded = torch.index_select(weights, 1, field_indices)
             
             output = flat_emb * weights_expanded
         else:

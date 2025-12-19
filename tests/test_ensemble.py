@@ -5,6 +5,7 @@ Tests for EnsembleModel with different model types (GatedDCN, STEC, nested Ensem
 """
 
 import unittest
+from typing import Any, cast
 import torch
 from config import ConfigType, GatedDCNConfig, STECConfig, EnsembleConfig
 from src.models.architectures.ensemble import EnsembleModel
@@ -53,14 +54,15 @@ def make_stec_config() -> STECConfig:
     }
 
 
-def make_base_config(model_config) -> ConfigType:
+def make_base_config(model_config: EnsembleConfig | GatedDCNConfig | STECConfig) -> ConfigType:
     """Create a base ConfigType with the given model config."""
-    return {
+    return cast(ConfigType, {
         'seed': 42,
         'device': 'cpu',
         'batch_size': 32,
         'num_workers': 0,
         'min_freq': 5,
+        'data_processor_sort_keys': [],
         'validation_split': 0.1,
         'shuffle_train': False,
         'embedding_dim': 16,
@@ -92,14 +94,12 @@ def make_base_config(model_config) -> ConfigType:
         'auto_amp': False,
         'amp_dtype': 'float16',
         'compile_model': False,
-        'focal_loss_gamma': 0.0,
-        'label_smoothing': 0.0,
         'train_path': './data/train.gz',
         'test_path': './data/test.gz',
         'sub_path': 'submission.csv',
         'processed_path': './data',
         'models_path': './models',
-    }  # type: ignore
+    })
 
 
 class TestEnsembleHomogeneous(unittest.TestCase):

@@ -164,7 +164,7 @@ class TestFTRLProximal(unittest.TestCase):
         
         # Should return the loss value
         self.assertIsNotNone(loss)
-        self.assertIsInstance(loss.item(), float)
+        self.assertIsInstance(loss.item(), float)  # type: ignore[union-attr]
 
     def test_ftrl_zero_grad(self):
         """Test that zero_grad properly clears gradients."""

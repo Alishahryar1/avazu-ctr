@@ -1,5 +1,6 @@
 """Custom optimizers for CTR prediction models."""
 import math
+from typing import Callable
 import torch
 from torch.optim import Optimizer
 
@@ -43,7 +44,7 @@ class FTRLProximal(Optimizer):
         super().__init__(params, defaults)
     
     @torch.no_grad()
-    def step(self, closure=None):
+    def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]
         """
         Performs a single optimization step.
         

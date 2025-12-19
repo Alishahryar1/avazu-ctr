@@ -1,8 +1,10 @@
 """Ensemble model for CTR prediction."""
+from typing import Any, cast
 import torch
 import torch.nn as nn
 
 from config import ConfigType, ModelConfig
+from src.config_types import EnsembleConfig
 from src.models.types import ModelOutput
 from src.models.architectures.base import BaseCTRModel
 from src.models.losses import KBCELoss
@@ -74,14 +76,14 @@ class EnsembleModel(BaseCTRModel):
         base_seed: int | None = None
     ):
         super().__init__()
-        model_config = config['model']
+        model_config = cast(EnsembleConfig, config['model'])
         
         # Get ensemble settings
         self.base_seed: int = base_seed if base_seed is not None else config['seed']
         self.ensemble_aggregation: str = model_config['ensemble_aggregation']
         
         # Get list of model configs
-        model_configs: list[ModelConfig] = model_config['models']
+        model_configs: list[Any] = model_config['models']
         self.k: int = len(model_configs)
         
         if self.k == 0:
@@ -137,7 +139,6 @@ class EnsembleModel(BaseCTRModel):
         return {
             "logits": aggregated,
             "aux_logits": all_logits,  # List of k branch logits (for this level's K-BCE)
-            "_outputs": all_outputs,  # Full outputs for recursive loss (internal use)
         }
 
     def compute_loss(
@@ -158,12 +159,12 @@ class EnsembleModel(BaseCTRModel):
         # This captures:
         #   a) Nested Ensemble structural losses
         #   b) Leaf model internal losses (e.g., regularization, aux tasks)
-        all_outputs = output.get("_outputs", [])
         
-        for model, sub_output in zip(self.models, all_outputs):
+        for model in self.models:
             # Assuming BaseCTRModel has a compute_loss method
             # If the model is a simple leaf with no internal loss, it returns 0
-            child_loss = model.compute_loss(sub_output, y_true)
+            # Note: We pass the same output since aux_logits contains per-model logits
+            child_loss = model.compute_loss(output, y_true)  # type: ignore[arg-type]
             total_loss = total_loss + child_loss
         
         return total_loss

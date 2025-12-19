@@ -6,6 +6,7 @@ and various model configurations.
 """
 
 import unittest
+from typing import Any, cast
 import torch
 import torch.nn as nn
 from config import CONFIG, ConfigType
@@ -152,7 +153,7 @@ class TestModelStructure(unittest.TestCase):
     
     def test_dcn_layers(self):
         """Verify DCN has the correct number of layers (if enabled)."""
-        model_config = self.config['model']
+        model_config = cast(dict[str, Any], self.config['model'])
         if not model_config['use_dcn']:
             self.skipTest("DCN is disabled in config")
         expected_layers = model_config['dcn_num_layers']

@@ -16,6 +16,8 @@ import pickle
 from pathlib import Path
 import math
 
+import polars as pl
+
 from config import CONFIG
 
 

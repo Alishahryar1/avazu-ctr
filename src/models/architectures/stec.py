@@ -7,6 +7,7 @@ This module implements the full STEC architecture which:
 
 Reference: "STEC: See-Through Transformer-Based Encoder for CTR Prediction"
 """
+from typing import Any, Optional, cast
 import torch
 import torch.nn as nn
 
@@ -52,15 +53,15 @@ class STECModel(BaseCTRModel):
         self.num_fields = len(feature_names)
         
         # Extract config (global at top level, model-specific in config['model'])
-        model_config = config.get('model', {})
-        embedding_dim = config['embedding_dim']
-        stec_num_layers = model_config.get('stec_num_layers', 2)
-        stec_num_heads = model_config.get('stec_num_heads', 4)
-        stec_hidden_dim = model_config.get('stec_hidden_dim', None)  # None = 4x embed_dim
-        stec_dropout = model_config.get('stec_dropout', 0.1)
-        stec_use_ffn = model_config.get('stec_use_ffn', True)
-        mlp_hidden_dims = model_config.get('stec_mlp_hidden_dims', [256, 128])
-        mlp_dropout = model_config.get('mlp_dropout', 0.1)
+        model_config = cast(dict[str, Any], config.get('model', {}))
+        embedding_dim: int = config['embedding_dim']
+        stec_num_layers: int = int(model_config.get('stec_num_layers', 2))
+        stec_num_heads: int = int(model_config.get('stec_num_heads', 4))
+        stec_hidden_dim: int | None = cast(int | None, model_config.get('stec_hidden_dim', None))
+        stec_dropout: float = float(model_config.get('stec_dropout', 0.1))
+        stec_use_ffn: bool = bool(model_config.get('stec_use_ffn', True))
+        mlp_hidden_dims: list[int] = cast(list[int], model_config.get('stec_mlp_hidden_dims', [256, 128]))
+        mlp_dropout: float = float(model_config.get('mlp_dropout', 0.1))
         
         self.stec_num_layers = stec_num_layers
         self.stec_num_heads = stec_num_heads
@@ -113,7 +114,7 @@ class STECModel(BaseCTRModel):
             self.embed_per_field = head_dim * stec_num_heads
             working_dim = self.embed_per_field * self.num_fields
             # Add a linear layer to adjust dimensions
-            self.dim_adjust = nn.Linear(
+            self.dim_adjust: Optional[nn.Linear] = nn.Linear(
                 self.embed_per_field * self.num_fields // stec_num_heads * stec_num_heads,
                 working_dim
             )
@@ -166,7 +167,7 @@ class STECModel(BaseCTRModel):
                     nn.init.zeros_(m.bias)
         
         # 8. Loss function
-        focal_gamma = config.get('focal_loss_gamma', 0)
+        focal_gamma: float = float(cast(dict[str, Any], config).get('focal_loss_gamma', 0))
         if focal_gamma > 0:
             self._loss_fn: nn.Module = FocalLoss(gamma=focal_gamma)
         else:
@@ -193,7 +194,7 @@ class STECModel(BaseCTRModel):
         # [B, total_embed_dim]
         embed_concat = torch.cat(embeds, dim=1)
         
-        if self.use_projection:
+        if self.use_projection and self.projection is not None:
             embed_concat = self.projection(embed_concat)  # [B, num_fields * embed_per_field]
         
         # Reshape to [B, F, D] for attention

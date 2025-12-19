@@ -6,6 +6,7 @@ and the seed_everything function for reproducibility.
 """
 
 import unittest
+from typing import Any, cast
 import numpy as np
 import torch
 from config import CONFIG
@@ -23,7 +24,7 @@ class TestConfig(unittest.TestCase):
         
         # Model key must exist
         self.assertIn('model', CONFIG, "Missing 'model' key in config")
-        model_config = CONFIG['model']
+        model_config = cast(dict[str, Any], CONFIG['model'])
         
         # Check for ensemble or single model structure
         if 'models' in model_config:
@@ -54,9 +55,9 @@ class TestConfig(unittest.TestCase):
         """Verify config values are in valid ranges."""
         self.assertGreater(CONFIG['embedding_dim'], 0, "embedding_dim must be positive")
         # Check lr in optimizer configs
-        dense_lr = CONFIG['dense_optimizer'].get('lr')
+        dense_lr = cast(dict[str, Any], CONFIG['dense_optimizer']).get('lr')
         if dense_lr is not None:
-            self.assertGreater(dense_lr, 0, "dense optimizer lr must be positive")
+            self.assertGreater(float(dense_lr), 0, "dense optimizer lr must be positive")
         self.assertGreater(CONFIG['batch_size'], 0, "batch_size must be positive")
         self.assertGreater(CONFIG['epochs'], 0, "epochs must be positive")
 
@@ -105,12 +106,12 @@ class TestConfigExtended(unittest.TestCase):
 
     def test_config_lr_positive(self):
         """Verify learning rates are positive."""
-        dense_lr = CONFIG['dense_optimizer'].get('lr')
+        dense_lr = cast(dict[str, Any], CONFIG['dense_optimizer']).get('lr')
         if dense_lr is not None:
-            self.assertGreater(dense_lr, 0)
-        embed_lr = CONFIG['embedding_optimizer'].get('lr')
+            self.assertGreater(float(dense_lr), 0)
+        embed_lr = cast(dict[str, Any], CONFIG['embedding_optimizer']).get('lr')
         if embed_lr is not None:
-            self.assertGreater(embed_lr, 0)
+            self.assertGreater(float(embed_lr), 0)
 
     def test_config_validation_split_valid(self):
         """Verify validation_split is in valid range [0, 1)."""
@@ -119,7 +120,7 @@ class TestConfigExtended(unittest.TestCase):
 
     def test_config_model_structure(self):
         """Verify model config has valid structure."""
-        model_config = CONFIG['model']
+        model_config = cast(dict[str, Any], CONFIG['model'])
         
         # If ensemble, check aggregation method
         if 'models' in model_config:
@@ -127,13 +128,13 @@ class TestConfigExtended(unittest.TestCase):
         
     def test_config_senet_and_gating_mutual_exclusivity(self):
         """Verify SENET and feature gating are mutually exclusive in all GatedDCN configs."""
-        def check_gated_dcn_config(cfg: dict):
+        def check_gated_dcn_config(cfg: dict[str, Any]) -> None:
             """Check single GatedDCN config for mutual exclusivity."""
             if 'use_senet' in cfg and 'use_feature_gating' in cfg:
                 if cfg['use_senet'] and cfg['use_feature_gating']:
                     self.fail("Config has both use_senet and use_feature_gating enabled")
         
-        def check_model_configs(cfg: dict):
+        def check_model_configs(cfg: dict[str, Any]) -> None:
             """Recursively check all model configs."""
             if 'models' in cfg:
                 # Ensemble: check each sub-model
@@ -146,7 +147,7 @@ class TestConfigExtended(unittest.TestCase):
                 # GatedDCN config
                 check_gated_dcn_config(cfg)
         
-        check_model_configs(CONFIG['model'])
+        check_model_configs(cast(dict[str, Any], CONFIG['model']))
 
     def test_config_feature_embeddings_valid(self):
         """Verify feature_embeddings has valid structure."""
