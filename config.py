@@ -8,7 +8,7 @@ from src.config_types import (
     EnsembleConfig,
     ModelConfig,
     ConfigType,
-    MultiHeadDiversityConfig
+    MultiHeadDiversityConfig,
 )
 
 
@@ -17,19 +17,23 @@ CONFIG: ConfigType = {
     # === General ===
     "seed": 42,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
-    
     # === Data Loading ===
     "batch_size": 4096,  # Increased for faster training
     "num_workers": 4,  # Increased for faster data loading
     "validation_split": 0.0,  # Hold out 1% for validation
     "shuffle_train": False,  # Set False for time-sorted datasets to preserve temporal order
-    
     # === Data Processing ===
     # Sort keys for data processor (applied before feature engineering)
     # Default: app_id, site_id, banner_pos, C1, day_of_month, hour_of_day
-    "data_processor_sort_keys": ["app_id", "site_id", "banner_pos", "C1", "day_of_month", "hour"],
+    "data_processor_sort_keys": [
+        "app_id",
+        "site_id",
+        "banner_pos",
+        "C1",
+        "day_of_month",
+        "hour",
+    ],
     "min_freq": 0,
-    
     # === Model Architecture - Embeddings ===
     "embedding_dim": 16,  # Default/fallback embedding dimension
     # Per-feature embedding configuration
@@ -79,20 +83,43 @@ CONFIG: ConfigType = {
         "device_model": {"type": "standard", "dim": 32 * 2},
         "app_id": {"type": "standard", "dim": 32 * 2},
         # --- Hash embeddings (very high cardinality) ---
-        "device_id": {"type": "hash", "dim": 32 * 2, "num_buckets": 3500, "num_hashes": 2},
-        "device_id_x_app_id": {"type": "hash", "dim": 32 * 2, "num_buckets": 3500, "num_hashes": 2},
-        "device_ip": {"type": "hash", "dim": 32 * 2, "num_buckets": 5000, "num_hashes": 2},
-        "user_proxy": {"type": "hash", "dim": 32 * 2, "num_buckets": 7000, "num_hashes": 2},
-        "device_ip_x_C14": {"type": "hash", "dim": 32 * 2, "num_buckets": 8000, "num_hashes": 2},
+        "device_id": {
+            "type": "hash",
+            "dim": 32 * 2,
+            "num_buckets": 3500,
+            "num_hashes": 2,
+        },
+        "device_id_x_app_id": {
+            "type": "hash",
+            "dim": 32 * 2,
+            "num_buckets": 3500,
+            "num_hashes": 2,
+        },
+        "device_ip": {
+            "type": "hash",
+            "dim": 32 * 2,
+            "num_buckets": 5000,
+            "num_hashes": 2,
+        },
+        "user_proxy": {
+            "type": "hash",
+            "dim": 32 * 2,
+            "num_buckets": 7000,
+            "num_hashes": 2,
+        },
+        "device_ip_x_C14": {
+            "type": "hash",
+            "dim": 32 * 2,
+            "num_buckets": 8000,
+            "num_hashes": 2,
+        },
     },
     "embedding_projection_dim": None,  # None = no projection, int = project to uniform dim
-    
     # === MULTI-HEAD DIVERSITY MODEL ===
     "model": {
         "backbone_type": "gated_dcn",
         "diversity_weight": 0.1,
         "feature_bagging_ratio": 0.9,
-        
         # Backbone Configuration (GatedDCN w/ neutralized MLP)
         "backbone_config": {
             # Interaction Layers
@@ -100,14 +127,12 @@ CONFIG: ConfigType = {
             "dcn_num_layers": 6,
             "dcn_use_layernorm": False,
             "dcn_low_rank": None,
-            
             # Feature Gating (used instead of SENET)
-            "use_feature_gating": False,
-            "feature_gating_activation": "sigmoid",
+            "use_feature_gating": True,
+            "feature_gating_activation": "tanh",
             "feature_gating_low_rank": None,
-            
             # SENET (Disabled)
-            "use_senet": True,
+            "use_senet": False,
             "senet_squeeze_funcs": ["mean", "max", "min", "std"],
             "senet_reduction_ratio": 3,
             "senet_hidden_activation": "gelu",
@@ -116,7 +141,6 @@ CONFIG: ConfigType = {
             "senet_reweight_mode": "element",
             "senet_use_fuse": True,
             "senet_use_layer_norm": True,
-            
             # MLP Props (Neutralized/Ignored by MultiHeadDiversityModel, but required by type)
             "mlp_hidden_dims": [0],  # Dummy value
             "mlp_activation": "gelu",
@@ -126,7 +150,6 @@ CONFIG: ConfigType = {
             "focal_loss_gamma": 0.0,
             "label_smoothing": 0.0,
         },
-        
         # Multiple Independent Heads
         "heads": [
             # Head 1
@@ -135,7 +158,7 @@ CONFIG: ConfigType = {
                 "activation": "gelu",
                 "dropout": 0.15,
                 "use_layer_norm": True,
-                "use_skip_connections": True
+                "use_skip_connections": True,
             },
             # Head 2
             {
@@ -143,7 +166,7 @@ CONFIG: ConfigType = {
                 "activation": "relu",
                 "dropout": 0.2,
                 "use_layer_norm": True,
-                "use_skip_connections": True
+                "use_skip_connections": True,
             },
             # Head 3
             {
@@ -151,7 +174,7 @@ CONFIG: ConfigType = {
                 "activation": "silu",
                 "dropout": 0.1,
                 "use_layer_norm": True,
-                "use_skip_connections": True
+                "use_skip_connections": True,
             },
             # Head 4
             {
@@ -159,11 +182,34 @@ CONFIG: ConfigType = {
                 "activation": "mish",
                 "dropout": 0.25,
                 "use_layer_norm": True,
-                "use_skip_connections": True
-            }
-        ]
+                "use_skip_connections": True,
+            },
+            # Head 5
+            {
+                "hidden_dims": [256, 128, 64],
+                "activation": "gelu",
+                "dropout": 0.15,
+                "use_layer_norm": False,
+                "use_skip_connections": True,
+            },
+            # Head 6
+            {
+                "hidden_dims": [512, 256, 128],
+                "activation": "relu",
+                "dropout": 0.2,
+                "use_layer_norm": True,
+                "use_skip_connections": False,
+            },
+            # Head 7
+            {
+                "hidden_dims": [128, 64, 32],
+                "activation": "sigmoid",
+                "dropout": 0.0,
+                "use_layer_norm": False,
+                "use_skip_connections": False,
+            },
+        ],
     },
-    
     # === Training ===
     "epochs": 1,
     "early_stopping_patience": 50,
@@ -171,7 +217,6 @@ CONFIG: ConfigType = {
     "use_tensorboard": True,
     "tensorboard_logdir": "./runs",
     "tensorboard_log_interval": 50,  # Log every N batches (reduces I/O overhead)
-    
     # === Optimizer Configuration ===
     # Dense optimizer: for MLP, DCN, and other dense parameters
     # Options: "adamw", "adagrad", "ftrl"
@@ -179,7 +224,7 @@ CONFIG: ConfigType = {
         "type": "adamw",
         "lr": 1e-4,
         "warmup_epoch_ratio": 0.2,
-        "weight_decay": 1e-4
+        "weight_decay": 1e-4,
     },
     # Embedding optimizer: for embedding layers (typically benefits from adaptive LR)
     # Options: "adamw", "adagrad", "ftrl"
@@ -187,7 +232,7 @@ CONFIG: ConfigType = {
         "type": "adagrad",
         "lr": 1e-2,
         "warmup_epoch_ratio": 0.0,
-        "weight_decay": 0.0
+        "weight_decay": 0.0,
     },
     # FTRL config example (uncomment to use):
     # "embedding_optimizer": {
@@ -197,14 +242,11 @@ CONFIG: ConfigType = {
     #     "l1": 2.0,     # L1 regularization (enables sparsity)
     #     "l2": 1.0,     # L2 regularization
     # },
-    
     # === Automatic Mixed Precision (AMP) ===
     "auto_amp": True,  # Enable AMP for faster training on CUDA (uses float16/bfloat16)
     "amp_dtype": "float16",  # Options: 'float16' (more compatible), 'bfloat16' (better numerics)
-    
     # === Model Compilation ===
     "compile_model": False,  # Enable torch.compile for faster training (requires PyTorch 2.0+)
-    
     # === Paths ===
     "train_path": "data/raw/train.gz",
     "test_path": "data/raw/test.gz",
@@ -213,8 +255,9 @@ CONFIG: ConfigType = {
     "models_path": "./checkpoints",
 }
 
+
 def seed_everything(seed=42):
-    os.environ['PYTHONHASHSEED'] = str(seed)
+    os.environ["PYTHONHASHSEED"] = str(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
