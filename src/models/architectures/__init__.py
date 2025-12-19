@@ -4,7 +4,8 @@ from src.models.architectures.base import BaseCTRModel, ModelOutput
 from src.models.architectures.gated_dcn import GatedDCNModel
 from src.models.architectures.stec import STECModel
 from src.models.architectures.ensemble import EnsembleModel
-from config import GatedDCNConfig, STECConfig, EnsembleConfig
+from src.models.architectures.multi_head_diversity import MultiHeadDiversityModel
+from src.config_types import GatedDCNConfig, STECConfig, EnsembleConfig, MultiHeadDiversityConfig
 
 
 
@@ -19,6 +20,7 @@ def create_model(
     Config flags checked (in order of priority):
     - use_ensemble: Creates EnsembleModel  
     - use_stec: Creates STECModel
+    - MultiHeadDiversityConfig detected: Creates MultiHeadDiversityModel
     - Otherwise: Creates GatedDCNModel (default)
     
     Args:
@@ -37,11 +39,14 @@ def create_model(
     # Check for STEC config (has 'stec_num_layers' key)
     elif 'stec_num_layers' in model_config:
         return STECModel(vocab_sizes, feature_names, config)
+    # Check for MultiHeadDiversity config (has 'heads' key)
+    elif 'heads' in model_config and 'backbone_type' in model_config:
+        return MultiHeadDiversityModel(vocab_sizes, feature_names, config)
     # Default to GatedDCN (has 'use_dcn' key or fallback)
     elif 'use_dcn' in model_config:
         return GatedDCNModel(vocab_sizes, feature_names, config)
     else:
-        raise ValueError(f"Unsupported model config: {model_config.keys()}")
+        raise ValueError(f"Unsupported model config keys: {model_config.keys()}")
 
 
 __all__ = [
@@ -50,5 +55,6 @@ __all__ = [
     'GatedDCNModel',
     'STECModel',
     'EnsembleModel',
+    'MultiHeadDiversityModel',
     'create_model',
 ]

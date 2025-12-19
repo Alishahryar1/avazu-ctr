@@ -8,6 +8,8 @@ from .adamw_config import AdamWConfig
 from .adagrad_config import AdagradConfig
 from .ftrl_config import FTRLConfig
 from .optimizer_config import OptimizerConfig
+from .multi_head_diversity_config import MultiHeadDiversityConfig
+from .residual_mlp_config import ResidualMLPConfig
 
 __all__ = [
     "FeatureEmbeddingConfig",
@@ -20,5 +22,7 @@ __all__ = [
     "AdagradConfig",
     "FTRLConfig",
     "OptimizerConfig",
+    "MultiHeadDiversityConfig",
+    "ResidualMLPConfig",
 ]
 

@@ -7,7 +7,8 @@ from src.config_types import (
     STECConfig,
     EnsembleConfig,
     ModelConfig,
-    ConfigType
+    ConfigType,
+    MultiHeadDiversityConfig
 )
 
 
