@@ -51,10 +51,6 @@ class MultiHeadDiversityModel(BaseCTRModel):
             nn.init.xavier_uniform_(self.projection.weight)
             nn.init.zeros_(self.projection.bias)
             working_dim = projection_dim
-            # For SENET, we need uniform embedding dim after projection
-            # number of fields * new_dim_per_field = projection_dim
-            # But usually projection creates a dense vector, loosing field structure unless carefully managed.
-            # GatedDCN assumes if projection is used, SENET splits projection_dim / num_fields
             self.embedding_dim = projection_dim // len(feature_names)
         else:
             working_dim = total_embed_dim
