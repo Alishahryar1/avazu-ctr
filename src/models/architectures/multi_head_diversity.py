@@ -128,6 +128,14 @@ class MultiHeadDiversityModel(BaseCTRModel):
                 use_skip_connections=head_cfg['use_skip_connections']
             ))
         
+        # --- Pre-generate Feature Bagging Masks ---
+        if self.feature_bagging_ratio < 1.0:
+            for i in range(self.num_heads):
+                mask = torch.bernoulli(
+                    torch.full((len(self.feature_names),), self.feature_bagging_ratio)
+                )
+                self.register_buffer(f'head_mask_{i}', mask)
+        
         # --- Loss ---
         self.loss_fn = DiversityBCELoss(diversity_weight=model_config['diversity_weight'])
 
@@ -182,7 +190,7 @@ class MultiHeadDiversityModel(BaseCTRModel):
         # 2. Process Heads with Feature Bagging
         head_logits = []
         
-        for head in self.heads:
+        for head_idx, head in enumerate(self.heads):
             # COPY the embeddings list to avoid modifying the original for other heads
             # No, we can just mask on the fly.
             
@@ -201,9 +209,8 @@ class MultiHeadDiversityModel(BaseCTRModel):
             current_head_embeds = []
             
             if self.feature_bagging_ratio < 1.0:
-                 # Generate binary mask for features: [Num_Features]
-                 # Probability `feature_bagging_ratio` to keep (1)
-                 mask = torch.bernoulli(torch.full((len(self.feature_names),), self.feature_bagging_ratio, device=x.device))
+                 # Use pre-generated mask for this head
+                 mask = getattr(self, f'head_mask_{head_idx}')
                  
                  for i, emb in enumerate(embeds_list):
                      if mask[i] > 0.5:

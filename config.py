@@ -41,49 +41,49 @@ CONFIG: ConfigType = {
     "feature_embeddings": {
         # --- Standard embeddings (low-medium cardinality) ---
         # Very low cardinality (dim 8)
-        "month": {"type": "standard", "dim": 8},
-        "C21_count_bin": {"type": "standard", "dim": 8},
-        "device_conn_type": {"type": "standard", "dim": 8},
-        "C18": {"type": "standard", "dim": 8},
-        "user_hourly_impressions_bin": {"type": "standard", "dim": 8},
-        "device_type": {"type": "standard", "dim": 8},
-        "hours_since_last_click_bin": {"type": "standard", "dim": 8},
-        "user_proxy_prev_clicks_bin": {"type": "standard", "dim": 8},
-        "device_ip_cumcount_bin": {"type": "standard", "dim": 8},
-        "device_id_cumcount_bin": {"type": "standard", "dim": 8},
-        "C1": {"type": "standard", "dim": 8},
-        "banner_pos": {"type": "standard", "dim": 8},
-        "day_of_week": {"type": "standard", "dim": 8},
-        "C15": {"type": "standard", "dim": 8},
-        "device_ip_count_bin": {"type": "standard", "dim": 8},
-        "device_id_count_bin": {"type": "standard", "dim": 8},
-        "C14_count_bin": {"type": "standard", "dim": 8},
-        "C17_count_bin": {"type": "standard", "dim": 8},
-        "user_proxy_count_bin": {"type": "standard", "dim": 8},
+        "month": {"type": "standard", "dim": 8 * 2},
+        "C21_count_bin": {"type": "standard", "dim": 8 * 2},
+        "device_conn_type": {"type": "standard", "dim": 8 * 2},
+        "C18": {"type": "standard", "dim": 8 * 2},
+        "user_hourly_impressions_bin": {"type": "standard", "dim": 8 * 2},
+        "device_type": {"type": "standard", "dim": 8 * 2},
+        "hours_since_last_click_bin": {"type": "standard", "dim": 8 * 2},
+        "user_proxy_prev_clicks_bin": {"type": "standard", "dim": 8 * 2},
+        "device_ip_cumcount_bin": {"type": "standard", "dim": 8 * 2},
+        "device_id_cumcount_bin": {"type": "standard", "dim": 8 * 2},
+        "C1": {"type": "standard", "dim": 8 * 2},
+        "banner_pos": {"type": "standard", "dim": 8 * 2},
+        "day_of_week": {"type": "standard", "dim": 8 * 2},
+        "C15": {"type": "standard", "dim": 8 * 2},
+        "device_ip_count_bin": {"type": "standard", "dim": 8 * 2},
+        "device_id_count_bin": {"type": "standard", "dim": 8 * 2},
+        "C14_count_bin": {"type": "standard", "dim": 8 * 2},
+        "C17_count_bin": {"type": "standard", "dim": 8 * 2},
+        "user_proxy_count_bin": {"type": "standard", "dim": 8 * 2},
         # Low cardinality (dim 16)
-        "C16": {"type": "standard", "dim": 16},
-        "day_of_month": {"type": "standard", "dim": 16},
-        "hour_of_day": {"type": "standard", "dim": 16},
-        "site_category": {"type": "standard", "dim": 16},
-        "app_category": {"type": "standard", "dim": 16},
-        "C21": {"type": "standard", "dim": 16},
-        "C19": {"type": "standard", "dim": 16},
+        "C16": {"type": "standard", "dim": 16 * 2},
+        "day_of_month": {"type": "standard", "dim": 16 * 2},
+        "hour_of_day": {"type": "standard", "dim": 16 * 2},
+        "site_category": {"type": "standard", "dim": 16 * 2},
+        "app_category": {"type": "standard", "dim": 16 * 2},
+        "C21": {"type": "standard", "dim": 16 * 2},
+        "C19": {"type": "standard", "dim": 16 * 2},
         # Medium cardinality (dim 24)
-        "C20": {"type": "standard", "dim": 24},
-        "C17": {"type": "standard", "dim": 24},
-        "app_domain": {"type": "standard", "dim": 24},
+        "C20": {"type": "standard", "dim": 24 * 2},
+        "C17": {"type": "standard", "dim": 24 * 2},
+        "app_domain": {"type": "standard", "dim": 24 * 2},
         # High cardinality (dim 32)
-        "C14": {"type": "standard", "dim": 32},
-        "site_id": {"type": "standard", "dim": 32},
-        "site_domain": {"type": "standard", "dim": 32},
-        "device_model": {"type": "standard", "dim": 32},
-        "app_id": {"type": "standard", "dim": 32},
+        "C14": {"type": "standard", "dim": 32 * 2},
+        "site_id": {"type": "standard", "dim": 32 * 2},
+        "site_domain": {"type": "standard", "dim": 32 * 2},
+        "device_model": {"type": "standard", "dim": 32 * 2},
+        "app_id": {"type": "standard", "dim": 32 * 2},
         # --- Hash embeddings (very high cardinality) ---
-        "device_id": {"type": "hash", "dim": 32, "num_buckets": 3500, "num_hashes": 2},
-        "device_id_x_app_id": {"type": "hash", "dim": 32, "num_buckets": 3500, "num_hashes": 2},
-        "device_ip": {"type": "hash", "dim": 32, "num_buckets": 5000, "num_hashes": 2},
-        "user_proxy": {"type": "hash", "dim": 32, "num_buckets": 7000, "num_hashes": 2},
-        "device_ip_x_C14": {"type": "hash", "dim": 32, "num_buckets": 8000, "num_hashes": 2},
+        "device_id": {"type": "hash", "dim": 32 * 2, "num_buckets": 3500, "num_hashes": 2},
+        "device_id_x_app_id": {"type": "hash", "dim": 32 * 2, "num_buckets": 3500, "num_hashes": 2},
+        "device_ip": {"type": "hash", "dim": 32 * 2, "num_buckets": 5000, "num_hashes": 2},
+        "user_proxy": {"type": "hash", "dim": 32 * 2, "num_buckets": 7000, "num_hashes": 2},
+        "device_ip_x_C14": {"type": "hash", "dim": 32 * 2, "num_buckets": 8000, "num_hashes": 2},
     },
     "embedding_projection_dim": None,  # None = no projection, int = project to uniform dim
     
@@ -97,9 +97,9 @@ CONFIG: ConfigType = {
         "backbone_config": {
             # Interaction Layers
             "use_dcn": True,
-            "dcn_num_layers": 3,
-            "dcn_use_layernorm": True,
-            "dcn_low_rank": 64,
+            "dcn_num_layers": 6,
+            "dcn_use_layernorm": False,
+            "dcn_low_rank": None,
             
             # Feature Gating (used instead of SENET)
             "use_feature_gating": False,
@@ -131,7 +131,7 @@ CONFIG: ConfigType = {
         "heads": [
             # Head 1
             {
-                "hidden_dims": [256],
+                "hidden_dims": [256, 128],
                 "activation": "gelu",
                 "dropout": 0.15,
                 "use_layer_norm": True,
@@ -139,7 +139,7 @@ CONFIG: ConfigType = {
             },
             # Head 2
             {
-                "hidden_dims": [512],
+                "hidden_dims": [512, 256],
                 "activation": "relu",
                 "dropout": 0.2,
                 "use_layer_norm": True,
@@ -147,7 +147,7 @@ CONFIG: ConfigType = {
             },
             # Head 3
             {
-                "hidden_dims": [128],
+                "hidden_dims": [128, 64],
                 "activation": "silu",
                 "dropout": 0.1,
                 "use_layer_norm": True,
@@ -155,7 +155,7 @@ CONFIG: ConfigType = {
             },
             # Head 4
             {
-                "hidden_dims": [1024],
+                "hidden_dims": [1024, 512],
                 "activation": "mish",
                 "dropout": 0.25,
                 "use_layer_norm": True,

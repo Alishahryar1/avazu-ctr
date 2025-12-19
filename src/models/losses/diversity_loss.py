@@ -34,11 +34,10 @@ class DiversityBCELoss(nn.Module):
         probs = torch.sigmoid(aux_logits)  # [K, B, 1]
         ensemble_prob = probs.mean(dim=0)   # [B, 1]
         
-        # 1. BCE loss for each head
-        total_bce = torch.tensor(0.0, device=aux_logits.device, dtype=aux_logits.dtype)
-        for i in range(num_heads):
-            total_bce = total_bce + F.binary_cross_entropy_with_logits(aux_logits[i], y_true)
-        avg_bce = total_bce / num_heads
+        # 1. Vectorized BCE loss for all heads
+        # Expand y_true from [B, 1] to [K, B, 1] to match aux_logits
+        y_true_expanded = y_true.unsqueeze(0).expand_as(aux_logits)
+        avg_bce = F.binary_cross_entropy_with_logits(aux_logits, y_true_expanded)
         
         # 2. NCL diversity term
         if num_heads > 1:
