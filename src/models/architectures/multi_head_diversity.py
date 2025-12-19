@@ -10,7 +10,7 @@ from src.models.layers.mlp import ResidualMLP
 class MultiHeadDiversityModel(BaseCTRModel):
     """
     Single model that mimics an ensemble using a shared backbone and 
-    multiple diverse heads.
+    multiple diverse heads. Supports Feature Bagging.
     """
     def __init__(
         self,
@@ -21,84 +21,98 @@ class MultiHeadDiversityModel(BaseCTRModel):
         super().__init__()
         
         # Extract specific config
-        # The create_model factory passes the full config, so we look inside 'model'
-        # We assume the factory logic for MultiHeadDiversityModel passes validation 
-        # that 'model' is MultiHeadDiversityConfig.
         model_config: MultiHeadDiversityConfig = config['model'] # type: ignore
+        backbone_config_dict = model_config['backbone_config']
         
-        # 1. Initialize the Shared Backbone
-        # We create a temporary config for the backbone to use existing factory or class
-        backbone_type = model_config['backbone_type']
+        self.feature_names = feature_names
+        self.feature_bagging_ratio = model_config.get('feature_bagging_ratio', 1.0)
         
-        # Construct a config for the backbone. 
-        # We need to ensure the backbone model class can be instantiated.
-        # We'll use the specific model class directly to avoid recursion issues if we used generic create_model
-        # But for 'gated_dcn', we can likely use a targeted import.
-        # Ideally, we should use a registry or the create_model function with a modified config.
-        # To reuse create_model, we need to fake the config.
+        # --- Shared Backbone Initialization (Native) ---
+        # 1. Embeddings
+        embedding_dim = config['embedding_dim']
+        self.embeddings = nn.ModuleDict()
+        self.feature_dims: Dict[str, int] = {}
+        total_embed_dim = 0
         
-        backbone_full_config = config.copy()
-        # Inject backbone config into 'model' key for the factory
-        backbone_full_config['model'] = model_config['backbone_config']
+        # Import utils locally to avoid circular imports if any
+        from src.models.utils import get_embedding
         
-        # We need to instantiate the backbone.
-        # We can use the create_model from . (lazy import to avoid circular dependency if possible, 
-        # but better to import specific classes if known).
-        # Since 'gated_dcn' is the primary candidate:
-        from src.models.architectures.gated_dcn import GatedDCNModel
+        for feat in feature_names:
+            emb, feat_dim = get_embedding(feat, vocab_sizes[feat], config)
+            self.embeddings[feat] = emb
+            self.feature_dims[feat] = feat_dim
+            total_embed_dim += feat_dim
+            
+        projection_dim = config.get('embedding_projection_dim', None)
+        self.use_projection = projection_dim is not None
         
-        if backbone_type == 'gated_dcn':
-            self.backbone = GatedDCNModel(vocab_sizes, feature_names, backbone_full_config)
+        # 2. Projection (Optional)
+        if self.use_projection and projection_dim is not None:
+            self.projection = nn.Linear(total_embed_dim, projection_dim)
+            nn.init.xavier_uniform_(self.projection.weight)
+            nn.init.zeros_(self.projection.bias)
+            working_dim = projection_dim
+            # For SENET, we need uniform embedding dim after projection
+            # number of fields * new_dim_per_field = projection_dim
+            # But usually projection creates a dense vector, loosing field structure unless carefully managed.
+            # GatedDCN assumes if projection is used, SENET splits projection_dim / num_fields
+            self.embedding_dim = projection_dim // len(feature_names)
         else:
-            raise ValueError(f"Unsupported backbone type: {backbone_type}")
-        
-        # 2. Neutralize Backbone's Final Output Layer
-        # & Determine Input Dimension for Heads
-        input_dim = 0
-        
-        # For GatedDCN, the structure is:
-        # embeddings -> projection -> senet/gating -> dcn -> mlp -> output
-        # We want: embeddings ... -> dcn -> [SPLIT] -> Our Heads
-        # So we should remove the backbone's MLP entirely.
-        
-        if hasattr(self.backbone, 'mlp') and isinstance(self.backbone.mlp, nn.Module):
-            # Check if it is a ResidualMLP
-            if hasattr(self.backbone.mlp, 'layers') and len(self.backbone.mlp.layers) > 0:
-                # The input to the first layer of the existing MLP is what we want.
-                first_layer = self.backbone.mlp.layers[0]
-                if isinstance(first_layer, nn.Linear):
-                    input_dim = first_layer.in_features
-                else:
-                    # Try to infer? Or just run a dummy forward?
-                    # Safer to require standard structure
-                    pass
+            working_dim = total_embed_dim
+            self.embedding_dim = embedding_dim
             
-            # If we couldn't find input_dim from layers (e.g. empty MLP), check attributes
-            if input_dim == 0:
-                # Fallback logic based on GatedDCN internals
-                # It calculates working_dim in __init__
-                if hasattr(self.backbone, 'dcn') and hasattr(self.backbone.dcn, 'input_dim'):
-                    input_dim = self.backbone.dcn.input_dim # type: ignore
-                # This might be unreliable if DCN is not used.
-                # Let's rely on valid inspection of the neutralized MLP or a dummy pass if needed.
-                # But we are in __init__, so dummy pass is expensive/complex.
-                 
-            # Recover input_dim from the first layer of the MLP we are about to delete
-            if input_dim == 0 and len(self.backbone.mlp.layers) > 0:
-                input_dim = self.backbone.mlp.layers[0].in_features
+        # 3. Layer Norm
+        self.use_layer_norm = backbone_config_dict.get('use_layer_norm', False)
+        if self.use_layer_norm:
+            self.embed_ln = nn.LayerNorm(working_dim)
             
-            # Neutralize
-            self.backbone.mlp = nn.Identity()
+        # 4. SENET / Feature Gating (Optional)
+        self.use_senet = backbone_config_dict.get('use_senet', False)
+        self.use_feature_gating = backbone_config_dict.get('use_feature_gating', False)
+        
+        if self.use_senet:
+            from src.models.layers.senet import SENetLayer
+            if self.use_projection and projection_dim is not None:
+                senet_dims = self.embedding_dim
+            else:
+                senet_dims = [self.feature_dims[f] for f in self.feature_names]
+                
+            self.senet = SENetLayer(
+                num_fields=len(feature_names),
+                feature_dims=senet_dims,
+                squeeze_funcs=backbone_config_dict['senet_squeeze_funcs'],
+                reduction_ratio=backbone_config_dict['senet_reduction_ratio'],
+                hidden_activation=backbone_config_dict['senet_hidden_activation'],
+                excitation_activation=backbone_config_dict['senet_excitation_activation'],
+                 # Handle missing keys safely if config dict is partial, though ideally typed
+                num_groups=backbone_config_dict.get('senet_num_groups', 1),
+                reweight_mode=backbone_config_dict.get('senet_reweight_mode', 'feature'),
+                use_fuse=backbone_config_dict.get('senet_use_fuse', False),
+                use_layer_norm=backbone_config_dict.get('senet_use_layer_norm', False)
+            )
             
-        else:
-            raise AttributeError("Backbone must have an 'mlp' attribute to be replaced.")
+        if self.use_feature_gating:
+            from src.models.layers.gating import FeatureGatingLayer
+            self.feature_gating = FeatureGatingLayer(
+                input_dim=working_dim,
+                gating_activation=backbone_config_dict.get('feature_gating_activation', 'sigmoid'),
+                low_rank=backbone_config_dict.get('feature_gating_low_rank', None)
+            )
+            
+        # 5. DCNv2 (Optional)
+        self.use_dcn = backbone_config_dict.get('use_dcn', False)
+        if self.use_dcn:
+            from src.models.layers.cross_network import DCNv2
+            self.dcn = DCNv2(
+                input_dim=working_dim, 
+                num_layers=backbone_config_dict['dcn_num_layers'],
+                use_layernorm=backbone_config_dict['dcn_use_layernorm'],
+                low_rank=backbone_config_dict.get('dcn_low_rank', None)
+            )
+            
+        self.input_dim = working_dim # Final dimension after backbone processing
 
-        if input_dim == 0:
-            raise ValueError("Could not determine input dimension from backbone.")
-
-        self.input_dim = input_dim
-
-        # 3. Create Multiple Independent Heads
+        # --- Heads Initialization ---
         heads_config = model_config['heads']
         self.num_heads = len(heads_config)
         self.heads = nn.ModuleList()
@@ -114,28 +128,137 @@ class MultiHeadDiversityModel(BaseCTRModel):
                 use_skip_connections=head_cfg['use_skip_connections']
             ))
         
-        # 4. Diversity Loss
+        # --- Loss ---
         self.loss_fn = DiversityBCELoss(diversity_weight=model_config['diversity_weight'])
 
+    def shared_backbone_forward(self, dnn_input: torch.Tensor) -> torch.Tensor:
+        """Applies the shared backbone layers (Projection, SENET/Gating, DCN)."""
+        # Apply optional projection
+        if self.use_projection:
+             dnn_input = self.projection(dnn_input)
+             
+        # Apply layer norm
+        if self.use_layer_norm:
+            dnn_input = self.embed_ln(dnn_input)
+            
+        # Apply SENET
+        if self.use_senet:
+            if self.use_projection:
+                # After projection: split into uniform chunks for SENET
+                senet_input = list(dnn_input.split(self.embedding_dim, dim=1))
+                senet_output = self.senet(senet_input)
+                dnn_input = torch.cat(senet_output, dim=1)
+            else:
+                 # We need to reconstruct the list of embeddings from the concatenated vector?
+                 # This is inefficient/hard if sizes vary.
+                 # Optimization: Pass list of embeddings to this method?
+                 # But dnn_input is usually concatenated.
+                 # Let's assume for Feature Bagging we handle embeddings before efficient concat if possible.
+                 # Current implementation of SENetLayer expects list of tensors.
+                 # If we are here, we might have issue if we only passed concatenated tensor.
+                 # Correct approach: logic should be in main forward to handle list vs tensor.
+                 pass
+                 # For now, let's assume we proceed with the tensor flow and SENET logic is handled carefully.
+                 # Actually, SENetLayer implementation expects a list of tensors [B, D_i].
+                 # If we already concatenated, we can't easily undo if dimensions vary.
+                 # So we should pass the list of embeddings to this function or handle SENET before this.
+                 
+        # Apply Feature Gating (alternative to SENET, works on concatenated tensor)
+        if self.use_feature_gating:
+            dnn_input = self.feature_gating(dnn_input)
+            
+        # Apply DCN
+        if self.use_dcn:
+            dnn_input = self.dcn(dnn_input)
+            
+        return dnn_input
+
     def forward(self, x: torch.Tensor) -> ModelOutput:
-        # 1. Get Shared Representation
-        # The backbone's mlp is Identity, so backbone(x) returns the features
-        # GatedDCN returns {"logits": ..., "aux_logits": ...}
-        # "logits" will contain the interaction features [B, Dim]
-        backbone_out = self.backbone(x)
-        shared_features = backbone_out["logits"]
-        
-        # 2. Pass through all heads
+        # 1. Get Embeddings [Batch, Num_Features, Embed_Dim] (Implicitly represented as list of tensors)
+        embeds_list = []
+        for i, feat in enumerate(self.feature_names):
+            embeds_list.append(self.embeddings[feat](x[:, i]))
+            
+        # 2. Process Heads with Feature Bagging
         head_logits = []
+        
         for head in self.heads:
-            # head returns [B, 1]
-            head_logits.append(head(shared_features))
+            # COPY the embeddings list to avoid modifying the original for other heads
+            # No, we can just mask on the fly.
+            
+            # --- Feature Bagging ---
+            # Mask out features randomly (e.g. 20% dropped -> keep 80%)
+            # We create a mask of shape [Num_Features] and broadcast to batch? 
+            # Or [Batch, Num_Features]? "Feature Bagging" usually means subsampling features per estimator (Random Forest style).
+            # So the set of features is fixed for the head? 
+            # OR random per batch?
+            # User request: "random mask for this head... Create a random mask for this head... torch.bernoulli(..., 0.8)"
+            # User code calculates mask per forward pass: torch.bernoulli(...) inside the loop.
+            # shape: [1, embeddings.shape[1], 1] -> [1, Num_Fields, 1] broadcasted to [Batch, Num_Fields, Embed_Dim]?
+            # Wait, self.embeddings returns a list of tensors of potentially different sizes.
+            # We can't stack them easily into [B, N, D] unless all D are same.
+            
+            current_head_embeds = []
+            
+            if self.feature_bagging_ratio < 1.0:
+                 # Generate binary mask for features: [Num_Features]
+                 # Probability `feature_bagging_ratio` to keep (1)
+                 mask = torch.bernoulli(torch.full((len(self.feature_names),), self.feature_bagging_ratio, device=x.device))
+                 
+                 for i, emb in enumerate(embeds_list):
+                     if mask[i] > 0.5:
+                         current_head_embeds.append(emb)
+                     else:
+                         # Zero out the embedding? Or remove it?
+                         # If we remove it, the input dimension to the following layers changes.
+                         # Backbone layers (Projection, DCN) usually expect fixed input dimension.
+                         # GatedDCN/DCNv2 with fixed weights expect fixed input size.
+                         # So we MUST Zero out.
+                         current_head_embeds.append(torch.zeros_like(emb))
+            else:
+                 current_head_embeds = embeds_list
+
+            # --- Backbone Processing for this Head ---
+            # Now we have the masked embeddings.
+            
+            # Handle SENET here because it needs list input
+            if self.use_senet and not self.use_projection:
+                 # SENET on variable dimensions
+                 senet_out = self.senet(current_head_embeds)
+                 dnn_input = torch.cat(senet_out, dim=1)
+            else:
+                 dnn_input = torch.cat(current_head_embeds, dim=1)
+
+            # Rest of backbone (Projection -> SENET(uniform) -> Gating -> DCN)
+            # Apply Projection
+            if self.use_projection:
+                 dnn_input = self.projection(dnn_input)
+            
+            # Apply Layer Norm
+            if self.use_layer_norm:
+                 dnn_input = self.embed_ln(dnn_input)
+
+            # Apply SENET (Uniform)
+            if self.use_senet and self.use_projection:
+                 senet_input = list(dnn_input.split(self.embedding_dim, dim=1))
+                 senet_output = self.senet(senet_input)
+                 dnn_input = torch.cat(senet_output, dim=1)
+            
+            # Apply Feature Gating
+            if self.use_feature_gating:
+                 dnn_input = self.feature_gating(dnn_input)
+            
+            # Apply DCN
+            if self.use_dcn:
+                 dnn_input = self.dcn(dnn_input)
+                 
+            # --- Head Prediction ---
+            head_logits.append(head(dnn_input))
             
         # Stack: [K, Batch, 1]
         stacked_logits = torch.stack(head_logits, dim=0)
         
         # 3. Aggregate (Mean) for final prediction
-        # [Batch, 1]
         avg_logits = stacked_logits.mean(dim=0)
         
         return {

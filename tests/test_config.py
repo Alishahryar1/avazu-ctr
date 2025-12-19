@@ -31,6 +31,11 @@ class TestConfig(unittest.TestCase):
             self.assertIn('ensemble_aggregation', model_config)
             self.assertIsInstance(model_config['models'], list)
             self.assertGreater(len(model_config['models']), 0, "Ensemble must have at least one model")
+        elif 'backbone_type' in model_config:
+            # MultiHeadDiversity config
+            self.assertIn('backbone_config', model_config)
+            self.assertIsInstance(model_config['heads'], list)
+            self.assertGreater(len(model_config['heads']), 0, "Must have at least one head")
         else:
             # Single model config (GatedDCN or STEC)
             # Should have either 'use_dcn' (GatedDCN) or 'stec_num_layers' (STEC)
@@ -134,6 +139,9 @@ class TestConfigExtended(unittest.TestCase):
                 # Ensemble: check each sub-model
                 for sub_cfg in cfg['models']:
                     check_model_configs(sub_cfg)
+            elif 'backbone_config' in cfg:
+                # MultiHeadDiversity config
+                check_model_configs(cfg['backbone_config'])
             elif 'use_dcn' in cfg:
                 # GatedDCN config
                 check_gated_dcn_config(cfg)

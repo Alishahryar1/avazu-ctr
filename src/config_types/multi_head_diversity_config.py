@@ -16,3 +16,4 @@ class MultiHeadDiversityConfig(TypedDict):
     backbone_config: dict
     heads: List[ResidualMLPConfig]
     diversity_weight: float
+    feature_bagging_ratio: float # 1.0 = no bagging, < 1.0 = ratio of features to keep per head
