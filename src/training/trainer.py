@@ -161,7 +161,7 @@ def train():
             )
 
     # Check if both optimizers are FTRL (single optimizer mode)
-    use_single_ftrl = dense_opt_type == "ftrl" and embed_opt_type == "ftrl"
+    use_single_ftrl = dense_opt_cfg == embed_opt_cfg
 
     if use_single_ftrl:
         # FTRL Proximal for ALL parameters (use dense config)
