@@ -3,7 +3,7 @@ import torch.nn as nn
 from typing import List, Dict
 
 from src.models.architectures.base import BaseCTRModel, ModelOutput
-from src.config_types import ConfigType, MultiHeadDiversityConfig, ResidualMLPConfig
+from src.config_types import ConfigType, MultiHeadDiversityConfig
 from src.models.losses.diversity_loss import DiversityBCELoss
 from src.models.layers.mlp import ResidualMLP
 
