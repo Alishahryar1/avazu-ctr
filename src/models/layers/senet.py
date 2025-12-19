@@ -74,7 +74,7 @@ class SENetLayer(nn.Module):
             # Output: One weight per element (total embedding size)
             excitation_output_dim = sum(self.feature_dims)
 
-        reduced_dim = max(1, excitation_output_dim // reduction_ratio)
+        reduced_dim = max(1, squeeze_output_dim // reduction_ratio)
 
         self.excitation = nn.Sequential(
             nn.Linear(squeeze_output_dim, reduced_dim, bias=False),
