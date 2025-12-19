@@ -184,7 +184,7 @@ def train():
                 other_params.append(param)
 
         print(f"Embedding parameters: {sum(p.numel() for p in embedding_params):,}")
-        print(f"Other parameters: {sum(p.numel() for p in other_params):,}")
+        print(f"Dense parameters: {sum(p.numel() for p in other_params):,}")
 
         # Create embedding optimizer
         embedding_optimizer = create_optimizer(embedding_params, embed_opt_cfg)
