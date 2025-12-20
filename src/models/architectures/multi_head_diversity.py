@@ -1,12 +1,12 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from typing import List, Dict
 
 from src.models.architectures.base import BaseCTRModel, ModelOutput
 from src.config_types import ConfigType, MultiHeadDiversityConfig
 from src.models.losses.diversity_loss import DiversityBCELoss
 from src.models.layers.mlp import ResidualMLP
+from src.models.layers.logit_gating import LogitGatingLayer
 
 
 class MultiHeadDiversityModel(BaseCTRModel):
@@ -144,8 +144,10 @@ class MultiHeadDiversityModel(BaseCTRModel):
         # --- Aggregation ---
         self.aggregation_method = model_config.get("aggregation_method", "mean")
         if self.aggregation_method == "gated":
-            # Simple gating: Linear layer, softmax applied in forward
-            self.gate_linear = nn.Linear(self.num_heads, self.num_heads)
+            gating_hidden_dim = model_config.get("gating_hidden_dim", None)
+            self.logit_gate = LogitGatingLayer(
+                num_inputs=self.num_heads, hidden_dim=gating_hidden_dim
+            )
 
         # --- Loss ---
         self.loss_fn = DiversityBCELoss(
@@ -220,12 +222,7 @@ class MultiHeadDiversityModel(BaseCTRModel):
         if self.aggregation_method == "gated":
             # stacked_logits: [K, Batch, 1] -> [Batch, K]
             logits_for_gate = stacked_logits.squeeze(-1).permute(1, 0)
-            gate_weights = F.softmax(
-                self.gate_linear(logits_for_gate), dim=-1
-            )  # [Batch, K]
-            aggregated_logits = (logits_for_gate * gate_weights).sum(
-                dim=-1, keepdim=True
-            )  # [Batch, 1]
+            aggregated_logits = self.logit_gate(logits_for_gate)  # [Batch, 1]
         else:
             aggregated_logits = stacked_logits.mean(dim=0)
 

@@ -1,5 +1,6 @@
 from .cross_network import DCNv2
 from .gating import FeatureGatingLayer
+from .logit_gating import LogitGatingLayer
 from .mlp import ResidualMLP
 from .senet import SENetLayer
 from .stec_block import STECBlock
@@ -12,6 +13,7 @@ from .hash_embedding import HashEmbedding
 __all__ = [
     "DCNv2",
     "FeatureGatingLayer",
+    "LogitGatingLayer",
     "ResidualMLP",
     "SENetLayer",
     "STECBlock",

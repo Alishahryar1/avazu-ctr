@@ -357,5 +357,78 @@ class TestFeatureGatingLayer(unittest.TestCase):
             self.assertEqual(out.shape, x.shape, f"Failed for activation: {activation}")
 
 
+class TestLogitGatingLayer(unittest.TestCase):
+    """Tests for LogitGatingLayer (head aggregation gating)."""
+
+    def setUp(self):
+        from src.models.layers import LogitGatingLayer
+
+        self.LogitGatingLayer = LogitGatingLayer
+
+    def test_logit_gating_forward_no_hidden(self):
+        """Test LogitGatingLayer forward pass without hidden dim."""
+        num_heads = 8
+        gating = self.LogitGatingLayer(num_inputs=num_heads, hidden_dim=None)
+        x = torch.randn(32, num_heads)
+        out = gating(x)
+        self.assertEqual(out.shape, (32, 1))
+
+    def test_logit_gating_forward_with_hidden(self):
+        """Test LogitGatingLayer forward pass with hidden dim."""
+        num_heads = 8
+        gating = self.LogitGatingLayer(num_inputs=num_heads, hidden_dim=16)
+        x = torch.randn(32, num_heads)
+        out = gating(x)
+        self.assertEqual(out.shape, (32, 1))
+
+    def test_logit_gating_weights_sum_to_one(self):
+        """Verify softmax weights implicitly sum to 1 (weighted combination)."""
+        gating = self.LogitGatingLayer(num_inputs=4, hidden_dim=None)
+        # With uniform logits, output should be close to mean
+        x = torch.ones(8, 4)
+        out = gating(x)
+        # Output is weighted sum, should be close to 1.0 (mean of all 1s)
+        self.assertTrue(torch.allclose(out, torch.ones(8, 1), atol=0.1))
+
+    def test_logit_gating_gradient_flow(self):
+        """Verify gradients flow through LogitGatingLayer."""
+        gating = self.LogitGatingLayer(num_inputs=8, hidden_dim=None)
+        x = torch.randn(4, 8, requires_grad=True)
+        out = gating(x)
+        loss = out.sum()
+        loss.backward()
+        for name, param in gating.named_parameters():
+            self.assertIsNotNone(param.grad, f"No gradient for {name}")
+            self.assertFalse(torch.isnan(param.grad).any(), f"NaN gradient for {name}")
+
+    def test_logit_gating_hidden_gradient_flow(self):
+        """Verify gradients flow through LogitGatingLayer with hidden dim."""
+        gating = self.LogitGatingLayer(num_inputs=8, hidden_dim=16)
+        x = torch.randn(4, 8, requires_grad=True)
+        out = gating(x)
+        loss = out.sum()
+        loss.backward()
+        for name, param in gating.named_parameters():
+            self.assertIsNotNone(param.grad, f"No gradient for {name}")
+            self.assertFalse(torch.isnan(param.grad).any(), f"NaN gradient for {name}")
+
+    def test_logit_gating_numerical_stability(self):
+        """Verify no NaN/Inf in LogitGatingLayer output."""
+        gating = self.LogitGatingLayer(num_inputs=8, hidden_dim=None)
+        for _ in range(10):
+            x = torch.randn(32, 8)
+            out = gating(x)
+            self.assertFalse(torch.isnan(out).any(), "NaN in output")
+            self.assertFalse(torch.isinf(out).any(), "Inf in output")
+
+    def test_logit_gating_more_params_with_hidden(self):
+        """Verify hidden dim increases parameter count."""
+        gating_simple = self.LogitGatingLayer(num_inputs=8, hidden_dim=None)
+        gating_hidden = self.LogitGatingLayer(num_inputs=8, hidden_dim=16)
+        simple_params = sum(p.numel() for p in gating_simple.parameters())
+        hidden_params = sum(p.numel() for p in gating_hidden.parameters())
+        self.assertGreater(hidden_params, simple_params)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
