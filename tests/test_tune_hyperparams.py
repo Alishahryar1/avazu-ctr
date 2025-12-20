@@ -183,13 +183,13 @@ class TestStudyCreation(unittest.TestCase):
         """Test that study can be created with correct settings."""
         study = optuna.create_study(
             study_name="test_study",
-            direction="maximize",
+            direction="minimize",
             sampler=optuna.samplers.TPESampler(seed=42),
             pruner=optuna.pruners.MedianPruner(n_startup_trials=5),
         )
 
         self.assertEqual(study.study_name, "test_study")
-        self.assertEqual(study.direction, optuna.study.StudyDirection.MAXIMIZE)
+        self.assertEqual(study.direction, optuna.study.StudyDirection.MINIMIZE)
 
 
 if __name__ == "__main__":

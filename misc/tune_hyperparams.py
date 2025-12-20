@@ -324,9 +324,9 @@ def objective(trial: Trial) -> float:
 
     # Log additional metrics
     trial.set_user_attr("val_loss", val_loss)
-    trial.set_user_attr("val_logloss", val_logloss)
+    trial.set_user_attr("val_auc", val_auc)
 
-    return val_auc
+    return val_logloss
 
 
 def print_best_params(study: optuna.Study) -> None:
@@ -337,7 +337,9 @@ def print_best_params(study: optuna.Study) -> None:
 
     print(f"\nNumber of finished trials: {len(study.trials)}")
     print(f"Best trial: #{study.best_trial.number}")
-    print(f"Best validation AUC: {study.best_value:.5f}")
+    print(f"Best validation LogLoss: {study.best_value:.5f}")
+    if "val_auc" in study.best_trial.user_attrs:
+        print(f"Associated AUC: {study.best_trial.user_attrs['val_auc']:.5f}")
 
     print("\nBest hyperparameters:")
     print("-" * 40)
@@ -384,7 +386,7 @@ def main():
     # Create or load study
     study = optuna.create_study(
         study_name=args.study_name,
-        direction="maximize",
+        direction="minimize",
         storage=f"sqlite:///{STUDY_DB_PATH}",
         load_if_exists=args.resume,
         sampler=optuna.samplers.TPESampler(seed=42),
@@ -393,7 +395,7 @@ def main():
 
     if args.resume and len(study.trials) > 0:
         print(f"Resuming study with {len(study.trials)} existing trials")
-        print(f"Current best AUC: {study.best_value:.5f}")
+        print(f"Current best LogLoss: {study.best_value:.5f}")
 
     # Run optimization
     study.optimize(objective, n_trials=args.n_trials, timeout=args.timeout)
