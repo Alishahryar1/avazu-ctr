@@ -14,6 +14,10 @@ import torch.nn as nn
 from typing import Callable, Literal
 
 
+# Pre-computed large prime (2^31 - 1, a Mersenne prime) to avoid expensive primality testing at init time
+_DEFAULT_PRIME = 2147483647
+
+
 class HashFamily:
     """Universal hash family as proposed by Carter and Wegman.
 
@@ -22,7 +26,7 @@ class HashFamily:
 
     Args:
         bins: Number of bins (buckets) to hash to.
-        moduler: Prime number for temporary hashing. If None, a random prime > bins is used.
+        moduler: Prime number for temporary hashing. If None, uses the pre-computed default prime.
     """
 
     def __init__(self, bins: int, moduler: int | None = None):
@@ -30,11 +34,8 @@ class HashFamily:
             raise ValueError("moduler (p) should be > bins (m)")
 
         self.bins = bins
-        self.moduler = (
-            moduler
-            if moduler
-            else self._next_prime(np.random.randint(self.bins + 1, 2**31 - 1))
-        )
+        # Use pre-computed prime instead of expensive runtime computation
+        self.moduler = moduler if moduler else _DEFAULT_PRIME
 
         # Track sampled parameters to avoid duplicates
         self.sampled_a: set[int] = set()
