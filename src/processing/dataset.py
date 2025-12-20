@@ -41,7 +41,7 @@ class ParquetFullDataset(Dataset):
         print(f"Loading full dataset from {self.parquet_path} into memory...")
 
         # Read entire file at once
-        df = pl.read_parquet(self.parquet_path)
+        df = pl.scan_parquet(self.parquet_path).collect(engine="streaming")
 
         # Convert features to tensor
         print("Converting features to tensor...")
