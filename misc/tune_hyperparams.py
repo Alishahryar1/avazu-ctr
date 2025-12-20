@@ -15,6 +15,7 @@ Usage:
 """
 
 import argparse
+import math
 import os
 import sys
 from copy import deepcopy
@@ -226,8 +227,16 @@ def train_single_epoch(
             embedding_optimizer.step()
             other_optimizer.step()
 
-        total_loss += loss.item()
-        pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+        loss_val = loss.item()
+
+        # Check for NaN loss and prune if detected
+
+        if math.isnan(loss_val) or math.isinf(loss_val):
+            print(f"\n[Trial {trial.number}] Loss became NaN/Inf, pruning trial.")
+            raise optuna.TrialPruned()
+
+        total_loss += loss_val
+        pbar.set_postfix({"loss": f"{loss_val:.4f}"})
 
         # Report intermediate value for pruning (every 10% of epoch)
         if batch_idx > 0 and batch_idx % max(1, num_batches // 10) == 0:
