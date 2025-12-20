@@ -147,7 +147,7 @@ CONFIG: ConfigType = {
             "dcn_use_layernorm": True,
             "dcn_low_rank": None,
             # MLP
-            "mlp_hidden_dims": [2048, 1024, 512],
+            "mlp_hidden_dims": [2048, 2048, 1024, 512],
             "mlp_activation": "gelu",
             "mlp_use_skip_connections": True,
             "mlp_dropout": 0.1,
