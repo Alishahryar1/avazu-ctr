@@ -252,6 +252,10 @@ def objective(trial: Trial) -> float:
     # Create config with sampled hyperparameters
     config = create_config_from_trial(trial, cast(dict[str, Any], CONFIG))
 
+    print(f"\n[Trial {trial.number}] Hyperparameters:")
+    for name, value in trial.params.items():
+        print(f"  {name}: {value}")
+
     # Force settings for tuning
     config["validation_split"] = 0.1
     config["epochs"] = 1
