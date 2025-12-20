@@ -24,6 +24,7 @@ import optuna
 from optuna.trial import Trial
 import torch
 from torch.utils.data import DataLoader, Subset
+from tqdm import tqdm
 
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -196,7 +197,8 @@ def train_single_epoch(
     total_loss = 0.0
     num_batches = len(train_loader)
 
-    for batch_idx, batch_data in enumerate(train_loader):
+    pbar = tqdm(train_loader, desc=f"Trial {trial.number}", leave=False)
+    for batch_idx, batch_data in enumerate(pbar):
         X_batch, y_batch = batch_data
         X_batch = X_batch.to(device)
         y_batch = y_batch.to(device).unsqueeze(1)
@@ -225,6 +227,7 @@ def train_single_epoch(
             other_optimizer.step()
 
         total_loss += loss.item()
+        pbar.set_postfix({"loss": f"{loss.item():.4f}"})
 
         # Report intermediate value for pruning (every 10% of epoch)
         if batch_idx > 0 and batch_idx % max(1, num_batches // 10) == 0:
