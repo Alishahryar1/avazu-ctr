@@ -1157,5 +1157,154 @@ class TestPreviousClicksBinning(unittest.TestCase):
         self.assertEqual(result["user_proxy_prev_clicks_bin"].dtype, pl.String)
 
 
+# =============================================================================
+# Tests for data_processor.py - Reverse Cumulative Count Features
+# =============================================================================
+class TestReverseCumulativeCountFeatures(unittest.TestCase):
+    """Tests for reverse cumulative count feature computation."""
+
+    def test_reverse_cumcount_basic(self):
+        """Test basic reverse cumulative count computation."""
+        import polars as pl
+        from src.processing.data_processor import get_reverse_cumcount_expressions
+
+        # Create test data with repeated values
+        test_data = pl.DataFrame({"device_ip": ["ip1", "ip2", "ip1", "ip1", "ip2"]})
+
+        rev_cumcount_exprs = get_reverse_cumcount_expressions(["device_ip"])
+        result = test_data.with_columns(rev_cumcount_exprs)
+
+        # ip1 appears at positions 0, 2, 3 (total 3)
+        #   pos 0: reverse = 3-1 = 2 (2 more appearances)
+        #   pos 2: reverse = 3-2 = 1 (1 more appearance)
+        #   pos 3: reverse = 3-3 = 0 (last appearance)
+        # ip2 appears at positions 1, 4 (total 2)
+        #   pos 1: reverse = 2-1 = 1 (1 more appearance)
+        #   pos 4: reverse = 2-2 = 0 (last appearance)
+        expected = [2, 1, 1, 0, 0]
+        self.assertEqual(result["device_ip_reverse_cumcount"].to_list(), expected)
+
+    def test_reverse_cumcount_all_same(self):
+        """Test reverse cumcount when all values are the same."""
+        import polars as pl
+        from src.processing.data_processor import get_reverse_cumcount_expressions
+
+        test_data = pl.DataFrame({"device_ip": ["ip1", "ip1", "ip1", "ip1"]})
+
+        rev_cumcount_exprs = get_reverse_cumcount_expressions(["device_ip"])
+        result = test_data.with_columns(rev_cumcount_exprs)
+
+        # Reverse cumcount should be 3, 2, 1, 0
+        self.assertEqual(result["device_ip_reverse_cumcount"].to_list(), [3, 2, 1, 0])
+
+    def test_bin_reverse_cumcount_basic(self):
+        """Test binning of reverse cumulative count features."""
+        import polars as pl
+        from src.processing.data_processor import bin_reverse_cumcount_features
+
+        test_data = pl.DataFrame({"device_ip_reverse_cumcount": [0, 1, 5, 25, 75, 150]})
+
+        bin_exprs = bin_reverse_cumcount_features(["device_ip"])
+        result = test_data.with_columns(bin_exprs)
+
+        expected = ["last", "1-2", "3-10", "11-50", "51-100", "100+"]
+        self.assertEqual(result["device_ip_reverse_cumcount_bin"].to_list(), expected)
+
+
+# =============================================================================
+# Tests for data_processor.py - Target Encoding (CTR) Features
+# =============================================================================
+class TestTargetEncoding(unittest.TestCase):
+    """Tests for K-Fold target encoding (CTR) features."""
+
+    def test_fold_id_expression(self):
+        """Test that fold IDs are assigned correctly (0 to N_FOLDS-1)."""
+        import polars as pl
+        from src.processing.data_processor import get_fold_id_expression
+
+        test_data = pl.DataFrame({"x": range(10)})
+        result = test_data.lazy().with_columns(get_fold_id_expression()).collect()
+
+        fold_ids = result["_fold_id"].to_list()
+        # Should cycle 0,1,2,3,4,0,1,2,3,4 for 5 folds
+        self.assertEqual(fold_ids, [0, 1, 2, 3, 4, 0, 1, 2, 3, 4])
+
+    def test_bin_ctr_features(self):
+        """Test CTR binning logic."""
+        import polars as pl
+        from src.processing.data_processor import bin_ctr_features
+
+        test_data = pl.DataFrame({"app_id_ctr": [0.02, 0.08, 0.12, 0.18, 0.25, 0.40]})
+
+        bin_exprs = bin_ctr_features(["app_id"])
+        result = test_data.with_columns(bin_exprs)
+
+        expected = ["very_low", "low", "below_avg", "avg", "above_avg", "high"]
+        self.assertEqual(result["app_id_ctr_bin"].to_list(), expected)
+
+    def test_bin_ctr_boundaries(self):
+        """Test CTR binning at exact boundaries."""
+        import polars as pl
+        from src.processing.data_processor import bin_ctr_features
+
+        # Test exact boundaries
+        test_data = pl.DataFrame({"app_id_ctr": [0.05, 0.10, 0.15, 0.20, 0.30]})
+
+        bin_exprs = bin_ctr_features(["app_id"])
+        result = test_data.with_columns(bin_exprs)
+
+        bins = result["app_id_ctr_bin"].to_list()
+        self.assertEqual(bins[0], "low")  # 0.05 (>= 0.05)
+        self.assertEqual(bins[1], "below_avg")  # 0.10 (>= 0.10)
+        self.assertEqual(bins[2], "avg")  # 0.15 (>= 0.15)
+        self.assertEqual(bins[3], "above_avg")  # 0.20 (>= 0.20)
+        self.assertEqual(bins[4], "high")  # 0.30 (>= 0.30)
+
+
+# =============================================================================
+# Tests for data_processor.py - Unique Count Features
+# =============================================================================
+class TestUniqueCounts(unittest.TestCase):
+    """Tests for unique count feature computation (bot detection)."""
+
+    def test_compute_unique_counts_basic(self):
+        """Test basic unique count computation."""
+        import polars as pl
+        from src.processing.data_processor import compute_unique_counts
+
+        # ip1 visits app_A, app_B -> 2 unique
+        # ip2 visits app_A only -> 1 unique
+        test_data = pl.DataFrame(
+            {
+                "device_ip": ["ip1", "ip1", "ip1", "ip2", "ip2"],
+                "app_id": ["app_A", "app_B", "app_A", "app_A", "app_A"],
+            }
+        ).lazy()
+
+        result = compute_unique_counts(test_data, "device_ip", "app_id")
+
+        unique_counts = dict(
+            zip(
+                result["device_ip"].to_list(),
+                result["device_ip_unique_app_ids"].to_list(),
+            )
+        )
+        self.assertEqual(unique_counts["ip1"], 2)
+        self.assertEqual(unique_counts["ip2"], 1)
+
+    def test_bin_unique_counts(self):
+        """Test unique count binning logic."""
+        import polars as pl
+        from src.processing.data_processor import bin_unique_counts
+
+        test_data = pl.DataFrame({"device_ip_unique_app_ids": [1, 3, 15, 75, 150]})
+
+        bin_expr = bin_unique_counts("device_ip", "app_id")
+        result = test_data.with_columns(bin_expr)
+
+        expected = ["single", "few", "moderate", "many", "bot_like"]
+        self.assertEqual(result["device_ip_unique_app_ids_bin"].to_list(), expected)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
