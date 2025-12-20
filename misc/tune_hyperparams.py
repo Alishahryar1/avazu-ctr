@@ -24,6 +24,7 @@ from typing import Any, cast
 import optuna
 from optuna.trial import Trial
 import torch
+import torch.optim as optim
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 
@@ -160,8 +161,6 @@ def train_single_epoch(
     Returns:
         Average training loss
     """
-    import torch.optim as optim
-
     device = config["device"]
 
     # Separate parameters for embeddings vs other layers
@@ -230,7 +229,6 @@ def train_single_epoch(
         loss_val = loss.item()
 
         # Check for NaN loss and prune if detected
-
         if math.isnan(loss_val) or math.isinf(loss_val):
             print(f"\n[Trial {trial.number}] Loss became NaN/Inf, pruning trial.")
             raise optuna.TrialPruned()
@@ -309,20 +307,24 @@ def objective(trial: Trial) -> float:
     )
 
     # Create model
+    model = None
     try:
         model = create_model(config, vocab_sizes, feature_names)  # pyrefly: ignore
         model.to(config["device"])
-    except Exception as e:
-        print(f"Model creation failed: {e}")
-        raise optuna.TrialPruned()
 
-    # Train for one epoch
-    try:
-        train_single_epoch(model, train_loader, config, trial)
+        # Train for one epoch
+        train_loss = train_single_epoch(model, train_loader, config, trial)
+        print(f"[Trial {trial.number}] Train loss: {train_loss:.5f}")
     except optuna.TrialPruned:
+        if model is not None:
+            del model
+            torch.cuda.empty_cache()
         raise
     except Exception as e:
-        print(f"Training failed: {e}")
+        print(f"Model creation or training failed: {e}")
+        if model is not None:
+            del model
+            torch.cuda.empty_cache()
         raise optuna.TrialPruned()
 
     # Evaluate
@@ -330,6 +332,10 @@ def objective(trial: Trial) -> float:
     val_loss, val_auc, val_logloss = evaluate(
         model, val_loader, config["device"], use_amp=use_amp, amp_dtype=torch.float16
     )
+
+    # Clean up GPU memory after evaluation
+    del model
+    torch.cuda.empty_cache()
 
     # Log additional metrics
     trial.set_user_attr("val_loss", val_loss)
@@ -368,7 +374,7 @@ def print_best_params(study: optuna.Study) -> None:
     print("}")
 
 
-def main():
+def main() -> None:
     """Main entry point for hyperparameter tuning."""
     parser = argparse.ArgumentParser(description="Hyperparameter tuning with Optuna")
     parser.add_argument(
