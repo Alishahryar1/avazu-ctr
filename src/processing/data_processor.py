@@ -193,323 +193,6 @@ def bin_cumcount_features(cols: list[str]) -> list[pl.Expr]:
 
 
 # =============================================================================
-# Reverse Cumulative Count Features (Future Appearances)
-# =============================================================================
-
-# Columns to compute reverse cumulative count features for
-REVERSE_CUMCOUNT_COLS = ["device_ip", "device_id"]
-
-
-def get_reverse_cumcount_expressions(cols: list[str]) -> list[pl.Expr]:
-    """
-    Create reverse cumulative count expressions for specified columns.
-
-    Reverse cumcount = total_count - cumcount = how many times this value
-    will appear IN THE FUTURE. This proxies session length:
-    - High reverse cumcount: User will appear many more times (active session)
-    - Low reverse cumcount: User near end of session
-
-    Args:
-        cols: Columns to compute reverse cumulative counts for
-
-    Returns:
-        List of Polars expressions for reverse cumulative counts
-    """
-    return [
-        (pl.col(col).count().over(col) - pl.col(col).cum_count().over(col)).alias(
-            f"{col}_reverse_cumcount"
-        )
-        for col in cols
-    ]
-
-
-def bin_reverse_cumcount_features(cols: list[str]) -> list[pl.Expr]:
-    """
-    Create binned versions of reverse cumulative count features.
-
-    Bins match cumcount bins for consistency:
-    - 'last': 0 (final appearance)
-    - '1-2': Near end of session
-    - '3-10': Mid session
-    - '11-50': Early-mid session
-    - '51-100': Early session
-    - '100+': Very early in long session
-    """
-    expressions = []
-    for col in cols:
-        rev_cumcount_col = f"{col}_reverse_cumcount"
-        binned_col = f"{col}_reverse_cumcount_bin"
-        expr = (
-            pl.when(pl.col(rev_cumcount_col) == 0)
-            .then(pl.lit("last"))
-            .when(pl.col(rev_cumcount_col) <= 2)
-            .then(pl.lit("1-2"))
-            .when(pl.col(rev_cumcount_col) <= 10)
-            .then(pl.lit("3-10"))
-            .when(pl.col(rev_cumcount_col) <= 50)
-            .then(pl.lit("11-50"))
-            .when(pl.col(rev_cumcount_col) <= 100)
-            .then(pl.lit("51-100"))
-            .otherwise(pl.lit("100+"))
-            .alias(binned_col)
-        )
-        expressions.append(expr)
-    return expressions
-
-
-# =============================================================================
-# Target Encoding (K-Fold CTR Features)
-# =============================================================================
-
-# Columns to compute target encoding (CTR) for
-TARGET_ENCODING_COLS = ["app_id", "site_id", "device_ip", "user_proxy"]
-
-# Smoothing alpha for Bayesian CTR (higher = more regularization)
-TARGET_ENCODING_ALPHA = 20
-
-# Number of folds for K-Fold target encoding
-TARGET_ENCODING_N_FOLDS = 5
-
-
-def get_fold_id_expression() -> pl.Expr:
-    """
-    Create expression to assign fold IDs (0 to N_FOLDS-1) based on row index.
-
-    Used for K-Fold target encoding to prevent data leakage.
-    """
-    return (
-        pl.arange(0, pl.len())
-        .mod(TARGET_ENCODING_N_FOLDS)
-        .alias("_fold_id")
-        .cast(pl.UInt8)
-    )
-
-
-def compute_kfold_ctr_stats(
-    lf_train: pl.LazyFrame,
-    cols: list[str],
-    n_folds: int = TARGET_ENCODING_N_FOLDS,
-    alpha: float = TARGET_ENCODING_ALPHA,
-) -> tuple[dict[str, list[pl.DataFrame]], float]:
-    """
-    Compute K-Fold CTR statistics for target encoding.
-
-    For each column and each fold, computes smoothed CTR from the OTHER folds.
-    Uses Bayesian smoothing: smoothed_ctr = (clicks + global_ctr * alpha) / (count + alpha)
-
-    Args:
-        lf_train: Training LazyFrame with 'click' and '_fold_id' columns
-        cols: Columns to compute CTR for
-        n_folds: Number of folds
-        alpha: Smoothing parameter
-
-    Returns:
-        ctr_stats: Dict of column -> list of DataFrames (one per fold)
-        global_ctr: Global CTR for test set application
-    """
-    print(f"  Computing K-Fold CTR stats for {cols}...")
-
-    # First compute global CTR (for test set and smoothing)
-    global_stats = lf_train.select(
-        [pl.col("click").sum().alias("total_clicks"), pl.len().alias("total_count")]
-    ).collect()
-    global_clicks = global_stats["total_clicks"][0]
-    global_count = global_stats["total_count"][0]
-    global_ctr = global_clicks / global_count if global_count > 0 else 0.0
-
-    print(f"    Global CTR: {global_ctr:.4f}")
-
-    ctr_stats: dict[str, list[pl.DataFrame]] = {col: [] for col in cols}
-
-    for fold_id in range(n_folds):
-        # Filter to rows NOT in this fold (training data for this fold)
-        lf_other_folds = lf_train.filter(pl.col("_fold_id") != fold_id)
-
-        for col in cols:
-            # Compute CTR per category from other folds
-            stats_df = (
-                lf_other_folds.group_by(col)
-                .agg(
-                    [
-                        pl.col("click").sum().alias("_clicks"),
-                        pl.len().alias("_count"),
-                    ]
-                )
-                .with_columns(
-                    # Smoothed CTR with Bayesian prior
-                    (
-                        (pl.col("_clicks") + global_ctr * alpha)
-                        / (pl.col("_count") + alpha)
-                    ).alias(f"{col}_ctr")
-                )
-                .select([col, f"{col}_ctr"])
-                .with_columns(pl.lit(fold_id).cast(pl.UInt8).alias("_fold_id"))
-                .collect()
-            )
-            ctr_stats[col].append(stats_df)
-
-    # Also compute global CTR per category (for test set)
-    for col in cols:
-        global_ctr_df = (
-            lf_train.group_by(col)
-            .agg(
-                [
-                    pl.col("click").sum().alias("_clicks"),
-                    pl.len().alias("_count"),
-                ]
-            )
-            .with_columns(
-                (
-                    (pl.col("_clicks") + global_ctr * alpha)
-                    / (pl.col("_count") + alpha)
-                ).alias(f"{col}_ctr")
-            )
-            .select([col, f"{col}_ctr"])
-            .collect()
-        )
-        # Store as fold_id = n_folds (for test set)
-        ctr_stats[col].append(
-            global_ctr_df.with_columns(pl.lit(n_folds).cast(pl.UInt8).alias("_fold_id"))
-        )
-
-    print(f"    Computed CTR for {len(cols)} columns across {n_folds} folds")
-    return ctr_stats, global_ctr
-
-
-def apply_ctr_stats(
-    lf: pl.LazyFrame,
-    ctr_stats: dict[str, list[pl.DataFrame]],
-    cols: list[str],
-    is_test: bool = False,
-    n_folds: int = TARGET_ENCODING_N_FOLDS,
-    global_ctr: float = 0.17,
-) -> pl.LazyFrame:
-    """
-    Apply CTR statistics to a LazyFrame.
-
-    For train: joins based on matching _fold_id
-    For test: uses global CTR (fold_id = n_folds)
-
-    Args:
-        lf: LazyFrame to apply CTR to
-        ctr_stats: CTR stats from compute_kfold_ctr_stats
-        cols: Columns to apply CTR for
-        is_test: Whether this is test data (use global CTR)
-        n_folds: Number of folds
-        global_ctr: Global CTR for fallback
-
-    Returns:
-        LazyFrame with CTR columns added
-    """
-    for col in cols:
-        if is_test:
-            # For test, use the global CTR stats (last in list)
-            ctr_df = ctr_stats[col][n_folds]
-            lf = lf.join(ctr_df.lazy().drop("_fold_id"), on=col, how="left")
-        else:
-            # For train, concatenate all fold stats and join on (col, _fold_id)
-            all_folds = pl.concat(ctr_stats[col][:n_folds])
-            lf = lf.join(all_folds.lazy(), on=[col, "_fold_id"], how="left")
-
-        # Fill missing CTR with global CTR
-        lf = lf.with_columns(
-            pl.col(f"{col}_ctr").fill_null(global_ctr).cast(pl.Float32)
-        )
-
-    return lf
-
-
-def bin_ctr_features(cols: list[str]) -> list[pl.Expr]:
-    """
-    Create binned versions of CTR features for categorical encoding.
-
-    Bins based on CTR percentiles:
-    - 'very_low': CTR < 0.05
-    - 'low': 0.05 <= CTR < 0.10
-    - 'below_avg': 0.10 <= CTR < 0.15
-    - 'avg': 0.15 <= CTR < 0.20
-    - 'above_avg': 0.20 <= CTR < 0.30
-    - 'high': CTR >= 0.30
-    """
-    expressions = []
-    for col in cols:
-        ctr_col = f"{col}_ctr"
-        binned_col = f"{col}_ctr_bin"
-        expr = (
-            pl.when(pl.col(ctr_col) < 0.05)
-            .then(pl.lit("very_low"))
-            .when(pl.col(ctr_col) < 0.10)
-            .then(pl.lit("low"))
-            .when(pl.col(ctr_col) < 0.15)
-            .then(pl.lit("below_avg"))
-            .when(pl.col(ctr_col) < 0.20)
-            .then(pl.lit("avg"))
-            .when(pl.col(ctr_col) < 0.30)
-            .then(pl.lit("above_avg"))
-            .otherwise(pl.lit("high"))
-            .alias(binned_col)
-        )
-        expressions.append(expr)
-    return expressions
-
-
-# =============================================================================
-# Unique Counts (Bot Detection)
-# =============================================================================
-
-
-def compute_unique_counts(
-    lf: pl.LazyFrame, group_col: str, count_col: str
-) -> pl.DataFrame:
-    """
-    Compute number of unique values of count_col for each group_col value.
-
-    Example: Number of unique app_ids visited by each device_ip.
-    High unique counts often indicate bot behavior.
-
-    Args:
-        lf: Input LazyFrame
-        group_col: Column to group by (e.g., 'device_ip')
-        count_col: Column to count unique values of (e.g., 'app_id')
-
-    Returns:
-        DataFrame with group_col and unique count column
-    """
-    return (
-        lf.group_by(group_col)
-        .agg(pl.col(count_col).n_unique().alias(f"{group_col}_unique_{count_col}s"))
-        .collect()
-    )
-
-
-def bin_unique_counts(group_col: str, count_col: str) -> pl.Expr:
-    """
-    Create binned version of unique count feature.
-
-    Bins designed to detect bot behavior:
-    - 'single': Only 1 unique value (normal user behavior)
-    - 'few': 2-5 unique values
-    - 'moderate': 6-20 unique values
-    - 'many': 21-100 unique values
-    - 'bot_like': 100+ unique values (suspicious)
-    """
-    unique_col = f"{group_col}_unique_{count_col}s"
-    binned_col = f"{unique_col}_bin"
-    return (
-        pl.when(pl.col(unique_col) == 1)
-        .then(pl.lit("single"))
-        .when(pl.col(unique_col) <= 5)
-        .then(pl.lit("few"))
-        .when(pl.col(unique_col) <= 20)
-        .then(pl.lit("moderate"))
-        .when(pl.col(unique_col) <= 100)
-        .then(pl.lit("many"))
-        .otherwise(pl.lit("bot_like"))
-        .alias(binned_col)
-    )
-
-
-# =============================================================================
 # Time-Delta Features (Hours Since Last Click)
 # =============================================================================
 def get_time_delta_expressions() -> list[pl.Expr]:
@@ -951,7 +634,7 @@ def collect_all_statistics(
     except Exception:
         hourly_df = hourly_query.collect()
 
-    print("  Collected hourly statistics")
+    print(f"  Collected hourly statistics")
 
     # =========================================================================
     # 3. Vocabularies - batch collect
@@ -1171,10 +854,6 @@ def apply_transforms_lazy(
     vocab_lfs: dict[str, pl.LazyFrame],
     count_cols: list[str],
     cat_cols: list[str],
-    ctr_stats: dict[str, list[pl.DataFrame]] | None = None,
-    unique_counts_lf: pl.LazyFrame | None = None,
-    global_ctr: float = 0.17,
-    is_test: bool = False,
 ) -> pl.LazyFrame:
     """
     Pass 2: Apply the joins using the pre-computed (static) stats.
@@ -1189,10 +868,6 @@ def apply_transforms_lazy(
         vocab_lfs: Pre-computed vocabulary mappings per column
         count_cols: List of count feature columns
         cat_cols: List of categorical columns for vocab mapping
-        ctr_stats: Pre-computed K-Fold CTR stats (from compute_kfold_ctr_stats)
-        unique_counts_lf: Pre-computed unique counts (e.g., device_ip -> n_unique_apps)
-        global_ctr: Global CTR for fallback
-        is_test: Whether this is test data (affects CTR join method)
 
     Returns:
         Transformed LazyFrame ready for sink
@@ -1204,43 +879,23 @@ def apply_transforms_lazy(
     for col in count_cols:
         lf = lf.join(count_lfs[col], on=col, how="left")
 
-    # 3. Join Unique Counts (if provided)
-    if unique_counts_lf is not None:
-        lf = lf.join(unique_counts_lf, on="device_ip", how="left")
-        lf = lf.with_columns(
-            pl.col("device_ip_unique_app_ids").fill_null(1).cast(pl.UInt32)
-        )
-
-    # 4. Fill Nulls (for counts/hourly - unseen values get 0/1)
+    # 3. Fill Nulls (for counts/hourly - unseen values get 0/1)
     fill_exprs = [pl.col("user_hourly_impressions").fill_null(1)] + [
         pl.col(f"{c}_count").fill_null(0) for c in count_cols
     ]
     lf = lf.with_columns(fill_exprs)
 
-    # 5. Apply CTR Stats (if provided)
-    if ctr_stats is not None:
-        lf = apply_ctr_stats(
-            lf, ctr_stats, TARGET_ENCODING_COLS, is_test=is_test, global_ctr=global_ctr
-        )
-
-    # 6. Binning (Pure Expressions - stays lazy)
+    # 4. Binning (Pure Expressions - stays lazy)
     all_bin_exprs = [
         *bin_count_features(count_cols),
         *bin_cumcount_features(CUMCOUNT_COLS),
-        *bin_reverse_cumcount_features(REVERSE_CUMCOUNT_COLS),
         bin_hourly_impressions(),
         bin_time_delta_features(),
         bin_prev_clicks("user_proxy"),
     ]
-    # Add CTR binning if CTR stats were applied
-    if ctr_stats is not None:
-        all_bin_exprs.extend(bin_ctr_features(TARGET_ENCODING_COLS))
-    # Add unique counts binning if unique counts were joined
-    if unique_counts_lf is not None:
-        all_bin_exprs.append(bin_unique_counts("device_ip", "app_id"))
     lf = lf.with_columns(all_bin_exprs)
 
-    # 7. Apply Vocabularies (Join & Map)
+    # 5. Apply Vocabularies (Join & Map)
     for col in cat_cols:
         vocab_lf = vocab_lfs[col]
         lf = (
@@ -1287,18 +942,11 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     # Define final categorical columns list
     count_bin_cols = [f"{col}_count_bin" for col in COUNT_FEATURE_COLS]
     cumcount_bin_cols = [f"{col}_cumcount_bin" for col in CUMCOUNT_COLS]
-    reverse_cumcount_bin_cols = [
-        f"{col}_reverse_cumcount_bin" for col in REVERSE_CUMCOUNT_COLS
-    ]
-    ctr_bin_cols = [f"{col}_ctr_bin" for col in TARGET_ENCODING_COLS]
     final_cat_cols = (
         CATEGORICAL_COLS
         + ["month", "day_of_month", "hour_of_day", "day_of_week"]
         + count_bin_cols
         + cumcount_bin_cols
-        + reverse_cumcount_bin_cols
-        + ctr_bin_cols
-        + ["device_ip_unique_app_ids_bin"]
         + ["user_hourly_impressions_bin"]
         + ["hours_since_last_click_bin"]
         + ["user_proxy_prev_clicks_bin"]
@@ -1342,12 +990,8 @@ def process_data_polars() -> tuple[dict, list, int, int]:
                     *get_cumulative_count_expressions(
                         CUMCOUNT_COLS
                     ),  # THE STREAMING BLOCKADE #2
-                    *get_reverse_cumcount_expressions(
-                        REVERSE_CUMCOUNT_COLS
-                    ),  # Reverse cumcount for session length proxy
                     *get_time_delta_window_expressions(),
                     get_prev_clicks_expression("user_proxy"),
-                    get_fold_id_expression(),  # For K-Fold target encoding
                 ]
             )
             .drop("_timestamp")
@@ -1379,33 +1023,17 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         CONFIG["min_freq"],
     )
 
-    # 2.2 Collect Unique Counts (device_ip -> n_unique_app_ids)
-    print("  Computing unique counts (device_ip -> unique app_ids)...")
-    unique_counts_df = compute_unique_counts(
-        pl.scan_parquet(temp_base_path), "device_ip", "app_id"
-    )
-    unique_counts_lf = unique_counts_df.lazy()
-
-    # 2.3 Collect K-Fold CTR Stats (TRAIN ONLY - to prevent label leakage)
-    print("  Computing K-Fold CTR stats (train only)...")
-    lf_train_only = pl.scan_parquet(temp_base_path).filter(pl.col("_source") == "train")
-    ctr_stats, global_ctr = compute_kfold_ctr_stats(lf_train_only, TARGET_ENCODING_COLS)
-
-    # 2.4 Create temp LF for vocab collection (needs all bins applied)
+    # 2.2 Create temp LF for vocab collection (needs counts/hourly/bins applied)
     lf_temp_vocab = apply_transforms_lazy(
         pl.scan_parquet(temp_base_path),  # Fresh scan
         hourly_lf,
         count_lfs,
-        {},  # No vocab mapping yet
+        {},
         COUNT_FEATURE_COLS,
         [],  # No vocab mapping yet
-        ctr_stats=ctr_stats,
-        unique_counts_lf=unique_counts_lf,
-        global_ctr=global_ctr,
-        is_test=False,  # Use K-Fold for vocab collection
     )
 
-    # 2.5 Collect Vocabularies from the binned features
+    # 2.3 Collect Vocabularies from the binned features
     _, _, vocab_lfs = collect_stats_pass(
         lf_temp_vocab,
         [],  # No counts needed (already done)
@@ -1430,6 +1058,16 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     # =========================================================================
     print("\n--- STEP 3: Pass 2 (Final Streaming Sink) ---")
 
+    # Fresh scan of foundation for Pass 2
+    lf_final = apply_transforms_lazy(
+        pl.scan_parquet(temp_base_path),  # Already sorted, windows computed
+        hourly_lf,
+        count_lfs,
+        vocab_lfs,
+        COUNT_FEATURE_COLS,
+        final_cat_cols,
+    )
+
     # Column selection
     train_cols = ["click", "hour"] + final_cat_cols
     test_cols = ["id"] + final_cat_cols
@@ -1437,37 +1075,17 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     train_parquet = output_path / "train.parquet"
     test_parquet = output_path / "test.parquet"
 
-    # SINK TRAIN (use K-Fold CTR)
+    # SINK TRAIN (filter by source marker, then drop marker)
     print(f"  Sinking Train to {train_parquet}...")
-    lf_train_final = apply_transforms_lazy(
-        pl.scan_parquet(temp_base_path).filter(pl.col("_source") == "train"),
-        hourly_lf,
-        count_lfs,
-        vocab_lfs,
-        COUNT_FEATURE_COLS,
-        final_cat_cols,
-        ctr_stats=ctr_stats,
-        unique_counts_lf=unique_counts_lf,
-        global_ctr=global_ctr,
-        is_test=False,
+    lf_final.filter(pl.col("_source") == "train").select(train_cols).sink_parquet(
+        train_parquet
     )
-    lf_train_final.select(train_cols).sink_parquet(train_parquet)
 
-    # SINK TEST (use global CTR)
+    # SINK TEST (filter by source marker, then drop marker)
     print(f"  Sinking Test to {test_parquet}...")
-    lf_test_final = apply_transforms_lazy(
-        pl.scan_parquet(temp_base_path).filter(pl.col("_source") == "test"),
-        hourly_lf,
-        count_lfs,
-        vocab_lfs,
-        COUNT_FEATURE_COLS,
-        final_cat_cols,
-        ctr_stats=ctr_stats,
-        unique_counts_lf=unique_counts_lf,
-        global_ctr=global_ctr,
-        is_test=True,  # Use global CTR for test set
+    lf_final.filter(pl.col("_source") == "test").select(test_cols).sink_parquet(
+        test_parquet
     )
-    lf_test_final.select(test_cols).sink_parquet(test_parquet)
 
     # =========================================================================
     # Metadata Recovery
@@ -1492,7 +1110,7 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     train_rows = pl.scan_parquet(train_parquet).select(pl.len()).collect().item()
     test_rows = pl.scan_parquet(test_parquet).select(pl.len()).collect().item()
 
-    print("\nProcessing complete!")
+    print(f"\nProcessing complete!")
     print(f"  Train: {train_rows:,} rows -> {train_parquet}")
     print(f"  Test:  {test_rows:,} rows -> {test_parquet}")
 

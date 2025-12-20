@@ -60,16 +60,6 @@ CONFIG: ConfigType = {
         "user_proxy_prev_clicks_bin": {"type": "standard", "dim": 8 * 2},
         "device_ip_cumcount_bin": {"type": "standard", "dim": 8 * 2},
         "device_id_cumcount_bin": {"type": "standard", "dim": 8 * 2},
-        # Reverse cumcount bins (session length proxy)
-        "device_ip_reverse_cumcount_bin": {"type": "standard", "dim": 8 * 2},
-        "device_id_reverse_cumcount_bin": {"type": "standard", "dim": 8 * 2},
-        # Target encoding CTR bins
-        "app_id_ctr_bin": {"type": "standard", "dim": 8 * 2},
-        "site_id_ctr_bin": {"type": "standard", "dim": 8 * 2},
-        "device_ip_ctr_bin": {"type": "standard", "dim": 8 * 2},
-        "user_proxy_ctr_bin": {"type": "standard", "dim": 8 * 2},
-        # Unique counts bin (bot detection)
-        "device_ip_unique_app_ids_bin": {"type": "standard", "dim": 8 * 2},
         "C1": {"type": "standard", "dim": 8 * 2},
         "banner_pos": {"type": "standard", "dim": 8 * 2},
         "day_of_week": {"type": "standard", "dim": 8 * 2},

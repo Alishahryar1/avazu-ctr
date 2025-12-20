@@ -90,15 +90,10 @@ def recommend_embedding_type(feature_name: str, vocab_size: int) -> str:
     """
     Recommend embedding type based on vocabulary size.
 
-    - Binned features: always standard (low cardinality)
     - High cardinality (>10k): hash (memory efficient)
     - Cross/interaction features: hash (very high cardinality expected)
     - Everything else: standard
     """
-    # Binned features always use standard (low cardinality)
-    if feature_name.endswith("_bin"):
-        return "standard"
-
     # Interaction features always use hash
     if "_x_" in feature_name:
         return "hash"
