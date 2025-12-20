@@ -91,40 +91,40 @@ CONFIG: ConfigType = {
         "device_id": {
             "type": "hash",
             "dim": 32 * 2,
-            "num_buckets": 5500,
+            "num_buckets": 500_000,
             "num_hashes": 2,
         },
         "device_id_x_app_id": {
             "type": "hash",
             "dim": 32 * 2,
-            "num_buckets": 5500,
+            "num_buckets": 500_000,
             "num_hashes": 2,
         },
         "device_ip": {
             "type": "hash",
             "dim": 32 * 2,
-            "num_buckets": 8000,
+            "num_buckets": 500_000,
             "num_hashes": 2,
         },
         "user_proxy": {
             "type": "hash",
             "dim": 32 * 2,
-            "num_buckets": 10000,
+            "num_buckets": 500_000,
             "num_hashes": 2,
         },
         "device_ip_x_C14": {
             "type": "hash",
             "dim": 32 * 2,
-            "num_buckets": 15000,
+            "num_buckets": 500_000,
             "num_hashes": 2,
         },
     },
     # === MULTIHEAD DIVERSITY MODEL ===
     "model": {
         "backbone_type": "gated_dcn",
-        "diversity_weight": 0.2,
-        "feature_bagging_ratio": 0.8,
-        "aggregation_method": "gated",  # 'mean' | 'gated'
+        "diversity_weight": 0.1,
+        "feature_bagging_ratio": 0.9,
+        "aggregation_method": "mean",  # 'mean' | 'gated'
         "gating_hidden_dim": None,  # Optional hidden dim for gated aggregation
         "backbone_config": {
             # Feature Gating
@@ -144,8 +144,8 @@ CONFIG: ConfigType = {
             # DCN
             "use_dcn": True,
             "dcn_num_layers": 6,
-            "dcn_use_layernorm": False,
-            "dcn_low_rank": 64,
+            "dcn_use_layernorm": True,
+            "dcn_low_rank": None,
             # MLP
             "mlp_hidden_dims": [2048, 1024, 512],
             "mlp_activation": "gelu",
@@ -157,14 +157,14 @@ CONFIG: ConfigType = {
             {
                 "hidden_dims": [128],
                 "activation": "relu",
-                "dropout": 0.15,
-                "use_layer_norm": True,
+                "dropout": 0.2,
+                "use_layer_norm": False,
                 "use_skip_connections": True,
             },
             {
                 "hidden_dims": [64],
                 "activation": "gelu",
-                "dropout": 0.2,
+                "dropout": 0.15,
                 "use_layer_norm": True,
                 "use_skip_connections": True,
             },
@@ -194,13 +194,13 @@ CONFIG: ConfigType = {
     # === Optimizer Configuration ===
     "dense_optimizer": {
         "type": "adamw",
-        "lr": 1e-3,
-        "warmup_epoch_ratio": 0.2,
-        "weight_decay": 1e-4,
+        "lr": 1e-5,
+        "warmup_epoch_ratio": 0.0,
+        "weight_decay": 1e-5,
     },
     "embedding_optimizer": {
         "type": "adagrad",
-        "lr": 0.1,
+        "lr": 1e-2,
         "warmup_epoch_ratio": 0.0,
         "weight_decay": 0.0,
     },
