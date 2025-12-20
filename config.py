@@ -143,9 +143,9 @@ CONFIG: ConfigType = {
             "senet_use_layer_norm": True,
             # DCN
             "use_dcn": True,
-            "dcn_num_layers": 6,
+            "dcn_num_layers": 8,
             "dcn_use_layernorm": True,
-            "dcn_low_rank": None,
+            "dcn_low_rank": 64,
             # MLP
             "mlp_hidden_dims": [2048, 2048, 1024, 512],
             "mlp_activation": "gelu",
@@ -194,13 +194,13 @@ CONFIG: ConfigType = {
     # === Optimizer Configuration ===
     "dense_optimizer": {
         "type": "adamw",
-        "lr": 1e-5,
+        "lr": 1e-3,
         "warmup_epoch_ratio": 0.0,
-        "weight_decay": 1e-5,
+        "weight_decay": 1e-4,
     },
     "embedding_optimizer": {
         "type": "adagrad",
-        "lr": 1e-2,
+        "lr": 1e-1,
         "warmup_epoch_ratio": 0.0,
         "weight_decay": 0.0,
     },
