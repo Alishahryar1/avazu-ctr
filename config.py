@@ -122,8 +122,8 @@ CONFIG: ConfigType = {
     # === MULTIHEAD DIVERSITY MODEL ===
     "model": {
         "backbone_type": "gated_dcn",
-        "diversity_weight": 0.1,
-        "feature_bagging_ratio": 0.9,
+        "diversity_weight": 0.0067255849606054205,
+        "feature_bagging_ratio": 0.9874844398828313,
         "aggregation_method": "mean",  # 'mean' | 'gated'
         "gating_hidden_dim": None,  # Optional hidden dim for gated aggregation
         "backbone_config": {
@@ -143,64 +143,64 @@ CONFIG: ConfigType = {
             "senet_use_layer_norm": True,
             # DCN
             "use_dcn": True,
-            "dcn_num_layers": 8,
+            "dcn_num_layers": 16,
             "dcn_use_layernorm": True,
-            "dcn_low_rank": 64,
+            "dcn_low_rank": 98,
             # MLP
-            "mlp_hidden_dims": [2048, 2048, 1024, 512],
+            "mlp_hidden_dims": [384, 384, 384],
             "mlp_activation": "gelu",
             "mlp_use_skip_connections": True,
-            "mlp_dropout": 0.1,
+            "mlp_dropout": 0.3518042465632383,
             "use_layer_norm": True,
         },
         "heads": [
             {
-                "hidden_dims": [128],
+                "hidden_dims": [64],
                 "activation": "relu",
-                "dropout": 0.2,
-                "use_layer_norm": False,
-                "use_skip_connections": True,
+                "dropout": 0.20729587829746876,
+                "use_layer_norm": True,
+                "use_skip_connections": False,
             },
             {
                 "hidden_dims": [64],
                 "activation": "gelu",
-                "dropout": 0.15,
+                "dropout": 0.31875252942917176,
                 "use_layer_norm": True,
-                "use_skip_connections": True,
+                "use_skip_connections": False,
             },
             {
-                "hidden_dims": [32],
+                "hidden_dims": [512],
                 "activation": "silu",
-                "dropout": 0.1,
+                "dropout": 0.28245343219124713,
                 "use_layer_norm": True,
-                "use_skip_connections": True,
+                "use_skip_connections": False,
             },
             {
-                "hidden_dims": [256],
-                "activation": "mish",
-                "dropout": 0.25,
+                "hidden_dims": [16],
+                "activation": "silu",
+                "dropout": 0.3745147170134978,
                 "use_layer_norm": True,
-                "use_skip_connections": True,
+                "use_skip_connections": False,
             },
         ],
     },
     # === Training ===
     "epochs": 1,
     "early_stopping_patience": 50,
-    "grad_clip": 1.0,
+    "grad_clip": 4.968085896356788,
     "use_tensorboard": True,
     "tensorboard_logdir": "./runs",
     "tensorboard_log_interval": 50,  # Log every N batches (reduces I/O overhead)
     # === Optimizer Configuration ===
     "dense_optimizer": {
         "type": "adamw",
-        "lr": 1e-3,
+        "lr": 8.401444901703273e-05,
         "warmup_epoch_ratio": 0.0,
-        "weight_decay": 1e-4,
+        "weight_decay": 0.0002607454950209391,
     },
     "embedding_optimizer": {
         "type": "adagrad",
-        "lr": 1e-1,
+        "lr": 0.2920172684656249,
         "warmup_epoch_ratio": 0.0,
         "weight_decay": 0.0,
     },
