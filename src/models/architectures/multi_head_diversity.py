@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from typing import List, Dict
 
 from src.models.architectures.base import BaseCTRModel, ModelOutput
@@ -140,6 +141,12 @@ class MultiHeadDiversityModel(BaseCTRModel):
                 )
                 self.register_buffer(f"head_mask_{i}", mask)
 
+        # --- Aggregation ---
+        self.aggregation_method = model_config.get("aggregation_method", "mean")
+        if self.aggregation_method == "gated":
+            # Simple gating: Linear layer, softmax applied in forward
+            self.gate_linear = nn.Linear(self.num_heads, self.num_heads)
+
         # --- Loss ---
         self.loss_fn = DiversityBCELoss(
             diversity_weight=model_config["diversity_weight"]
@@ -209,11 +216,21 @@ class MultiHeadDiversityModel(BaseCTRModel):
         # Stack: [K, Batch, 1]
         stacked_logits = torch.stack(head_logits, dim=0)
 
-        # 3. Aggregate (Mean) for final prediction
-        avg_logits = stacked_logits.mean(dim=0)
+        # 3. Aggregate for final prediction
+        if self.aggregation_method == "gated":
+            # stacked_logits: [K, Batch, 1] -> [Batch, K]
+            logits_for_gate = stacked_logits.squeeze(-1).permute(1, 0)
+            gate_weights = F.softmax(
+                self.gate_linear(logits_for_gate), dim=-1
+            )  # [Batch, K]
+            aggregated_logits = (logits_for_gate * gate_weights).sum(
+                dim=-1, keepdim=True
+            )  # [Batch, 1]
+        else:
+            aggregated_logits = stacked_logits.mean(dim=0)
 
         return {
-            "logits": avg_logits,
+            "logits": aggregated_logits,
             "aux_logits": stacked_logits,  # Pass stacked logits to loss
         }
 

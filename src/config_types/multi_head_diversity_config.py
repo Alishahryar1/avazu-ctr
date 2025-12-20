@@ -21,3 +21,4 @@ class MultiHeadDiversityConfig(TypedDict):
     feature_bagging_ratio: (
         float  # 1.0 = no bagging, < 1.0 = ratio of features to keep per head
     )
+    aggregation_method: str  # 'mean' | 'gated'

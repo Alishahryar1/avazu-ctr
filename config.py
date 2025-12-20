@@ -124,6 +124,7 @@ CONFIG: ConfigType = {
         "backbone_type": "gated_dcn",
         "diversity_weight": 0.2,
         "feature_bagging_ratio": 0.8,
+        "aggregation_method": "gated",  # 'mean' | 'gated'
         "backbone_config": {
             # Feature Gating
             "use_feature_gating": True,
@@ -186,6 +187,27 @@ CONFIG: ConfigType = {
                 "dropout": 0.2,
                 "use_layer_norm": True,
                 "use_skip_connections": True,
+            },
+            {
+                "hidden_dims": [128],
+                "activation": "sigmoid",
+                "dropout": 0.15,
+                "use_layer_norm": True,
+                "use_skip_connections": True,
+            },
+            {
+                "hidden_dims": [64],
+                "activation": "leaky_relu",
+                "dropout": 0.15,
+                "use_layer_norm": True,
+                "use_skip_connections": True,
+            },
+            {
+                "hidden_dims": [256],
+                "activation": "gelu",
+                "dropout": 0.15,
+                "use_layer_norm": True,
+                "use_skip_connections": False,
             },
         ],
     },
