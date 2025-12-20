@@ -2,15 +2,12 @@
 
 import pyperclip
 from typing import Any, cast
-from torch.optim import optimizer
 import os
 import torch
-import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
 import time
-import numpy as np
 from torch.utils.tensorboard import SummaryWriter
 
 from config import CONFIG, seed_everything
@@ -62,16 +59,14 @@ def train():
     use_validation = CONFIG["validation_split"] > 0
 
     if use_validation:
-        # Random split
-        indices = np.arange(len(full_dataset))
-        np.random.seed(CONFIG["seed"])  # Reproducible split
-        np.random.shuffle(indices)
-
+        # Sequential split (top/bottom) for time-sorted data
         split_idx = int(len(full_dataset) * (1 - CONFIG["validation_split"]))
-        train_indices = indices[:split_idx].tolist()
-        val_indices = indices[split_idx:].tolist()
+        train_indices = list(range(split_idx))
+        val_indices = list(range(split_idx, len(full_dataset)))
 
-        print(f"Random split: {CONFIG['validation_split'] * 100:.1f}% as validation")
+        print(
+            f"Sequential split: {CONFIG['validation_split'] * 100:.1f}% as validation (last {len(val_indices):,} samples)"
+        )
 
         train_dataset = Subset(full_dataset, train_indices)
         val_dataset = Subset(full_dataset, val_indices)
