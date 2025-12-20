@@ -13,7 +13,7 @@ from pathlib import Path
 
 class ParquetFullDataset(Dataset):
     """
-    Dataset that loads the entire Parquet file into memory.
+    Dataset that loads the entire Parquet file into memory using native Polars to_torch().
 
     FASTEST: Loads everything into CPU RAM (or GPU if mapped).
     High memory usage, but zero I/O during training.
@@ -43,16 +43,19 @@ class ParquetFullDataset(Dataset):
         # Read entire file at once
         df = pl.scan_parquet(self.parquet_path).collect(engine="streaming")
 
-        # Convert features to tensor
+        # Convert features to tensor using native Polars to_torch()
         print("Converting features to tensor...")
-        self.X = torch.tensor(df.select(self.feature_cols).to_numpy(), dtype=torch.long)
+        self.X = df.select(self.feature_cols).to_torch(dtype=pl.Int64)
 
-        # Convert labels if present
+        # Convert labels if present using native Polars to_torch()
         if self.label_col and self.label_col in df.columns:
             print("Converting labels to tensor...")
-            self.y = torch.tensor(df[self.label_col].to_numpy(), dtype=torch.float32)
+            self.y = df.select(self.label_col).to_torch(dtype=pl.Float32).squeeze()
         else:
             self.y = None
+
+        # Free polars dataframe memory
+        del df
 
         self.n_samples = len(self.X)
         print(f"Loaded {self.n_samples:,} samples.")
