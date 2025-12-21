@@ -76,21 +76,33 @@ def create_config_from_trial(
     )
 
     # === Dense optimizer scheduler ===
+    dense_decay_type = trial.suggest_categorical(
+        "dense_decay_type", ["none", "cosine", "linear"]
+    )
+    dense_min_lr = (
+        trial.suggest_float("dense_min_lr", 1e-8, 1e-4, log=True)
+        if dense_decay_type != "none"
+        else 1e-6
+    )
     config["dense_optimizer"]["scheduler"] = {
-        "decay_type": trial.suggest_categorical(
-            "dense_decay_type", ["none", "cosine", "linear"]
-        ),
+        "decay_type": dense_decay_type,
         "warmup_epoch_ratio": trial.suggest_float("dense_warmup_ratio", 0.0, 0.8),
-        "min_lr": trial.suggest_float("dense_min_lr", 1e-8, 1e-4, log=True),
+        "min_lr": dense_min_lr,
     }
 
     # === Embedding optimizer scheduler ===
+    embed_decay_type = trial.suggest_categorical(
+        "embed_decay_type", ["none", "cosine", "linear"]
+    )
+    embed_min_lr = (
+        trial.suggest_float("embed_min_lr", 1e-8, 1e-4, log=True)
+        if embed_decay_type != "none"
+        else 1e-6
+    )
     config["embedding_optimizer"]["scheduler"] = {
-        "decay_type": trial.suggest_categorical(
-            "embed_decay_type", ["none", "cosine", "linear"]
-        ),
+        "decay_type": embed_decay_type,
         "warmup_epoch_ratio": trial.suggest_float("embed_warmup_ratio", 0.0, 0.8),
-        "min_lr": trial.suggest_float("embed_min_lr", 1e-8, 1e-4, log=True),
+        "min_lr": embed_min_lr,
     }
 
     # === Regularization ===
