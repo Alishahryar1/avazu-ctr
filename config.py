@@ -26,12 +26,11 @@ CONFIG: ConfigType = {
     # Sort keys for data processor (applied before feature engineering)
     # Default: app_id, site_id, banner_pos, C1, day_of_month, hour_of_day
     "data_processor_sort_keys": [
+        "hour",
         "app_id",
         "site_id",
         "banner_pos",
         "C1",
-        "day_of_month",
-        "hour",
     ],
     "min_freq": 0,
     # === Automatic Mixed Precision (AMP) ===
