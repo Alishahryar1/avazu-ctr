@@ -122,9 +122,9 @@ CONFIG: ConfigType = {
     # === MULTIHEAD DIVERSITY MODEL ===
     "model": {
         "backbone_type": "gated_dcn",
-        "diversity_weight": 0.0067255849606054205,
-        "feature_bagging_ratio": 0.9874844398828313,
-        "aggregation_method": "mean",  # 'mean' | 'gated'
+        "diversity_weight": 0.7041209265040855,
+        "feature_bagging_ratio": 0.986204113670155,
+        "aggregation_method": "gated",  # 'mean' | 'gated'
         "gating_hidden_dim": None,  # Optional hidden dim for gated aggregation
         "backbone_config": {
             # Feature Gating
@@ -143,44 +143,44 @@ CONFIG: ConfigType = {
             "senet_use_layer_norm": True,
             # DCN
             "use_dcn": True,
-            "dcn_num_layers": 16,
-            "dcn_use_layernorm": True,
-            "dcn_low_rank": 98,
+            "dcn_num_layers": 10,
+            "dcn_use_layernorm": False,
+            "dcn_low_rank": 126,
             # MLP
-            "mlp_hidden_dims": [384, 384, 384],
-            "mlp_activation": "gelu",
+            "mlp_hidden_dims": [768, 256],
+            "mlp_activation": "relu",
             "mlp_use_skip_connections": True,
-            "mlp_dropout": 0.3518042465632383,
+            "mlp_dropout": 0.4722178874104439,
             "use_layer_norm": True,
         },
         "heads": [
             {
                 "hidden_dims": [64],
-                "activation": "relu",
-                "dropout": 0.20729587829746876,
+                "activation": "mish",
+                "dropout": 0.3316507228882644,
+                "use_layer_norm": False,
+                "use_skip_connections": True,
+            },
+            {
+                "hidden_dims": [64],
+                "activation": "mish",
+                "dropout": 0.029083562935977525,
                 "use_layer_norm": True,
-                "use_skip_connections": False,
+                "use_skip_connections": True,
+            },
+            {
+                "hidden_dims": [256],
+                "activation": "gelu",
+                "dropout": 0.04376620033297089,
+                "use_layer_norm": False,
+                "use_skip_connections": True,
             },
             {
                 "hidden_dims": [64],
                 "activation": "gelu",
-                "dropout": 0.31875252942917176,
+                "dropout": 0.4656734086503475,
                 "use_layer_norm": True,
-                "use_skip_connections": False,
-            },
-            {
-                "hidden_dims": [512],
-                "activation": "silu",
-                "dropout": 0.28245343219124713,
-                "use_layer_norm": True,
-                "use_skip_connections": False,
-            },
-            {
-                "hidden_dims": [16],
-                "activation": "silu",
-                "dropout": 0.3745147170134978,
-                "use_layer_norm": True,
-                "use_skip_connections": False,
+                "use_skip_connections": True,
             },
         ],
     },
@@ -194,22 +194,22 @@ CONFIG: ConfigType = {
     # === Optimizer Configuration ===
     "dense_optimizer": {
         "type": "adamw",
-        "lr": 8.401444901703273e-05,
-        "weight_decay": 0.0002607454950209391,
+        "lr": 1.9753818363604915e-05,
+        "weight_decay": 0.00032756654945109085,
         "scheduler": {
-            "warmup_epoch_ratio": 0.0,
+            "warmup_epoch_ratio": 0.7251126507918041,
             "min_lr": 1e-6,
-            "decay_type": "cosine",
+            "decay_type": "none",
         },
     },
     "embedding_optimizer": {
         "type": "adagrad",
-        "lr": 0.2920172684656249,
+        "lr": 0.10117494391909279,
         "weight_decay": 0.0,
         "scheduler": {
-            "warmup_epoch_ratio": 0.0,
-            "min_lr": 1e-6,
-            "decay_type": "none",
+            "warmup_epoch_ratio": 0.02038005590717079,
+            "min_lr": 2.1047600351163527e-07,
+            "decay_type": "linear",
         },
     },
     # FTRL config example (uncomment to use):
