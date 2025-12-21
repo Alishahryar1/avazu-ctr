@@ -50,4 +50,5 @@ class ConfigType(TypedDict):
     test_path: str
     sub_path: str
     processed_path: str
+    cleanup_temp_files: bool  # Delete temp files after data processing
     models_path: str
