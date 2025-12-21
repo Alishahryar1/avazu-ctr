@@ -973,6 +973,10 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         lf_combined = pl.concat([lf_train, lf_test], how="diagonal")
 
         # Apply the "Heavy" operations (base features + sort + windows)
+        # CRITICAL: Time-based features MUST be computed while data is sorted
+        # chronologically. Sorting by app_id/site_id first would cause "time travel"
+        # where shift(1) references future timestamps, resulting in negative deltas
+        # that crash when cast to UInt32.
         lf_foundation = (
             lf_combined.with_columns(
                 [
@@ -981,20 +985,20 @@ def process_data_polars() -> tuple[dict, list, int, int]:
                     *get_time_feature_expressions(),
                 ]
             )
-            .sort(
-                CONFIG["data_processor_sort_keys"]
-            )  # THE STREAMING BLOCKADE #1 (configurable)
+            # Step 1: Sort CHRONOLOGICALLY first for time-based feature computation
+            .sort(["hour"])  # Chronological order (hour is YYMMDDHH format)
             .with_columns(get_time_delta_expressions())
             .with_columns(
                 [
-                    *get_cumulative_count_expressions(
-                        CUMCOUNT_COLS
-                    ),  # THE STREAMING BLOCKADE #2
+                    # These features depend on chronological order:
+                    *get_cumulative_count_expressions(CUMCOUNT_COLS),
                     *get_time_delta_window_expressions(),
                     get_prev_clicks_expression("user_proxy"),
                 ]
             )
             .drop("_timestamp")
+            # Step 2: Re-sort by user's preferred keys for output compression/grouping
+            .sort(CONFIG["data_processor_sort_keys"])
         )
 
         # Materialize to disk - this "cuts" the lazy graph
