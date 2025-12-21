@@ -303,6 +303,11 @@ def bin_prev_clicks(group_col: str) -> pl.Expr:
     )
 
 
+def get_string_cast_expressions(columns: list[str]) -> list[pl.Expr]:
+    """Returns expressions to cast columns to String type."""
+    return [pl.col(c).cast(pl.String) for c in columns]
+
+
 def bin_count_features(count_cols: list[str]) -> list[pl.Expr]:
     """
     Create binned versions of count features for use as categorical features.
@@ -392,10 +397,7 @@ def build_vocabularies(
 
         try:
             counts = vocab_query.collect(engine="streaming")
-        except pl.exceptions.ComputeError:
-            print(
-                f"    Warning: Streaming engine failed for {col}, using standard collect"
-            )
+        except Exception:
             counts = vocab_query.collect()
 
         values = counts[col].to_list()
@@ -443,10 +445,7 @@ def compute_count_features_from_train(
 
         try:
             count_df = count_query.collect(engine="streaming")
-        except pl.exceptions.ComputeError:
-            print(
-                f"    Warning: Streaming engine failed for {col}, using standard collect"
-            )
+        except Exception:
             count_df = count_query.collect()
 
         count_lf = count_df.lazy()
@@ -495,10 +494,7 @@ def compute_hourly_aggregated_features(
 
     try:
         hourly_counts_df = hourly_query.collect(engine="streaming")
-    except pl.exceptions.ComputeError:
-        print(
-            "    Warning: Streaming engine failed for hourly features, using standard collect"
-        )
+    except Exception:
         hourly_counts_df = hourly_query.collect()
 
     hourly_counts = hourly_counts_df.lazy()
@@ -617,10 +613,7 @@ def collect_all_statistics(
         )
         try:
             count_dfs[col] = count_query.collect(engine="streaming")
-        except pl.exceptions.ComputeError:
-            print(
-                f"    Warning: Streaming engine failed for {col}, using standard collect"
-            )
+        except Exception:
             count_dfs[col] = count_query.collect()
 
     print(f"  Collected {len(count_dfs)} count statistics")
@@ -638,8 +631,7 @@ def collect_all_statistics(
 
     try:
         hourly_df = hourly_query.collect(engine="streaming")
-    except pl.exceptions.ComputeError:
-        print("    Warning: Streaming engine failed for hourly, using standard collect")
+    except Exception:
         hourly_df = hourly_query.collect()
 
     print(f"  Collected hourly statistics")
@@ -662,10 +654,7 @@ def collect_all_statistics(
 
         try:
             counts = vocab_query.collect(engine="streaming")
-        except pl.exceptions.ComputeError:
-            print(
-                f"    Warning: Streaming engine failed for {col} vocab, using standard collect"
-            )
+        except Exception:
             counts = vocab_query.collect()
 
         # Build mapping: value -> sequential ID (starting at 1, 0 = <UNK>)
@@ -920,16 +909,16 @@ def apply_transforms_lazy(
 
 
 # =============================================================================
-# Main Processing Pipeline (No Train-Test Leakage)
+# Main Processing Pipeline (Two-Pass Hybrid)
 # =============================================================================
 def process_data_polars() -> tuple[dict, list, int, int]:
     """
     Main data processing pipeline using Three-Step Materialization approach.
 
-    IMPORTANT: Train and test are processed SEPARATELY to prevent data leakage:
-    - Step 1: Materialize foundations for train and test separately
-    - Step 2: Collect statistics from TRAIN ONLY
-    - Step 3: Apply train stats to both train and test via joins
+    This approach fixes the streaming blockade caused by sort/window functions:
+    - Step 1: Materialize foundation (sort + windows) to temp parquet
+    - Step 2: Collect statistics from foundation parquet
+    - Step 3: Stream joins and sink to final parquet (fully streamable)
 
     Output files are saved to CONFIG['processed_path']:
     - train.parquet: Training data with features and labels
@@ -944,12 +933,11 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         test_rows: Number of test rows
     """
     print("Loading data with Polars (Three-Step Materialization Pipeline)...")
-    print("NOTE: Statistics computed from TRAIN ONLY to prevent data leakage")
+    print("NOTE: Statistics computed from combined train+test for maximum coverage")
 
     output_path = Path(CONFIG["processed_path"])
     output_path.mkdir(parents=True, exist_ok=True)
-    temp_train_path = output_path / "train_foundation.parquet"
-    temp_test_path = output_path / "test_foundation.parquet"
+    temp_base_path = output_path / "base_sorted_windowed.parquet"
 
     # Define final categorical columns list
     count_bin_cols = [f"{col}_count_bin" for col in COUNT_FEATURE_COLS]
@@ -967,24 +955,41 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     print(f"Total categorical features: {len(final_cat_cols)}")
 
     # =========================================================================
-    # STEP 1: Materialize Foundation for Train and Test SEPARATELY
-    # This prevents window feature leakage between train and test.
+    # STEP 1: Materialize Foundation (Sort + Windows)
+    # This is the ONLY way to make the rest of the pipeline streamable.
+    # We use collect().write_parquet() since sort/window aren't streamable anyway.
     # =========================================================================
-    def build_foundation(lf: pl.LazyFrame) -> pl.LazyFrame:
-        """Apply base features, sort, and window operations to a LazyFrame."""
-        return (
-            lf.with_columns(
+    if not temp_base_path.exists():
+        print("\n--- STEP 1: Materializing Foundation (Sort + Windows) ---")
+
+        # Scan train and test with source markers
+        lf_train = pl.scan_csv(
+            CONFIG["train_path"], schema_overrides=SCHEMA
+        ).with_columns(pl.lit("train").alias("_source"))
+        lf_test = pl.scan_csv(
+            CONFIG["test_path"], schema_overrides=SCHEMA
+        ).with_columns(pl.lit("test").alias("_source"))
+
+        lf_combined = pl.concat([lf_train, lf_test], how="diagonal")
+
+        # Apply the "Heavy" operations (base features + sort + windows)
+        lf_foundation = (
+            lf_combined.with_columns(
                 [
                     get_user_proxy_expression(),
                     *get_interaction_feature_expressions(),
                     *get_time_feature_expressions(),
                 ]
             )
-            .sort(CONFIG["data_processor_sort_keys"])
+            .sort(
+                CONFIG["data_processor_sort_keys"]
+            )  # THE STREAMING BLOCKADE #1 (configurable)
             .with_columns(get_time_delta_expressions())
             .with_columns(
                 [
-                    *get_cumulative_count_expressions(CUMCOUNT_COLS),
+                    *get_cumulative_count_expressions(
+                        CUMCOUNT_COLS
+                    ),  # THE STREAMING BLOCKADE #2
                     *get_time_delta_window_expressions(),
                     get_prev_clicks_expression("user_proxy"),
                 ]
@@ -992,40 +997,27 @@ def process_data_polars() -> tuple[dict, list, int, int]:
             .drop("_timestamp")
         )
 
-    if not temp_train_path.exists():
-        print("\n--- STEP 1a: Materializing TRAIN Foundation ---")
-        lf_train = pl.scan_csv(CONFIG["train_path"], schema_overrides=SCHEMA)
-        lf_train_foundation = build_foundation(lf_train)
-        print("  Collecting and writing train foundation to parquet...")
-        lf_train_foundation.collect().write_parquet(temp_train_path)
-        print(f"  Train foundation materialized to {temp_train_path}")
-        del lf_train_foundation, lf_train
+        # Materialize to disk - this "cuts" the lazy graph
+        print("  Collecting and writing foundation to parquet...")
+        lf_foundation.collect().write_parquet(temp_base_path)
+        print(f"  Foundation materialized to {temp_base_path}")
+
+        del lf_foundation, lf_combined, lf_train, lf_test
         gc.collect()
     else:
-        print(f"\n--- STEP 1a: Train foundation exists at {temp_train_path} ---")
-
-    if not temp_test_path.exists():
-        print("\n--- STEP 1b: Materializing TEST Foundation ---")
-        lf_test = pl.scan_csv(CONFIG["test_path"], schema_overrides=SCHEMA)
-        lf_test_foundation = build_foundation(lf_test)
-        print("  Collecting and writing test foundation to parquet...")
-        lf_test_foundation.collect().write_parquet(temp_test_path)
-        print(f"  Test foundation materialized to {temp_test_path}")
-        del lf_test_foundation, lf_test
-        gc.collect()
-    else:
-        print(f"\n--- STEP 1b: Test foundation exists at {temp_test_path} ---")
+        print(f"\n--- STEP 1: Foundation already exists at {temp_base_path} ---")
 
     # =========================================================================
-    # STEP 2: Collect Stats from TRAIN ONLY (no leakage)
+    # STEP 2: Pass 1 (Collect Stats from Foundation)
+    # Statistics are collected from the pre-sorted, pre-windowed parquet.
     # =========================================================================
-    print("\n--- STEP 2: Statistics Collection from TRAIN ONLY ---")
+    print("\n--- STEP 2: Pass 1 (Statistics Collection from Foundation) ---")
 
-    lf_train_scan = pl.scan_parquet(temp_train_path)
+    lf_foundation_scan = pl.scan_parquet(temp_base_path)
 
-    # 2.1 Collect Counts & Hourly from TRAIN ONLY
+    # 2.1 Collect Counts & Hourly (no vocab yet)
     hourly_lf, count_lfs, _ = collect_stats_pass(
-        lf_train_scan,
+        lf_foundation_scan,
         COUNT_FEATURE_COLS,
         [],  # No vocabs yet
         CONFIG["min_freq"],
@@ -1033,7 +1025,7 @@ def process_data_polars() -> tuple[dict, list, int, int]:
 
     # 2.2 Create temp LF for vocab collection (needs counts/hourly/bins applied)
     lf_temp_vocab = apply_transforms_lazy(
-        pl.scan_parquet(temp_train_path),  # Fresh scan of TRAIN
+        pl.scan_parquet(temp_base_path),  # Fresh scan
         hourly_lf,
         count_lfs,
         {},
@@ -1041,7 +1033,7 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         [],  # No vocab mapping yet
     )
 
-    # 2.3 Collect Vocabularies from TRAIN binned features
+    # 2.3 Collect Vocabularies from the binned features
     _, _, vocab_lfs = collect_stats_pass(
         lf_temp_vocab,
         [],  # No counts needed (already done)
@@ -1049,6 +1041,7 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         CONFIG["min_freq"],
     )
 
+    # Clean up temp graph
     del lf_temp_vocab
     gc.collect()
 
@@ -1057,55 +1050,63 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     )
 
     # =========================================================================
-    # STEP 3: Apply TRAIN stats to both Train and Test (Streaming Sink)
+    # STEP 3: Pass 2 (Streaming Sink)
+    # This graph is NOW FULLY STREAMABLE because:
+    # 1. The source is a Parquet file (already sorted)
+    # 2. There are no .over() or .sort() calls
+    # 3. The Joins are against in-memory DataFrames (from Step 2)
     # =========================================================================
-    print("\n--- STEP 3: Applying Train Stats & Streaming Sink ---")
+    print("\n--- STEP 3: Pass 2 (Final Streaming Sink) ---")
+
+    # Fresh scan of foundation for Pass 2
+    lf_final = apply_transforms_lazy(
+        pl.scan_parquet(temp_base_path),  # Already sorted, windows computed
+        hourly_lf,
+        count_lfs,
+        vocab_lfs,
+        COUNT_FEATURE_COLS,
+        final_cat_cols,
+    )
+
+    # Column selection
+    train_cols = ["click", "hour"] + final_cat_cols
+    test_cols = ["id"] + final_cat_cols
 
     train_parquet = output_path / "train.parquet"
     test_parquet = output_path / "test.parquet"
 
-    # Process and sink TRAIN
-    print(f"  Processing and sinking Train to {train_parquet}...")
-    lf_train_final = apply_transforms_lazy(
-        pl.scan_parquet(temp_train_path),
-        hourly_lf,
-        count_lfs,
-        vocab_lfs,
-        COUNT_FEATURE_COLS,
-        final_cat_cols,
+    # SINK TRAIN (filter by source marker, then drop marker)
+    print(f"  Sinking Train to {train_parquet}...")
+    lf_final.filter(pl.col("_source") == "train").select(train_cols).sink_parquet(
+        train_parquet
     )
-    train_cols = ["click", "hour"] + final_cat_cols
-    lf_train_final.select(train_cols).sink_parquet(train_parquet)
 
-    # Process and sink TEST
-    print(f"  Processing and sinking Test to {test_parquet}...")
-    lf_test_final = apply_transforms_lazy(
-        pl.scan_parquet(temp_test_path),
-        hourly_lf,
-        count_lfs,
-        vocab_lfs,
-        COUNT_FEATURE_COLS,
-        final_cat_cols,
+    # SINK TEST (filter by source marker, then drop marker)
+    print(f"  Sinking Test to {test_parquet}...")
+    lf_final.filter(pl.col("_source") == "test").select(test_cols).sink_parquet(
+        test_parquet
     )
-    test_cols = ["id"] + final_cat_cols
-    lf_test_final.select(test_cols).sink_parquet(test_parquet)
 
     # =========================================================================
     # Metadata Recovery
     # =========================================================================
     print("\n--- Metadata Recovery ---")
 
+    # Calculate vocab sizes from the static vocab LFs we already have in memory
     vocab_sizes = {}
     for col, lf in vocab_lfs.items():
+        # Get max ID from the materialized vocab (instant since it's in-memory)
         max_id = lf.select(pl.col(f"{col}_id").max()).collect().item()
         vocab_sizes[col] = (max_id if max_id is not None else 0) + 1
 
+    # Save metadata
     print("  Saving metadata...")
     with open(output_path / "vocab_sizes.pkl", "wb") as f:
         pickle.dump(vocab_sizes, f)
     with open(output_path / "feature_names.pkl", "wb") as f:
         pickle.dump(final_cat_cols, f)
 
+    # Get row counts
     train_rows = pl.scan_parquet(train_parquet).select(pl.len()).collect().item()
     test_rows = pl.scan_parquet(test_parquet).select(pl.len()).collect().item()
 
@@ -1113,12 +1114,8 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     print(f"  Train: {train_rows:,} rows -> {train_parquet}")
     print(f"  Test:  {test_rows:,} rows -> {test_parquet}")
 
-    # Cleanup temp files
-    cleanup = CONFIG.get("cleanup_temp_files", False)
-    if cleanup:
-        print("  Cleaning up temp files...")
-        temp_train_path.unlink(missing_ok=True)
-        temp_test_path.unlink(missing_ok=True)
+    # Optional: Cleanup temp file (uncomment if desired)
+    # temp_base_path.unlink()
 
     return vocab_sizes, final_cat_cols, train_rows, test_rows
 

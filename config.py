@@ -44,7 +44,6 @@ CONFIG: ConfigType = {
     "test_path": "data/raw/test.gz",
     "sub_path": "submission.csv",
     "processed_path": "data/processed",
-    "cleanup_temp_files": False,  # Delete intermediate parquet files after processing
     "models_path": "./checkpoints",
     # === Model Architecture - Embeddings ===
     "embedding_dim": 16,  # Default/fallback embedding dimension
