@@ -97,7 +97,6 @@ def create_config_from_trial(
     config["model"]["backbone_config"]["mlp_dropout"] = trial.suggest_float(
         "mlp_dropout", 0.0, 0.5
     )
-    config["grad_clip"] = trial.suggest_float("grad_clip", 0.1, 5.0)
 
     # === Model architecture ===
     config["model"]["diversity_weight"] = trial.suggest_float(
