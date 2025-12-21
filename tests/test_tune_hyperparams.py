@@ -167,13 +167,10 @@ class TestCreateConfigFromTrial(unittest.TestCase):
         self.assertGreaterEqual(len(mlp_dims), 1)
         self.assertLessEqual(len(mlp_dims), 6)
 
-        # All dims should be the same (uniform width)
-        if len(mlp_dims) > 1:
-            self.assertEqual(len(set(mlp_dims)), 1)
-
-        # Width should be in range
-        self.assertGreaterEqual(mlp_dims[0], 128)
-        self.assertLessEqual(mlp_dims[0], 4096)
+        # Each layer can have different widths, all must be in valid range
+        for i, width in enumerate(mlp_dims):
+            self.assertGreaterEqual(width, 128, f"Layer {i} width below minimum")
+            self.assertLessEqual(width, 4096, f"Layer {i} width above maximum")
 
 
 class TestStudyCreation(unittest.TestCase):

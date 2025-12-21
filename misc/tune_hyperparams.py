@@ -129,8 +129,11 @@ def create_config_from_trial(
 
     # === MLP architecture ===
     n_layers = trial.suggest_int("n_mlp_layers", 1, 6)
-    width = trial.suggest_int("mlp_width", 128, 4096, step=128)
-    config["model"]["backbone_config"]["mlp_hidden_dims"] = [width] * n_layers
+    hidden_dims = []
+    for i in range(n_layers):
+        width = trial.suggest_int(f"mlp_layer_{i}_width", 128, 4096, step=128)
+        hidden_dims.append(width)
+    config["model"]["backbone_config"]["mlp_hidden_dims"] = hidden_dims
     config["model"]["backbone_config"]["mlp_activation"] = trial.suggest_categorical(
         "mlp_activation", ["relu", "gelu", "silu", "mish"]
     )
