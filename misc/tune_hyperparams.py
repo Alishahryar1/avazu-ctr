@@ -221,10 +221,17 @@ def train_single_epoch(
 
     # LR scheduler with warmup (matching main trainer)
     dense_opt_cfg = config["dense_optimizer"]
-    warmup_ratio = float(dense_opt_cfg.get("warmup_epoch_ratio", 0.0))
+    scheduler_cfg = dense_opt_cfg.get("scheduler", {})
+    decay_type = str(scheduler_cfg.get("decay_type", "cosine"))
+    warmup_ratio = float(scheduler_cfg.get("warmup_epoch_ratio", 0.0))
+    min_lr = float(scheduler_cfg.get("min_lr", 1e-6))
     warmup_steps = int(steps_per_epoch * warmup_ratio)
     scheduler = LRSchedulerWithWarmup(
-        other_optimizer, warmup_steps=warmup_steps, total_steps=total_steps
+        other_optimizer,
+        warmup_steps=warmup_steps,
+        total_steps=total_steps,
+        min_lr=min_lr,
+        decay_type=decay_type,
     )
 
     # AMP setup

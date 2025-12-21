@@ -221,6 +221,7 @@ def train():
             warmup_steps=warmup_steps,
             total_steps=total_steps,
             min_lr=min_lr,
+            decay_type=decay_type,
         )
         print(
             f"LR scheduler: {decay_type} decay, {warmup_steps} warmup steps "

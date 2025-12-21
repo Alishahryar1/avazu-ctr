@@ -5,14 +5,24 @@ import numpy as np
 
 class LRSchedulerWithWarmup:
     """
-    Learning rate scheduler with linear warmup and cosine decay.
+    Learning rate scheduler with linear warmup and configurable decay.
+
+    Supports 'cosine' and 'linear' decay types after warmup phase.
     """
 
-    def __init__(self, optimizer, warmup_steps, total_steps, min_lr=1e-6):
+    def __init__(
+        self,
+        optimizer,
+        warmup_steps: int,
+        total_steps: int,
+        min_lr: float = 1e-6,
+        decay_type: str = "cosine",
+    ):
         self.optimizer = optimizer
         self.warmup_steps = warmup_steps
         self.total_steps = total_steps
         self.min_lr = min_lr
+        self.decay_type = decay_type
         self.base_lr = optimizer.param_groups[0]["lr"]
         self.current_step = 0
 
@@ -21,8 +31,15 @@ class LRSchedulerWithWarmup:
         if self.current_step < self.warmup_steps:
             # Linear warmup
             lr = self.base_lr * self.current_step / self.warmup_steps
+        elif self.decay_type == "linear":
+            # Linear decay
+            progress = (self.current_step - self.warmup_steps) / (
+                self.total_steps - self.warmup_steps
+            )
+            lr = self.base_lr - (self.base_lr - self.min_lr) * progress
+            lr = max(lr, self.min_lr)
         else:
-            # Cosine decay
+            # Cosine decay (default)
             progress = (self.current_step - self.warmup_steps) / (
                 self.total_steps - self.warmup_steps
             )
