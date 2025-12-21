@@ -209,7 +209,7 @@ CONFIG: ConfigType = {
         "scheduler": {
             "warmup_epoch_ratio": 0.02038005590717079,
             "min_lr": 2.1047600351163527e-07,
-            "decay_type": "linear",
+            "decay_type": "cosine",
         },
     },
     # FTRL config example (uncomment to use):
