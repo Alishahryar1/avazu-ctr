@@ -199,23 +199,41 @@ def train():
     # Learning rate scheduler (only for non-FTRL optimizers)
     steps_per_epoch = len(train_loader)
     total_steps = steps_per_epoch * CONFIG["epochs"]
-    dense_warmup_ratio = (
-        float(cast(dict[str, Any], dense_opt_cfg).get("warmup_epoch_ratio", 0.0))
-        if dense_opt_type != "ftrl"
-        else 0.0
-    )
-    warmup_steps = int(steps_per_epoch * dense_warmup_ratio)
 
-    if not use_single_ftrl and other_optimizer is not None and dense_opt_type != "ftrl":
+    # Get scheduler config from dense optimizer
+    scheduler_cfg = cast(dict[str, Any], dense_opt_cfg).get("scheduler", {})
+    decay_type = str(scheduler_cfg.get("decay_type", "none"))
+    warmup_ratio = float(scheduler_cfg.get("warmup_epoch_ratio", 0.0))
+    min_lr = float(scheduler_cfg.get("min_lr", 1e-6))
+    warmup_steps = int(steps_per_epoch * warmup_ratio)
+
+    # Only create scheduler if decay_type != "none" and not using FTRL
+    use_scheduler = (
+        not use_single_ftrl
+        and other_optimizer is not None
+        and dense_opt_type != "ftrl"
+        and decay_type != "none"
+    )
+
+    if use_scheduler:
         scheduler = LRSchedulerWithWarmup(
-            other_optimizer, warmup_steps=warmup_steps, total_steps=total_steps
+            other_optimizer,
+            warmup_steps=warmup_steps,
+            total_steps=total_steps,
+            min_lr=min_lr,
         )
         print(
-            f"LR warmup steps: {warmup_steps} ({dense_warmup_ratio * 100:.0f}% of {steps_per_epoch} steps)"
+            f"LR scheduler: {decay_type} decay, {warmup_steps} warmup steps "
+            f"({warmup_ratio * 100:.0f}% of {steps_per_epoch} steps), min_lr={min_lr:.1e}"
         )
     else:
         scheduler = None
-        print("LR scheduler disabled (FTRL mode uses per-coordinate learning rates)")
+        if dense_opt_type == "ftrl" or use_single_ftrl:
+            print(
+                "LR scheduler disabled (FTRL mode uses per-coordinate learning rates)"
+            )
+        else:
+            print(f"LR scheduler disabled (decay_type={decay_type})")
 
     # Setup Automatic Mixed Precision (AMP)
     use_amp = CONFIG["auto_amp"] and CONFIG["device"] == "cuda"

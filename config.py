@@ -195,14 +195,22 @@ CONFIG: ConfigType = {
     "dense_optimizer": {
         "type": "adamw",
         "lr": 8.401444901703273e-05,
-        "warmup_epoch_ratio": 0.0,
         "weight_decay": 0.0002607454950209391,
+        "scheduler": {
+            "warmup_epoch_ratio": 0.0,
+            "min_lr": 1e-6,
+            "decay_type": "cosine",
+        },
     },
     "embedding_optimizer": {
         "type": "adagrad",
         "lr": 0.2920172684656249,
-        "warmup_epoch_ratio": 0.0,
         "weight_decay": 0.0,
+        "scheduler": {
+            "warmup_epoch_ratio": 0.0,
+            "min_lr": 1e-6,
+            "decay_type": "none",
+        },
     },
     # FTRL config example (uncomment to use):
     # "dense_optimizer": {

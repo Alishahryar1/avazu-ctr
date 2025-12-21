@@ -36,6 +36,7 @@ from src.processing.data_processor import load_metadata, get_parquet_path
 from src.processing.dataset import ParquetFullDataset
 from src.models.architectures import create_model
 from src.training.evaluator import evaluate
+from src.training.schedulers import LRSchedulerWithWarmup
 
 # Constants for search space
 ACTIVATIONS = ["relu", "gelu", "silu", "mish", "tanh"]
@@ -73,6 +74,24 @@ def create_config_from_trial(
     config["dense_optimizer"]["weight_decay"] = trial.suggest_float(
         "weight_decay", 1e-6, 1e-2, log=True
     )
+
+    # === Dense optimizer scheduler ===
+    config["dense_optimizer"]["scheduler"] = {
+        "decay_type": trial.suggest_categorical(
+            "dense_decay_type", ["none", "cosine", "linear"]
+        ),
+        "warmup_epoch_ratio": trial.suggest_float("dense_warmup_ratio", 0.0, 0.8),
+        "min_lr": trial.suggest_float("dense_min_lr", 1e-8, 1e-4, log=True),
+    }
+
+    # === Embedding optimizer scheduler ===
+    config["embedding_optimizer"]["scheduler"] = {
+        "decay_type": trial.suggest_categorical(
+            "embed_decay_type", ["none", "cosine", "linear"]
+        ),
+        "warmup_epoch_ratio": trial.suggest_float("embed_warmup_ratio", 0.0, 0.8),
+        "min_lr": trial.suggest_float("embed_min_lr", 1e-8, 1e-4, log=True),
+    }
 
     # === Regularization ===
     config["model"]["backbone_config"]["mlp_dropout"] = trial.suggest_float(
@@ -162,6 +181,8 @@ def train_single_epoch(
         Average training loss
     """
     device = config["device"]
+    steps_per_epoch = len(train_loader)
+    total_steps = steps_per_epoch * config["epochs"]
 
     # Separate parameters for embeddings vs other layers
     embedding_params = []
@@ -182,6 +203,14 @@ def train_single_epoch(
         other_params,
         lr=config["dense_optimizer"]["lr"],
         weight_decay=config["dense_optimizer"].get("weight_decay", 1e-4),
+    )
+
+    # LR scheduler with warmup (matching main trainer)
+    dense_opt_cfg = config["dense_optimizer"]
+    warmup_ratio = float(dense_opt_cfg.get("warmup_epoch_ratio", 0.0))
+    warmup_steps = int(steps_per_epoch * warmup_ratio)
+    scheduler = LRSchedulerWithWarmup(
+        other_optimizer, warmup_steps=warmup_steps, total_steps=total_steps
     )
 
     # AMP setup
@@ -225,6 +254,7 @@ def train_single_epoch(
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config["grad_clip"])
             embedding_optimizer.step()
             other_optimizer.step()
+            scheduler.step()
 
         loss_val = loss.item()
 
