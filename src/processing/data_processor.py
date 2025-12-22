@@ -77,6 +77,39 @@ CATEGORICAL_COLS = BASE_CATEGORICAL_COLS + ENGINEERED_CATEGORICAL_COLS
 COUNT_FEATURE_COLS = ["device_ip", "device_id", "C14", "C17", "C21", "user_proxy"]
 CUMCOUNT_COLS = ["device_ip", "device_id"]
 
+# Counts Unique: (group_col, value_col, output_name) - computed from combined train+test
+NUNIQUE_SPECS: list[tuple[str, str, str]] = [
+    ("device_ip", "app_id", "device_ip_nunique_apps"),
+    ("device_ip", "site_id", "device_ip_nunique_sites"),
+    ("user_proxy", "app_id", "user_proxy_nunique_apps"),
+    ("user_proxy", "site_id", "user_proxy_nunique_sites"),
+]
+
+# Likelihood features: columns to compute click probability for (train-only, test has no click)
+LIKELIHOOD_COLS = ["app_id", "site_id", "site_domain", "app_domain", "C14", "C17"]
+
+# Smoothing parameter for regularization (prevents overfitting on small counts)
+LIKELIHOOD_SMOOTHING_WEIGHT = 20
+
+# K-Fold configuration for target encoding (prevents target leakage)
+LIKELIHOOD_KFOLD = 5
+
+# Raw numerical features (kept alongside binned versions for numerical embeddings)
+NUMERICAL_FEATURE_COLS = (
+    # Likelihood features (6)
+    [f"{col}_likelihood" for col in LIKELIHOOD_COLS]
+    # Nunique features (4)
+    + [name for _, _, name in NUNIQUE_SPECS]
+    # Count features (6)
+    + [f"{col}_count" for col in COUNT_FEATURE_COLS]
+    # Cumcount features (2)
+    + [f"{col}_cumcount" for col in CUMCOUNT_COLS]
+    # Time delta (1)
+    + ["hours_since_last_click"]
+    # Prev clicks (1)
+    + ["user_proxy_prev_clicks"]
+)
+
 
 # --- Feature Engineering Expressions ---
 def get_time_feature_expressions() -> list[pl.Expr]:
@@ -253,6 +286,208 @@ def bin_hourly_impressions() -> pl.Expr:
     )
 
 
+# --- Counts Unique (Nunique) Features ---
+def collect_nunique_stats(
+    lf: pl.LazyFrame, specs: list[tuple[str, str, str]]
+) -> dict[str, tuple[pl.LazyFrame, str]]:
+    """
+    Collect nunique statistics for each (group_col, value_col) pair.
+
+    Computes how many unique values of value_col exist for each group_col.
+    E.g., how many unique apps has each device_ip visited?
+
+    Returns dict mapping output_name -> (LazyFrame with [group_col, output_name], group_col).
+    """
+    nunique_lfs: dict[str, tuple[pl.LazyFrame, str]] = {}
+    for group_col, value_col, output_name in specs:
+        nunique_df = (
+            lf.group_by(group_col)
+            .agg(pl.col(value_col).n_unique().alias(output_name))
+            .with_columns(pl.col(output_name).cast(pl.UInt32))
+            .collect()
+        )
+        nunique_lfs[output_name] = (nunique_df.lazy(), group_col)
+    return nunique_lfs
+
+
+def bin_nunique_features(specs: list[tuple[str, str, str]]) -> list[pl.Expr]:
+    """Bin nunique features: 1, 2, 3-5, 6-10, 11-50, 50+."""
+    expressions = []
+    for _, _, output_name in specs:
+        binned_col = f"{output_name}_bin"
+        expr = (
+            pl.when(pl.col(output_name) == 1)
+            .then(pl.lit("1"))
+            .when(pl.col(output_name) == 2)
+            .then(pl.lit("2"))
+            .when(pl.col(output_name) <= 5)
+            .then(pl.lit("3-5"))
+            .when(pl.col(output_name) <= 10)
+            .then(pl.lit("6-10"))
+            .when(pl.col(output_name) <= 50)
+            .then(pl.lit("11-50"))
+            .otherwise(pl.lit("50+"))
+            .alias(binned_col)
+        )
+        expressions.append(expr)
+    return expressions
+
+
+# --- Likelihood Features (Target Encoding) ---
+def collect_likelihood_stats(
+    lf_train: pl.LazyFrame,
+    cols: list[str],
+    smoothing_weight: int = 20,
+) -> tuple[float, dict[str, pl.LazyFrame]]:
+    """
+    Compute target encoding (click probability) per category from TRAINING data only.
+
+    Uses smoothed mean: (sum_clicks + global_mean * smoothing) / (count + smoothing)
+    This regularizes toward the global mean for categories with few samples.
+
+    Args:
+        lf_train: LazyFrame of training data (must have 'click' column)
+        cols: List of columns to compute likelihood for
+        smoothing_weight: Higher = more regularization toward global mean
+
+    Returns:
+        global_mean: Global click rate (for unknown categories)
+        likelihood_lfs: Dict mapping col -> LazyFrame with [col, {col}_likelihood]
+    """
+    # Compute global mean from training data
+    global_stats = lf_train.select(
+        [
+            pl.col("click").sum().alias("total_clicks"),
+            pl.len().alias("total_count"),
+        ]
+    ).collect()
+
+    total_clicks = global_stats["total_clicks"][0]
+    total_count = global_stats["total_count"][0]
+    global_mean = float(total_clicks / total_count) if total_count > 0 else 0.5
+
+    likelihood_lfs: dict[str, pl.LazyFrame] = {}
+    for col in cols:
+        # Compute per-category click stats with smoothing
+        likelihood_df = (
+            lf_train.group_by(col)
+            .agg(
+                [
+                    pl.col("click").sum().alias("_click_sum"),
+                    pl.len().alias("_count"),
+                ]
+            )
+            .with_columns(
+                [
+                    # Smoothed click probability
+                    (
+                        (pl.col("_click_sum") + pl.lit(global_mean) * smoothing_weight)
+                        / (pl.col("_count") + smoothing_weight)
+                    ).alias(f"{col}_likelihood")
+                ]
+            )
+            .select([col, f"{col}_likelihood"])
+            .collect()
+        )
+        likelihood_lfs[col] = likelihood_df.lazy()
+
+    return global_mean, likelihood_lfs
+
+
+def collect_kfold_likelihood_stats(
+    lf_train: pl.LazyFrame,
+    cols: list[str],
+    k: int = 5,
+    smoothing_weight: int = 20,
+) -> tuple[float, dict[str, pl.LazyFrame], pl.DataFrame]:
+    """
+    Compute K-Fold target encoding to prevent target leakage.
+
+    For each fold, likelihoods are computed from all OTHER folds, ensuring
+    that row i's label is never used to compute row i's likelihood.
+
+    Args:
+        lf_train: Training data LazyFrame (must have 'click' column)
+        cols: Columns to compute likelihood for
+        k: Number of folds
+        smoothing_weight: Regularization weight
+
+    Returns:
+        global_mean: Global click rate (for test set)
+        global_likelihood_lfs: Dict of global likelihoods (for test set)
+        train_with_likelihoods: Training DataFrame with fold-specific likelihoods
+    """
+    print(f"      Computing K-Fold target encoding (K={k})...")
+
+    # Step 1: Compute global mean and likelihoods (for test set)
+    global_mean, global_likelihood_lfs = collect_likelihood_stats(
+        lf_train, cols, smoothing_weight
+    )
+
+    # Step 2: Materialize and assign fold IDs to training data
+    train_df = lf_train.collect()
+    n_rows = len(train_df)
+    fold_ids = [i % k for i in range(n_rows)]
+    train_df = train_df.with_columns(pl.Series("_fold_id", fold_ids).cast(pl.UInt8))
+
+    # Step 3: For each fold, compute likelihoods from OTHER folds
+    fold_results: list[pl.DataFrame] = []
+    for fold in range(k):
+        # Data to compute stats FROM (everything except current fold)
+        other_folds_df = train_df.filter(pl.col("_fold_id") != fold)
+
+        # Compute likelihoods from other folds
+        _, fold_likelihood_lfs = collect_likelihood_stats(
+            other_folds_df.lazy(), cols, smoothing_weight
+        )
+
+        # Data to apply stats TO (current fold only)
+        current_fold_df = train_df.filter(pl.col("_fold_id") == fold)
+
+        # Apply fold-specific likelihoods via joins
+        lf_current = current_fold_df.lazy()
+        for col in cols:
+            likelihood_lf = fold_likelihood_lfs[col]
+            lf_current = lf_current.join(likelihood_lf, on=col, how="left")
+            lf_current = lf_current.with_columns(
+                pl.col(f"{col}_likelihood").fill_null(global_mean)
+            )
+
+        fold_results.append(lf_current.collect())
+        print(f"        Fold {fold + 1}/{k} done")
+
+    # Step 4: Combine all folds back together
+    train_with_likelihoods = pl.concat(fold_results)
+
+    # Step 5: Drop the temporary fold_id column
+    train_with_likelihoods = train_with_likelihoods.drop("_fold_id")
+
+    print(f"      K-Fold target encoding complete")
+    return global_mean, global_likelihood_lfs, train_with_likelihoods
+
+
+def bin_likelihood_features(cols: list[str]) -> list[pl.Expr]:
+    """Bin likelihood (click probability) into buckets based on CTR ranges."""
+    expressions = []
+    for col in cols:
+        likelihood_col = f"{col}_likelihood"
+        binned_col = f"{col}_likelihood_bin"
+        expr = (
+            pl.when(pl.col(likelihood_col) < 0.05)
+            .then(pl.lit("very_low"))
+            .when(pl.col(likelihood_col) < 0.15)
+            .then(pl.lit("low"))
+            .when(pl.col(likelihood_col) < 0.25)
+            .then(pl.lit("medium"))
+            .when(pl.col(likelihood_col) < 0.40)
+            .then(pl.lit("high"))
+            .otherwise(pl.lit("very_high"))
+            .alias(binned_col)
+        )
+        expressions.append(expr)
+    return expressions
+
+
 # --- Lazy Vocabulary Mapping ---
 def get_lazy_vocab_map(lf: pl.LazyFrame, col: str, min_freq: int) -> pl.LazyFrame:
     """Create vocabulary mapping LazyFrame with IDs starting at 1 (0 = UNK)."""
@@ -343,8 +578,25 @@ def apply_transforms_lazy(
     vocab_lfs: dict[str, pl.LazyFrame],
     count_cols: list[str],
     cat_cols: list[str],
+    nunique_lfs: dict[str, tuple[pl.LazyFrame, str]] | None = None,
+    likelihood_lfs: dict[str, pl.LazyFrame] | None = None,
+    global_mean: float = 0.17,
 ) -> pl.LazyFrame:
-    """Apply pre-computed stats via lazy joins (fully streamable)."""
+    """
+    Apply pre-computed stats via lazy joins (fully streamable).
+
+    Args:
+        lf: Base LazyFrame to transform
+        hourly_lf: Hourly impressions stats
+        count_lfs: Count stats per column
+        vocab_lfs: Vocabulary mappings per column
+        count_cols: List of columns with count stats
+        cat_cols: List of categorical columns for vocab mapping
+        nunique_lfs: Dict of nunique stats (output_name -> (LazyFrame, group_col))
+        likelihood_lfs: Dict of likelihood stats (col -> LazyFrame with likelihood).
+                        If None but columns already exist (K-Fold case), binning is still applied.
+        global_mean: Global click rate for filling unknown likelihood values
+    """
     # Join hourly
     lf = lf.join(hourly_lf, on=["user_proxy", "hour"], how="left")
 
@@ -352,13 +604,39 @@ def apply_transforms_lazy(
     for col in count_cols:
         lf = lf.join(count_lfs[col], on=col, how="left")
 
-    # Fill nulls
+    # Join nunique stats
+    if nunique_lfs:
+        for output_name, (nunique_lf, group_col) in nunique_lfs.items():
+            lf = lf.join(nunique_lf, on=group_col, how="left")
+
+    # Join likelihood stats (skip if None - columns may already exist from K-Fold)
+    if likelihood_lfs:
+        for col, likelihood_lf in likelihood_lfs.items():
+            lf = lf.join(likelihood_lf, on=col, how="left")
+
+    # Fill nulls for count/hourly features
     fill_exprs = [pl.col("user_hourly_impressions").fill_null(1)] + [
         pl.col(f"{c}_count").fill_null(0) for c in count_cols
     ]
+
+    # Fill nulls for nunique features
+    if nunique_lfs:
+        fill_exprs.extend(
+            [pl.col(output_name).fill_null(1) for output_name in nunique_lfs.keys()]
+        )
+
+    # Fill nulls for likelihood features (use global mean for unknown categories)
+    if likelihood_lfs:
+        fill_exprs.extend(
+            [
+                pl.col(f"{col}_likelihood").fill_null(global_mean)
+                for col in likelihood_lfs.keys()
+            ]
+        )
+
     lf = lf.with_columns(fill_exprs)
 
-    # Binning
+    # Binning expressions
     all_bin_exprs = [
         *bin_count_features(count_cols),
         *bin_cumcount_features(CUMCOUNT_COLS),
@@ -366,6 +644,15 @@ def apply_transforms_lazy(
         bin_time_delta_features(),
         bin_prev_clicks("user_proxy"),
     ]
+
+    # Add nunique binning
+    if nunique_lfs:
+        all_bin_exprs.extend(bin_nunique_features(NUNIQUE_SPECS))
+
+    # Add likelihood binning (always apply since columns exist from K-Fold or join)
+    # Use LIKELIHOOD_COLS directly since binning is independent of how columns were created
+    all_bin_exprs.extend(bin_likelihood_features(LIKELIHOOD_COLS))
+
     lf = lf.with_columns(all_bin_exprs)
 
     # Apply vocabularies
@@ -399,6 +686,8 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     # Define final categorical columns
     count_bin_cols = [f"{col}_count_bin" for col in COUNT_FEATURE_COLS]
     cumcount_bin_cols = [f"{col}_cumcount_bin" for col in CUMCOUNT_COLS]
+    nunique_bin_cols = [f"{name}_bin" for _, _, name in NUNIQUE_SPECS]
+    likelihood_bin_cols = [f"{col}_likelihood_bin" for col in LIKELIHOOD_COLS]
     final_cat_cols = (
         CATEGORICAL_COLS
         + ["month", "day_of_month", "hour_of_day", "day_of_week"]
@@ -407,6 +696,8 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         + ["user_hourly_impressions_bin"]
         + ["hours_since_last_click_bin"]
         + ["user_proxy_prev_clicks_bin"]
+        + nunique_bin_cols
+        + likelihood_bin_cols
     )
 
     print(f"Total categorical features: {len(final_cat_cols)}")
@@ -459,7 +750,8 @@ def process_data_polars() -> tuple[dict, list, int, int]:
 
     lf_foundation_scan = pl.scan_parquet(temp_base_path)
 
-    # Collect counts & hourly (no vocab yet)
+    # Collect counts & hourly from combined data (no vocab yet)
+    print("  [2a] Collecting counts & hourly stats...")
     hourly_lf, count_lfs, _ = collect_stats_pass(
         lf_foundation_scan,
         COUNT_FEATURE_COLS,
@@ -467,7 +759,28 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         CONFIG["min_freq"],
     )
 
-    # Create temp LF for vocab collection
+    # Collect nunique stats from combined data
+    print(f"  [2b] Collecting nunique stats for {len(NUNIQUE_SPECS)} specs...")
+    nunique_lfs = collect_nunique_stats(lf_foundation_scan, NUNIQUE_SPECS)
+
+    # Collect likelihood stats using K-Fold for training data (prevents leakage)
+    print(
+        f"  [2c] Collecting K-Fold likelihood stats for {len(LIKELIHOOD_COLS)} columns..."
+    )
+    lf_train_only = lf_foundation_scan.filter(pl.col("_source") == "train")
+    global_mean, global_likelihood_lfs, train_with_likelihoods = (
+        collect_kfold_likelihood_stats(
+            lf_train_only,
+            LIKELIHOOD_COLS,
+            LIKELIHOOD_KFOLD,
+            LIKELIHOOD_SMOOTHING_WEIGHT,
+        )
+    )
+    print(f"      Global click rate: {global_mean:.4f}")
+
+    # Create temp LF for vocab collection (with all new features)
+    # Use global likelihoods here since we just need category coverage
+    print("  [2d] Building vocabularies...")
     lf_temp_vocab = apply_transforms_lazy(
         pl.scan_parquet(temp_base_path),
         hourly_lf,
@@ -475,6 +788,9 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         {},
         COUNT_FEATURE_COLS,
         [],
+        nunique_lfs=nunique_lfs,
+        likelihood_lfs=global_likelihood_lfs,
+        global_mean=global_mean,
     )
 
     # Collect vocabularies from binned features
@@ -489,36 +805,53 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     gc.collect()
 
     print(
-        f"  Collected stats for {len(count_lfs)} count features and {len(vocab_lfs)} vocabularies"
+        f"  Collected stats: {len(count_lfs)} counts, {len(nunique_lfs)} nuniques, "
+        f"{len(global_likelihood_lfs)} likelihoods, {len(vocab_lfs)} vocabularies"
     )
 
     # --- STAGE 3: Streaming Sink ---
     print("\n--- STAGE 3: Streaming Sink ---")
 
-    lf_final = apply_transforms_lazy(
-        pl.scan_parquet(temp_base_path),
+    # For TRAINING: Use pre-computed K-Fold likelihoods (already in train_with_likelihoods)
+    # Apply other transforms (counts, nuniques, binning, vocab) to training data
+    print("  [3a] Processing training data with K-Fold likelihoods...")
+    lf_train_final = apply_transforms_lazy(
+        train_with_likelihoods.lazy(),
         hourly_lf,
         count_lfs,
         vocab_lfs,
         COUNT_FEATURE_COLS,
         final_cat_cols,
+        nunique_lfs=nunique_lfs,
+        likelihood_lfs=None,  # Skip likelihood joins (already have them)
+        global_mean=global_mean,
     )
 
-    train_cols = ["click", "hour"] + final_cat_cols
-    test_cols = ["id"] + final_cat_cols
+    # For TEST: Apply global likelihoods via join
+    print("  [3b] Processing test data with global likelihoods...")
+    lf_test_final = apply_transforms_lazy(
+        pl.scan_parquet(temp_base_path).filter(pl.col("_source") == "test"),
+        hourly_lf,
+        count_lfs,
+        vocab_lfs,
+        COUNT_FEATURE_COLS,
+        final_cat_cols,
+        nunique_lfs=nunique_lfs,
+        likelihood_lfs=global_likelihood_lfs,
+        global_mean=global_mean,
+    )
+
+    train_cols = ["click", "hour"] + final_cat_cols + list(NUMERICAL_FEATURE_COLS)
+    test_cols = ["id"] + final_cat_cols + list(NUMERICAL_FEATURE_COLS)
 
     train_parquet = output_path / "train.parquet"
     test_parquet = output_path / "test.parquet"
 
     print(f"  Sinking Train to {train_parquet}...")
-    lf_final.filter(pl.col("_source") == "train").select(train_cols).sink_parquet(
-        train_parquet
-    )
+    lf_train_final.select(train_cols).sink_parquet(train_parquet)
 
     print(f"  Sinking Test to {test_parquet}...")
-    lf_final.filter(pl.col("_source") == "test").select(test_cols).sink_parquet(
-        test_parquet
-    )
+    lf_test_final.select(test_cols).sink_parquet(test_parquet)
 
     # --- Metadata Recovery ---
     print("\n--- Metadata Recovery ---")
@@ -533,6 +866,8 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         pickle.dump(vocab_sizes, f)
     with open(output_path / "feature_names.pkl", "wb") as f:
         pickle.dump(final_cat_cols, f)
+    with open(output_path / "numerical_feature_names.pkl", "wb") as f:
+        pickle.dump(list(NUMERICAL_FEATURE_COLS), f)
 
     train_rows = pl.scan_parquet(train_parquet).select(pl.len()).collect().item()
     test_rows = pl.scan_parquet(test_parquet).select(pl.len()).collect().item()
@@ -540,13 +875,22 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     print(f"\nProcessing complete!")
     print(f"  Train: {train_rows:,} rows -> {train_parquet}")
     print(f"  Test:  {test_rows:,} rows -> {test_parquet}")
+    print(f"  Categorical features: {len(final_cat_cols)}")
+    print(f"  Numerical features: {len(NUMERICAL_FEATURE_COLS)}")
 
     return vocab_sizes, final_cat_cols, train_rows, test_rows
 
 
 # --- Data Loading (Metadata Only) ---
-def load_metadata() -> tuple[dict, list]:
-    """Load vocab sizes and feature names from disk."""
+def load_metadata() -> tuple[dict, list, list]:
+    """
+    Load vocab sizes, categorical feature names, and numerical feature names from disk.
+
+    Returns:
+        vocab_sizes: Dict mapping feature name to vocabulary size
+        feature_names: List of categorical feature names
+        numerical_feature_names: List of numerical feature names
+    """
     path = Path(CONFIG["processed_path"])
 
     try:
@@ -555,7 +899,15 @@ def load_metadata() -> tuple[dict, list]:
         with open(path / "feature_names.pkl", "rb") as f:
             feature_names = pickle.load(f)
 
-        return vocab_sizes, feature_names
+        # Load numerical features (with backward compatibility)
+        numerical_path = path / "numerical_feature_names.pkl"
+        if numerical_path.exists():
+            with open(numerical_path, "rb") as f:
+                numerical_feature_names = pickle.load(f)
+        else:
+            numerical_feature_names = []
+
+        return vocab_sizes, feature_names, numerical_feature_names
 
     except FileNotFoundError as e:
         raise FileNotFoundError(

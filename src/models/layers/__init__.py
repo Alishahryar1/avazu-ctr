@@ -9,6 +9,7 @@ from .multi_head_stec import MultiHeadSTEC
 from .position_wise_ffn import PositionWiseFFN
 from .bilinear_interaction import BilinearInteractionLayer
 from .hash_embedding import HashEmbedding
+from .numerical_embedding import NumericalEmbedding
 
 __all__ = [
     "DCNv2",
@@ -22,4 +23,5 @@ __all__ = [
     "PositionWiseFFN",
     "BilinearInteractionLayer",
     "HashEmbedding",
+    "NumericalEmbedding",
 ]

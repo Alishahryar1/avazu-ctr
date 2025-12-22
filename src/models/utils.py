@@ -69,6 +69,21 @@ def get_embedding(
             aggregation_mode=aggregation_mode,
         )
         output_dim = embedding.output_dim
+    elif embed_type == "numerical":
+        # NumericalEmbedding for continuous features
+        from src.models.layers.numerical_embedding import NumericalEmbedding
+
+        use_log_transform = feat_config.get("use_log_transform", False)
+        use_batch_norm = feat_config.get("use_batch_norm", True)
+        numerical_dropout = feat_config.get("numerical_dropout", 0.0)
+
+        embedding = NumericalEmbedding(
+            embedding_dim=embed_dim,
+            use_log_transform=use_log_transform,
+            use_batch_norm=use_batch_norm,
+            dropout=numerical_dropout,
+        )
+        output_dim = embedding.output_dim
     else:
         # Standard nn.Embedding
         embedding = nn.Embedding(vocab_size, embed_dim)

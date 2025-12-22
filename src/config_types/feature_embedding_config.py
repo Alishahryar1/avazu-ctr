@@ -1,11 +1,11 @@
-from typing import TypedDict, Literal
+from typing import Union
+
+from .standard_embedding_config import StandardEmbeddingConfig
+from .hash_embedding_config import HashEmbeddingConfig
+from .numerical_embedding_config import NumericalEmbeddingConfig
 
 
-class FeatureEmbeddingConfig(TypedDict, total=False):
-    type: Literal["standard", "hash"]
-    dim: int
-    num_buckets: int  # Only for type='hash'
-    num_hashes: int  # Only for type='hash', default: 2
-    aggregation_mode: Literal[
-        "sum", "concatenate", "median"
-    ]  # Only for type='hash', default: 'sum'
+# Union type alias for any embedding config
+FeatureEmbeddingConfig = Union[
+    StandardEmbeddingConfig, HashEmbeddingConfig, NumericalEmbeddingConfig
+]

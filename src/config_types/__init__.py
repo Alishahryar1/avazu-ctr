@@ -1,3 +1,6 @@
+from .standard_embedding_config import StandardEmbeddingConfig
+from .hash_embedding_config import HashEmbeddingConfig
+from .numerical_embedding_config import NumericalEmbeddingConfig
 from .feature_embedding_config import FeatureEmbeddingConfig
 from .gated_dcn_config import GatedDCNConfig
 from .stec_config import STECConfig
@@ -14,6 +17,9 @@ from .residual_mlp_config import ResidualMLPConfig
 
 __all__ = [
     "FeatureEmbeddingConfig",
+    "StandardEmbeddingConfig",
+    "HashEmbeddingConfig",
+    "NumericalEmbeddingConfig",
     "GatedDCNConfig",
     "STECConfig",
     "EnsembleConfig",
