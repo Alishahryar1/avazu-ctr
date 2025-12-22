@@ -8,3 +8,4 @@ tqdm
 tensorboard
 optuna
 pytest
+triton
