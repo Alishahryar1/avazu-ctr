@@ -179,8 +179,10 @@ class TestConfigExtended(unittest.TestCase):
                 ["standard", "hash", "numerical"],
                 f"feature {name} has invalid type",
             )
-            self.assertIn("dim", config, f"feature {name} missing 'dim'")
-            self.assertGreater(config["dim"], 0, f"feature {name} has invalid dim")
+            # Only standard and hash embeddings have dim; numerical always outputs dim=1
+            if config["type"] in ["standard", "hash"]:
+                self.assertIn("dim", config, f"feature {name} missing 'dim'")
+                self.assertGreater(config["dim"], 0, f"feature {name} has invalid dim")
 
 
 if __name__ == "__main__":

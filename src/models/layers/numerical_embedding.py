@@ -12,21 +12,11 @@ class NumericalEmbedding(nn.Module):
     No projection is applied - the numerical value is used directly as a 1D embedding.
 
     Args:
-        embedding_dim: Ignored (always outputs dim=1), kept for API compatibility
         use_log_transform: Apply log1p(x) before output (good for count features)
-        use_batch_norm: Ignored (no batch norm applied)
-        dropout: Ignored (no dropout applied)
     """
 
-    def __init__(
-        self,
-        embedding_dim: int,
-        use_log_transform: bool = False,
-        use_batch_norm: bool = False,
-        dropout: float = 0.0,
-    ):
+    def __init__(self, use_log_transform: bool = False):
         super().__init__()
-        # Always output dim=1 (scalar passthrough)
         self.embedding_dim = 1
         self.output_dim = 1
         self.use_log_transform = use_log_transform
