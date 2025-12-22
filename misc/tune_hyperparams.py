@@ -324,7 +324,8 @@ def objective(trial: Trial) -> float:
 
     # Load data
     try:
-        vocab_sizes, feature_names = load_metadata()
+        vocab_sizes, feature_names, numerical_feature_names = load_metadata()
+        feature_names = feature_names + numerical_feature_names
     except FileNotFoundError:
         print("Processed data not found. Run 'python data_processor.py' first.")
         raise optuna.TrialPruned()

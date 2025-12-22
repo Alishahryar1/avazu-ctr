@@ -17,7 +17,8 @@ def inference():
     # 1. Load Metadata (data stays in parquet)
     print("Step 1: Loading Metadata...")
     try:
-        vocab_sizes, feature_names = load_metadata()
+        vocab_sizes, feature_names, numerical_feature_names = load_metadata()
+        feature_names = feature_names + numerical_feature_names
     except FileNotFoundError:
         print(
             "Processed data not found. Please run 'python data_processor.py' to generate it."
