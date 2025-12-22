@@ -19,7 +19,7 @@ import math
 import os
 import sys
 from copy import deepcopy
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 import optuna
 from optuna.trial import Trial
@@ -297,103 +297,113 @@ def train_single_epoch(
     return total_loss / num_batches
 
 
-def objective(trial: Trial) -> float:
+def make_objective(
+    full_dataset: ParquetFullDataset,
+    vocab_sizes: dict[str, int],
+    feature_names: list[str],
+) -> Callable[[Trial], float]:
     """
-    Objective function for Optuna optimization.
+    Create objective function with pre-loaded dataset.
 
     Args:
-        trial: Optuna trial object
+        full_dataset: Pre-loaded ParquetFullDataset
+        vocab_sizes: Dictionary of vocabulary sizes per feature
+        feature_names: List of feature column names
 
     Returns:
-        Validation AUC (to maximize)
+        Objective function for Optuna optimization
     """
-    # Create config with sampled hyperparameters
-    config = create_config_from_trial(trial, cast(dict[str, Any], CONFIG))
 
-    print(f"\n[Trial {trial.number}] Hyperparameters:")
-    for name, value in trial.params.items():
-        print(f"  {name}: {value}")
+    def objective(trial: Trial) -> float:
+        """
+        Objective function for Optuna optimization.
 
-    # Force settings for tuning
-    config["validation_split"] = 0.1
-    config["epochs"] = 1
-    config["use_tensorboard"] = False
-    config["compile_model"] = False
+        Args:
+            trial: Optuna trial object
 
-    seed_everything(config["seed"])
+        Returns:
+            Validation LogLoss (to minimize)
+        """
+        # Create config with sampled hyperparameters
+        config = create_config_from_trial(trial, cast(dict[str, Any], CONFIG))
 
-    # Load data
-    try:
-        vocab_sizes, feature_names, numerical_feature_names = load_metadata()
-        feature_names = feature_names + numerical_feature_names
-    except FileNotFoundError:
-        print("Processed data not found. Run 'python data_processor.py' first.")
-        raise optuna.TrialPruned()
+        print(f"\n[Trial {trial.number}] Hyperparameters:")
+        for name, value in trial.params.items():
+            print(f"  {name}: {value}")
 
-    train_parquet = get_parquet_path("train")
-    full_dataset = ParquetFullDataset(
-        parquet_path=train_parquet, feature_cols=feature_names, label_col="click"
-    )
+        # Force settings for tuning
+        config["validation_split"] = 0.1
+        config["epochs"] = 1
+        config["use_tensorboard"] = False
+        config["compile_model"] = False
 
-    # Sequential split for time-sorted data
-    split_idx = int(len(full_dataset) * (1 - config["validation_split"]))
-    train_indices = list(range(split_idx))
-    val_indices = list(range(split_idx, len(full_dataset)))
+        seed_everything(config["seed"])
 
-    train_dataset = Subset(full_dataset, train_indices)
-    val_dataset = Subset(full_dataset, val_indices)
+        # Sequential split for time-sorted data (reuses pre-loaded dataset)
+        split_idx = int(len(full_dataset) * (1 - config["validation_split"]))
+        train_indices = list(range(split_idx))
+        val_indices = list(range(split_idx, len(full_dataset)))
 
-    train_loader = DataLoader(
-        train_dataset,
-        batch_size=config["batch_size"],
-        shuffle=False,
-        num_workers=config["num_workers"],
-        pin_memory=True,
-    )
-    val_loader = DataLoader(
-        val_dataset,
-        batch_size=config["batch_size"],
-        shuffle=False,
-        num_workers=config["num_workers"],
-        pin_memory=True,
-    )
+        train_dataset = Subset(full_dataset, train_indices)
+        val_dataset = Subset(full_dataset, val_indices)
 
-    # Create model
-    model = None
-    try:
-        model = create_model(config, vocab_sizes, feature_names)  # pyrefly: ignore
-        model.to(config["device"])
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=config["batch_size"],
+            shuffle=False,
+            num_workers=config["num_workers"],
+            pin_memory=True,
+        )
+        val_loader = DataLoader(
+            val_dataset,
+            batch_size=config["batch_size"],
+            shuffle=False,
+            num_workers=config["num_workers"],
+            pin_memory=True,
+        )
 
-        # Train for one epoch
-        train_loss = train_single_epoch(model, train_loader, config, trial)
-        print(f"[Trial {trial.number}] Train loss: {train_loss:.5f}")
-    except optuna.TrialPruned:
-        if model is not None:
-            del model
-            torch.cuda.empty_cache()
-        raise
-    except Exception as e:
-        print(f"Model creation or training failed: {e}")
-        if model is not None:
-            del model
-            torch.cuda.empty_cache()
-        raise optuna.TrialPruned()
+        # Create model
+        model = None
+        try:
+            model = create_model(config, vocab_sizes, feature_names)  # pyrefly: ignore
+            model.to(config["device"])
 
-    # Evaluate
-    use_amp = config.get("auto_amp", True) and config["device"] == "cuda"
-    val_loss, val_auc, val_logloss = evaluate(
-        model, val_loader, config["device"], use_amp=use_amp, amp_dtype=torch.float16
-    )
+            # Train for one epoch
+            train_loss = train_single_epoch(model, train_loader, config, trial)
+            print(f"[Trial {trial.number}] Train loss: {train_loss:.5f}")
+        except optuna.TrialPruned:
+            if model is not None:
+                del model
+                torch.cuda.empty_cache()
+            raise
+        except Exception as e:
+            print(f"Model creation or training failed: {e}")
+            if model is not None:
+                del model
+                torch.cuda.empty_cache()
+            raise optuna.TrialPruned()
 
-    # Clean up GPU memory after evaluation
-    del model
-    torch.cuda.empty_cache()
+        # Evaluate
+        use_amp = config.get("auto_amp", True) and config["device"] == "cuda"
+        val_loss, val_auc, val_logloss = evaluate(
+            model,
+            val_loader,
+            config["device"],
+            use_amp=use_amp,
+            amp_dtype=torch.float16,
+        )
 
-    # Log additional metrics
-    trial.set_user_attr("val_loss", val_loss)
-    trial.set_user_attr("val_auc", val_auc)
+        # Clean up GPU memory after evaluation
+        del model
+        torch.cuda.empty_cache()
 
-    return val_logloss
+        # Log additional metrics
+        trial.set_user_attr("val_loss", val_loss)
+        trial.set_user_attr("val_auc", val_auc)
+
+        return val_logloss
+
+    return objective
 
 
 def print_best_params(study: optuna.Study) -> None:
@@ -449,6 +459,24 @@ def main() -> None:
     print(f"Max trials: {args.n_trials}")
     print(f"Timeout: {args.timeout}s ({args.timeout / 3600:.1f}h)")
     print("=" * 80)
+
+    # Load dataset ONCE before optimization starts
+    print("\nLoading dataset (one-time)...")
+    try:
+        vocab_sizes, feature_names, numerical_feature_names = load_metadata()
+        feature_names = feature_names + numerical_feature_names
+    except FileNotFoundError:
+        print("Processed data not found. Run 'python data_processor.py' first.")
+        return
+
+    train_parquet = get_parquet_path("train")
+    full_dataset = ParquetFullDataset(
+        parquet_path=train_parquet, feature_cols=feature_names, label_col="click"
+    )
+    print("Dataset loaded successfully!\n")
+
+    # Create objective with pre-loaded dataset
+    objective = make_objective(full_dataset, vocab_sizes, feature_names)
 
     # Create or load study
     study = optuna.create_study(
