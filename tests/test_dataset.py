@@ -63,7 +63,7 @@ class TestParquetFullDataset(unittest.TestCase):
         self.assertIsInstance(X, torch.Tensor)
         self.assertIsInstance(y, torch.Tensor)
         self.assertEqual(X.shape, (2,))  # 2 features
-        self.assertEqual(X.dtype, torch.long)
+        self.assertEqual(X.dtype, torch.float32)
         self.assertEqual(y.shape, ())  # Scalar
         self.assertEqual(y.dtype, torch.float32)
 
