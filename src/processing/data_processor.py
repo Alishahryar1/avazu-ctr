@@ -108,6 +108,8 @@ NUMERICAL_FEATURE_COLS = (
     + ["hours_since_last_click"]
     # Prev clicks (1)
     + ["user_proxy_prev_clicks"]
+    # Hourly impressions (1)
+    + ["user_hourly_impressions"]
 )
 
 
