@@ -75,6 +75,33 @@ CONFIG: ConfigType = {
         "hours_since_last_click_bin": {"type": "standard", "dim": 8 * 2},
         "user_proxy_prev_clicks_bin": {"type": "standard", "dim": 8 * 2},
         "user_hourly_impressions_bin": {"type": "standard", "dim": 8 * 2},
+        # --- Raw numerical features (continuous values with log transform) ---
+        # Count features (raw)
+        "device_ip_count": {"type": "numerical", "use_log_transform": True},
+        "device_id_count": {"type": "numerical", "use_log_transform": True},
+        "C14_count": {"type": "numerical", "use_log_transform": True},
+        "C17_count": {"type": "numerical", "use_log_transform": True},
+        "C21_count": {"type": "numerical", "use_log_transform": True},
+        "user_proxy_count": {"type": "numerical", "use_log_transform": True},
+        # Cumcount features (raw)
+        "device_ip_cumcount": {"type": "numerical", "use_log_transform": True},
+        "device_id_cumcount": {"type": "numerical", "use_log_transform": True},
+        # Nunique features (raw)
+        "device_ip_nunique_apps": {"type": "numerical", "use_log_transform": True},
+        "device_ip_nunique_sites": {"type": "numerical", "use_log_transform": True},
+        "user_proxy_nunique_apps": {"type": "numerical", "use_log_transform": True},
+        "user_proxy_nunique_sites": {"type": "numerical", "use_log_transform": True},
+        # Likelihood features (raw probabilities, no log transform)
+        "app_id_likelihood": {"type": "numerical", "use_log_transform": False},
+        "site_id_likelihood": {"type": "numerical", "use_log_transform": False},
+        "site_domain_likelihood": {"type": "numerical", "use_log_transform": False},
+        "app_domain_likelihood": {"type": "numerical", "use_log_transform": False},
+        "C14_likelihood": {"type": "numerical", "use_log_transform": False},
+        "C17_likelihood": {"type": "numerical", "use_log_transform": False},
+        # Time/sequence features (raw)
+        "hours_since_last_click": {"type": "numerical", "use_log_transform": True},
+        "user_proxy_prev_clicks": {"type": "numerical", "use_log_transform": True},
+        "user_hourly_impressions": {"type": "numerical", "use_log_transform": True},
         # --- Standard embeddings (true categorical features) ---
         # Very low cardinality (dim 8)
         "month": {"type": "standard", "dim": 8 * 2},
