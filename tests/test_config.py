@@ -175,14 +175,12 @@ class TestConfigExtended(unittest.TestCase):
         for name, config in feature_embeddings.items():
             self.assertIn("type", config, f"feature {name} missing 'type'")
             self.assertIn(
-                config["type"], ["standard", "hash"], f"feature {name} has invalid type"
+                config["type"],
+                ["standard", "hash", "numerical"],
+                f"feature {name} has invalid type",
             )
             self.assertIn("dim", config, f"feature {name} missing 'dim'")
             self.assertGreater(config["dim"], 0, f"feature {name} has invalid dim")
-
-
-if __name__ == "__main__":
-    unittest.main(verbosity=2)
 
 
 if __name__ == "__main__":
