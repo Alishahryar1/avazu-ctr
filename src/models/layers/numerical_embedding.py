@@ -6,16 +6,16 @@ import torch.nn as nn
 
 class NumericalEmbedding(nn.Module):
     """
-    Embedding layer for continuous numerical features.
+    Passthrough embedding layer for continuous numerical features.
 
-    Projects a scalar value into a dense embedding space via a linear transformation,
-    optionally with log transform, batch normalization, and dropout.
+    Simply reshapes the scalar value to [batch_size, 1] with optional log transform.
+    No projection is applied - the numerical value is used directly as a 1D embedding.
 
     Args:
-        embedding_dim: Output embedding dimension
-        use_log_transform: Apply log1p(x) before projection (good for count features)
-        use_batch_norm: Whether to apply batch normalization
-        dropout: Dropout probability (0 = no dropout)
+        embedding_dim: Ignored (always outputs dim=1), kept for API compatibility
+        use_log_transform: Apply log1p(x) before output (good for count features)
+        use_batch_norm: Ignored (no batch norm applied)
+        dropout: Ignored (no dropout applied)
     """
 
     def __init__(
@@ -26,24 +26,10 @@ class NumericalEmbedding(nn.Module):
         dropout: float = 0.0,
     ):
         super().__init__()
-        self.embedding_dim = embedding_dim
-        self.output_dim = embedding_dim
+        # Always output dim=1 (scalar passthrough)
+        self.embedding_dim = 1
+        self.output_dim = 1
         self.use_log_transform = use_log_transform
-
-        # Linear projection: scalar -> embedding_dim
-        self.projection = nn.Linear(1, embedding_dim)
-
-        # Optional batch norm
-        self.use_batch_norm = use_batch_norm
-        if use_batch_norm:
-            self.batch_norm = nn.BatchNorm1d(embedding_dim)
-
-        # Optional dropout
-        self.dropout = nn.Dropout(dropout) if dropout > 0 else None
-
-        # Initialize
-        nn.init.xavier_uniform_(self.projection.weight)
-        nn.init.zeros_(self.projection.bias)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -53,7 +39,7 @@ class NumericalEmbedding(nn.Module):
             x: Tensor of shape [batch_size] containing continuous values
 
         Returns:
-            Tensor of shape [batch_size, embedding_dim]
+            Tensor of shape [batch_size, 1]
         """
         # Reshape to [batch_size, 1]
         x = x.unsqueeze(-1).float()
@@ -61,16 +47,5 @@ class NumericalEmbedding(nn.Module):
         # Apply log transform if enabled (log1p for numerical stability with 0s)
         if self.use_log_transform:
             x = torch.log1p(x.clamp(min=0))  # log(1 + x), clamp to handle negatives
-
-        # Project to embedding space
-        x = self.projection(x)
-
-        # Apply batch norm
-        if self.use_batch_norm:
-            x = self.batch_norm(x)
-
-        # Apply dropout
-        if self.dropout is not None:
-            x = self.dropout(x)
 
         return x
