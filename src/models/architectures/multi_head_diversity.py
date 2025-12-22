@@ -106,8 +106,7 @@ class MultiHeadDiversityModel(BaseCTRModel):
         if self.use_mlp:
             self.mlp = ResidualMLP(
                 input_dim=working_dim,
-                hidden_dims=backbone_config_dict["mlp_hidden_dims"][:-1],
-                output_dim=backbone_config_dict["mlp_hidden_dims"][-1],
+                hidden_dims=backbone_config_dict["mlp_hidden_dims"],
                 activation=backbone_config_dict["mlp_activation"],
                 dropout=backbone_config_dict["mlp_dropout"],
                 use_layer_norm=backbone_config_dict["use_layer_norm"],
@@ -123,15 +122,21 @@ class MultiHeadDiversityModel(BaseCTRModel):
         self.heads = nn.ModuleList()
 
         for head_cfg in heads_config:
+            head_hidden_dims = head_cfg["hidden_dims"]
+            head_output_dim = (
+                head_hidden_dims[-1] if head_hidden_dims else self.input_dim
+            )
             self.heads.append(
-                ResidualMLP(
-                    input_dim=self.input_dim,
-                    hidden_dims=head_cfg["hidden_dims"],
-                    output_dim=1,
-                    activation=head_cfg["activation"],
-                    dropout=head_cfg["dropout"],
-                    use_layer_norm=head_cfg["use_layer_norm"],
-                    use_skip_connections=head_cfg["use_skip_connections"],
+                nn.Sequential(
+                    ResidualMLP(
+                        input_dim=self.input_dim,
+                        hidden_dims=head_hidden_dims,
+                        activation=head_cfg["activation"],
+                        dropout=head_cfg["dropout"],
+                        use_layer_norm=head_cfg["use_layer_norm"],
+                        use_skip_connections=head_cfg["use_skip_connections"],
+                    ),
+                    nn.Linear(head_output_dim, 1),
                 )
             )
 
@@ -155,23 +160,6 @@ class MultiHeadDiversityModel(BaseCTRModel):
         self.loss_fn = DiversityBCELoss(
             diversity_weight=model_config["diversity_weight"]
         )
-
-    def shared_backbone_forward(self, dnn_input: torch.Tensor) -> torch.Tensor:
-        """Applies the shared backbone layers (SENET/Gating, DCN)."""
-
-        # Apply layer norm
-        if self.use_layer_norm:
-            dnn_input = self.embed_ln(dnn_input)
-
-        # Apply Feature Gating (alternative to SENET, works on concatenated tensor)
-        if self.use_feature_gating:
-            dnn_input = self.feature_gating(dnn_input)
-
-        # Apply DCN
-        if self.use_dcn:
-            dnn_input = self.dcn(dnn_input)
-
-        return dnn_input
 
     def forward(self, x: torch.Tensor) -> ModelOutput:
         # 1. Get Embeddings [Batch, Num_Features, Embed_Dim] (Implicitly represented as list of tensors)

@@ -123,14 +123,17 @@ class GatedDCNModel(BaseCTRModel):
         self.mlp = ResidualMLP(
             input_dim=working_dim,
             hidden_dims=mlp_hidden_dims,
-            output_dim=1,
             activation=mlp_activation,
             dropout=mlp_dropout,
             use_layer_norm=use_layer_norm,
             use_skip_connections=mlp_use_skip_connections,
         )
 
-        # 6. Internal loss function
+        # 6. Output layer (separate from MLP)
+        mlp_output_dim = mlp_hidden_dims[-1] if mlp_hidden_dims else working_dim
+        self.output_layer = nn.Linear(mlp_output_dim, 1)
+
+        # 7. Internal loss function
         self._loss_fn = nn.BCEWithLogitsLoss()
 
     def forward(self, x: torch.Tensor) -> ModelOutput:
@@ -162,7 +165,8 @@ class GatedDCNModel(BaseCTRModel):
             dnn_input = self.dcn(dnn_input)
 
         # Final Prediction (no sigmoid here - we'll use BCEWithLogitsLoss)
-        logits = self.mlp(dnn_input)
+        mlp_out = self.mlp(dnn_input)
+        logits = self.output_layer(mlp_out)
         return {"logits": logits, "aux_logits": None}
 
     def compute_loss(self, output: ModelOutput, y_true: torch.Tensor) -> torch.Tensor:

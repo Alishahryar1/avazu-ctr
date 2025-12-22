@@ -186,8 +186,8 @@ class TestModelStructure(unittest.TestCase):
         # Check it has layers (at least one hidden layer)
         self.assertGreater(len(self.model.mlp.layers), 0, "MLP should have layers")
 
-        # Check final output layer exists and outputs single value
-        output_layer = self.model.mlp.output_layer
+        # Check final output layer exists on the model (separate from MLP) and outputs single value
+        output_layer = self.model.output_layer
         self.assertIsInstance(output_layer, nn.Linear, "Output layer should be Linear")
         self.assertEqual(output_layer.out_features, 1, "Output layer should output 1")
 

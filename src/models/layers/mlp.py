@@ -15,8 +15,7 @@ class ResidualMLP(nn.Module):
 
     Args:
         input_dim: Input dimension to the MLP
-        hidden_dims: List of hidden layer dimensions
-        output_dim: Output dimension (typically 1 for CTR prediction)
+        hidden_dims: List of hidden layer dimensions (output will be last hidden dim)
         activation: Activation function name
         dropout: Dropout rate (0 = no dropout)
         use_layer_norm: Whether to apply layer normalization
@@ -27,7 +26,6 @@ class ResidualMLP(nn.Module):
         self,
         input_dim: int,
         hidden_dims: list[int],
-        output_dim: int = 1,
         activation: str = "relu",
         dropout: float = 0.0,
         use_layer_norm: bool = False,
@@ -66,11 +64,6 @@ class ResidualMLP(nn.Module):
             else:
                 self.projections.append(nn.Identity())
 
-        # Final output layer (no skip connection, no activation)
-        self.output_layer = nn.Linear(
-            hidden_dims[-1] if hidden_dims else input_dim, output_dim
-        )
-
         # Initialize weights
         self._init_weights()
 
@@ -101,5 +94,4 @@ class ResidualMLP(nn.Module):
             if self.use_skip_connections:
                 x = x + self.projections[i](identity)
 
-        # Final output layer
-        return self.output_layer(x)
+        return x
