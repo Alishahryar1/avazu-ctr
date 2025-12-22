@@ -10,3 +10,4 @@ AGENTS.md
 .pytest_cache
 .ruff_cache
 *.db
+.venv
