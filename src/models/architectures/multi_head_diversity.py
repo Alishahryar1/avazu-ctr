@@ -38,7 +38,7 @@ class MultiHeadDiversityModel(BaseCTRModel):
         from src.models.utils import get_embedding
 
         for feat in feature_names:
-            emb, feat_dim = get_embedding(feat, vocab_sizes[feat], config)
+            emb, feat_dim = get_embedding(feat, vocab_sizes.get(feat, 1), config)
             self.embeddings[feat] = emb
             self.feature_dims[feat] = feat_dim
             total_embed_dim += feat_dim
