@@ -874,10 +874,10 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     test_parquet = output_path / "test.parquet"
 
     print(f"  Sinking Train to {train_parquet}...")
-    lf_train_final.select(train_cols).sink_parquet(train_parquet)
+    lf_train_final.select(train_cols).sink_parquet(train_parquet, row_group_size=1024)
 
     print(f"  Sinking Test to {test_parquet}...")
-    lf_test_final.select(test_cols).sink_parquet(test_parquet)
+    lf_test_final.select(test_cols).sink_parquet(test_parquet, row_group_size=1024)
 
     # --- Metadata Recovery ---
     print("\n--- Metadata Recovery ---")
