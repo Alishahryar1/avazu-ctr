@@ -399,53 +399,70 @@ def collect_kfold_likelihood_stats(
     cols: list[str],
     k: int = 5,
     smoothing_weight: int = 20,
-) -> tuple[float, dict[str, pl.LazyFrame], pl.DataFrame]:
+    temp_dir: Path | None = None,
+) -> tuple[float, dict[str, pl.LazyFrame], Path]:
     """
     Compute K-Fold target encoding to prevent target leakage.
 
-    For each fold, likelihoods are computed from all OTHER folds, ensuring
-    that row i's label is never used to compute row i's likelihood.
+    Uses disk-based streaming to avoid OOM on large datasets:
+    1. Write training data with fold IDs to temp parquet
+    2. For each fold, compute stats from other folds lazily
+    3. Stream-join and sink each fold to temp parquet files
+    4. Return path to combined result
 
     Args:
         lf_train: Training data LazyFrame (must have 'click' column)
         cols: Columns to compute likelihood for
         k: Number of folds
         smoothing_weight: Regularization weight
+        temp_dir: Directory for temp files (defaults to CONFIG temp path)
 
     Returns:
         global_mean: Global click rate (for test set)
         global_likelihood_lfs: Dict of global likelihoods (for test set)
-        train_with_likelihoods: Training DataFrame with fold-specific likelihoods
+        train_with_likelihoods_path: Path to parquet with fold-specific likelihoods
     """
-    print(f"      Computing K-Fold target encoding (K={k})...")
+    print(f"      Computing K-Fold target encoding (K={k}, disk-based)...")
+
+    if temp_dir is None:
+        temp_dir = Path(CONFIG["processed_path"]) / "_temp"
+    temp_dir.mkdir(parents=True, exist_ok=True)
 
     # Step 1: Compute global mean and likelihoods (for test set)
     global_mean, global_likelihood_lfs = collect_likelihood_stats(
         lf_train, cols, smoothing_weight
     )
 
-    # Step 2: Materialize and assign fold IDs to training data
-    train_df = lf_train.collect()
-    n_rows = len(train_df)
-    fold_ids = [i % k for i in range(n_rows)]
-    train_df = train_df.with_columns(pl.Series("_fold_id", fold_ids).cast(pl.UInt8))
+    # Step 2: Add fold IDs lazily using row_index modulo k
+    # Write to temp parquet with fold IDs
+    train_with_folds_path = temp_dir / "_train_with_folds.parquet"
+    lf_train.with_row_index("_row_idx").with_columns(
+        (pl.col("_row_idx") % k).cast(pl.UInt8).alias("_fold_id")
+    ).drop("_row_idx").sink_parquet(train_with_folds_path)
+    print(f"        Written train with fold IDs to {train_with_folds_path}")
 
-    # Step 3: For each fold, compute likelihoods from OTHER folds
-    fold_results: list[pl.DataFrame] = []
+    # Step 3: For each fold, compute likelihoods from OTHER folds and sink
+    fold_paths: list[Path] = []
     for fold in range(k):
-        # Data to compute stats FROM (everything except current fold)
-        other_folds_df = train_df.filter(pl.col("_fold_id") != fold)
+        fold_path = temp_dir / f"_fold_{fold}_with_likelihoods.parquet"
+        fold_paths.append(fold_path)
+
+        # Scan train data for stats computation (exclude current fold)
+        lf_other_folds = pl.scan_parquet(train_with_folds_path).filter(
+            pl.col("_fold_id") != fold
+        )
 
         # Compute likelihoods from other folds
         _, fold_likelihood_lfs = collect_likelihood_stats(
-            other_folds_df.lazy(), cols, smoothing_weight
+            lf_other_folds, cols, smoothing_weight
         )
 
-        # Data to apply stats TO (current fold only)
-        current_fold_df = train_df.filter(pl.col("_fold_id") == fold)
+        # Scan current fold data
+        lf_current = pl.scan_parquet(train_with_folds_path).filter(
+            pl.col("_fold_id") == fold
+        )
 
-        # Apply fold-specific likelihoods via joins
-        lf_current = current_fold_df.lazy()
+        # Apply fold-specific likelihoods via lazy joins
         for col in cols:
             likelihood_lf = fold_likelihood_lfs[col]
             lf_current = lf_current.join(likelihood_lf, on=col, how="left")
@@ -453,17 +470,26 @@ def collect_kfold_likelihood_stats(
                 pl.col(f"{col}_likelihood").fill_null(global_mean)
             )
 
-        fold_results.append(lf_current.collect())
-        print(f"        Fold {fold + 1}/{k} done")
+        # Sink this fold's result
+        lf_current.drop("_fold_id").sink_parquet(fold_path)
+        print(f"        Fold {fold + 1}/{k} done -> {fold_path.name}")
 
-    # Step 4: Combine all folds back together
-    train_with_likelihoods = pl.concat(fold_results)
+        # Cleanup fold likelihood dfs
+        del fold_likelihood_lfs
+        gc.collect()
 
-    # Step 5: Drop the temporary fold_id column
-    train_with_likelihoods = train_with_likelihoods.drop("_fold_id")
+    # Step 4: Combine all fold parquets into one (streaming)
+    train_with_likelihoods_path = temp_dir / "_train_kfold_likelihoods.parquet"
+    pl.scan_parquet(fold_paths).sink_parquet(train_with_likelihoods_path)
+    print(f"        Combined folds -> {train_with_likelihoods_path}")
 
-    print(f"      K-Fold target encoding complete")
-    return global_mean, global_likelihood_lfs, train_with_likelihoods
+    # Cleanup temp fold files
+    for fold_path in fold_paths:
+        fold_path.unlink(missing_ok=True)
+    train_with_folds_path.unlink(missing_ok=True)
+
+    print("      K-Fold target encoding complete")
+    return global_mean, global_likelihood_lfs, train_with_likelihoods_path
 
 
 def bin_likelihood_features(cols: list[str]) -> list[pl.Expr]:
@@ -768,7 +794,7 @@ def process_data_polars() -> tuple[dict, list, int, int]:
         f"  [2c] Collecting K-Fold likelihood stats for {len(LIKELIHOOD_COLS)} columns..."
     )
     lf_train_only = lf_foundation_scan.filter(pl.col("_source") == "train")
-    global_mean, global_likelihood_lfs, train_with_likelihoods = (
+    global_mean, global_likelihood_lfs, train_with_likelihoods_path = (
         collect_kfold_likelihood_stats(
             lf_train_only,
             LIKELIHOOD_COLS,
@@ -812,11 +838,11 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     # --- STAGE 3: Streaming Sink ---
     print("\n--- STAGE 3: Streaming Sink ---")
 
-    # For TRAINING: Use pre-computed K-Fold likelihoods (already in train_with_likelihoods)
+    # For TRAINING: Use pre-computed K-Fold likelihoods (from parquet file)
     # Apply other transforms (counts, nuniques, binning, vocab) to training data
     print("  [3a] Processing training data with K-Fold likelihoods...")
     lf_train_final = apply_transforms_lazy(
-        train_with_likelihoods.lazy(),
+        pl.scan_parquet(train_with_likelihoods_path),
         hourly_lf,
         count_lfs,
         vocab_lfs,
