@@ -335,7 +335,7 @@ def make_objective(
         config["validation_split"] = 0.1
         config["epochs"] = 1
         config["use_tensorboard"] = False
-        config["compile_model"] = False
+        config["compile_model"] = True
 
         seed_everything(config["seed"])
 
