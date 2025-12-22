@@ -900,7 +900,7 @@ def process_data_polars() -> tuple[dict, list, int, int]:
     train_rows = pl.scan_parquet(train_parquet).select(pl.len()).collect().item()
     test_rows = pl.scan_parquet(test_parquet).select(pl.len()).collect().item()
 
-    print(f"\nProcessing complete!")
+    print("\nProcessing complete!")
     print(f"  Train: {train_rows:,} rows -> {train_parquet}")
     print(f"  Test:  {test_rows:,} rows -> {test_parquet}")
     print(f"  Categorical features: {len(final_cat_cols)}")
