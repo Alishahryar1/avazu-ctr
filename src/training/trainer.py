@@ -108,7 +108,7 @@ def train():
     print(f"Using {model.model_name()} model")
     model.to(CONFIG["device"])
     if CONFIG["compile_model"]:
-        model = torch.compile(model, mode="reduce-overhead")
+        model = torch.compile(model)
         print("Model compiled with torch.compile (mode='reduce-overhead')")
     else:
         print("Model compilation disabled (compile_model=False)")

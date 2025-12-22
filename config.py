@@ -38,7 +38,7 @@ CONFIG: ConfigType = {
     "auto_amp": True,  # Enable AMP for faster training on CUDA (uses float16/bfloat16)
     "amp_dtype": "float16",  # Options: 'float16' (more compatible), 'bfloat16' (better numerics)
     # === Model Compilation ===
-    "compile_model": False,  # Enable torch.compile for faster training (requires PyTorch 2.0+)
+    "compile_model": True,  # Enable torch.compile for faster training (requires PyTorch 2.0+)
     # === Paths ===
     "train_path": "data/raw/train.gz",
     "test_path": "data/raw/test.gz",
