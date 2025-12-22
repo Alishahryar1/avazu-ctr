@@ -165,9 +165,9 @@ CONFIG: ConfigType = {
     # === MULTIHEAD DIVERSITY MODEL ===
     "model": {
         "backbone_type": "gated_dcn",
-        "diversity_weight": 0.7041209265040855,
-        "feature_bagging_ratio": 0.986204113670155,
-        "aggregation_method": "gated",  # 'mean' | 'gated'
+        "diversity_weight": 0.0011772857387525658,
+        "feature_bagging_ratio": 0.8272129140018595,
+        "aggregation_method": "mean",  # 'mean' | 'gated'
         "gating_hidden_dim": None,  # Optional hidden dim for gated aggregation
         "backbone_config": {
             # Feature Gating
@@ -186,44 +186,44 @@ CONFIG: ConfigType = {
             "senet_use_layer_norm": True,
             # DCN
             "use_dcn": True,
-            "dcn_num_layers": 10,
-            "dcn_use_layernorm": False,
-            "dcn_low_rank": 126,
+            "dcn_num_layers": 13,
+            "dcn_use_layernorm": True,
+            "dcn_low_rank": 52,
             # MLP
-            "mlp_hidden_dims": [768, 256],
+            "mlp_hidden_dims": [1408],
             "mlp_activation": "relu",
             "mlp_use_skip_connections": True,
-            "mlp_dropout": 0.4722178874104439,
+            "mlp_dropout": 0.10081475973515186,
             "use_layer_norm": True,
         },
         "heads": [
             {
-                "hidden_dims": [64],
-                "activation": "mish",
-                "dropout": 0.3316507228882644,
+                "hidden_dims": [128],
+                "activation": "tanh",
+                "dropout": 0.454842342182756,
                 "use_layer_norm": False,
-                "use_skip_connections": True,
+                "use_skip_connections": False,
             },
             {
-                "hidden_dims": [64],
-                "activation": "mish",
-                "dropout": 0.029083562935977525,
-                "use_layer_norm": True,
-                "use_skip_connections": True,
-            },
-            {
-                "hidden_dims": [256],
-                "activation": "gelu",
-                "dropout": 0.04376620033297089,
+                "hidden_dims": [32],
+                "activation": "tanh",
+                "dropout": 0.3833321753339457,
                 "use_layer_norm": False,
-                "use_skip_connections": True,
+                "use_skip_connections": False,
             },
             {
-                "hidden_dims": [64],
-                "activation": "gelu",
-                "dropout": 0.4656734086503475,
+                "hidden_dims": [512],
+                "activation": "silu",
+                "dropout": 0.412514520068605,
                 "use_layer_norm": True,
-                "use_skip_connections": True,
+                "use_skip_connections": False,
+            },
+            {
+                "hidden_dims": [16],
+                "activation": "mish",
+                "dropout": 0.06797568302967999,
+                "use_layer_norm": True,
+                "use_skip_connections": False,
             },
         ],
     },
@@ -237,22 +237,22 @@ CONFIG: ConfigType = {
     # === Optimizer Configuration ===
     "dense_optimizer": {
         "type": "adamw",
-        "lr": 1.9753818363604915e-05,
-        "weight_decay": 0.00032756654945109085,
+        "lr": 0.00022340908638417592,
+        "weight_decay": 3.202872256883418e-05,
         "scheduler": {
-            "warmup_epoch_ratio": 0.7251126507918041,
+            "warmup_epoch_ratio": 0.40202705653846443,
             "min_lr": 1e-6,
             "decay_type": "none",
         },
     },
     "embedding_optimizer": {
         "type": "adagrad",
-        "lr": 0.10117494391909279,
+        "lr": 0.5891396205885899,
         "weight_decay": 0.0,
         "scheduler": {
-            "warmup_epoch_ratio": 0.02038005590717079,
-            "min_lr": 2.1047600351163527e-07,
-            "decay_type": "cosine",
+            "warmup_epoch_ratio": 0.34637463183766437,
+            "min_lr": 2.0428804342335504e-07,
+            "decay_type": "linear",
         },
     },
     # FTRL config example (uncomment to use):
