@@ -48,105 +48,33 @@ CONFIG: ConfigType = {
     # === Model Architecture - Embeddings ===
     "embedding_dim": 16,  # Default/fallback embedding dimension
     "feature_embeddings": {
-        # --- Numerical embeddings (features with underlying continuous values) ---
-        # Count features (use log_transform for better scaling)
-        "device_ip_count": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": True,
-        },
-        "device_id_count": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": True,
-        },
-        "C14_count": {"type": "numerical", "dim": 8 * 2, "use_log_transform": True},
-        "C17_count": {"type": "numerical", "dim": 8 * 2, "use_log_transform": True},
-        "C21_count": {"type": "numerical", "dim": 8 * 2, "use_log_transform": True},
-        "user_proxy_count": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": True,
-        },
-        # Cumcount features
-        "device_ip_cumcount": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": True,
-        },
-        "device_id_cumcount": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": True,
-        },
-        # Nunique features
-        "device_ip_nunique_apps": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": True,
-        },
-        "device_ip_nunique_sites": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": True,
-        },
-        "user_proxy_nunique_apps": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": True,
-        },
-        "user_proxy_nunique_sites": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": True,
-        },
-        # Likelihood features (probabilities, no log transform needed)
-        "app_id_likelihood": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": False,
-        },
-        "site_id_likelihood": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": False,
-        },
-        "site_domain_likelihood": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": False,
-        },
-        "app_domain_likelihood": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": False,
-        },
-        "C14_likelihood": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": False,
-        },
-        "C17_likelihood": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": False,
-        },
-        # Time/sequence features
-        "hours_since_last_click": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": True,
-        },
-        "user_proxy_prev_clicks": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": True,
-        },
-        "user_hourly_impressions": {
-            "type": "numerical",
-            "dim": 8 * 2,
-            "use_log_transform": True,
-        },
+        # --- Binned features (categorical versions of numerical features) ---
+        # Count features (binned: 0, 1, 2-5, 6-10, 11-50, 51-100, 101-500, 501-1000, 1000+)
+        "device_ip_count_bin": {"type": "standard", "dim": 8 * 2},
+        "device_id_count_bin": {"type": "standard", "dim": 8 * 2},
+        "C14_count_bin": {"type": "standard", "dim": 8 * 2},
+        "C17_count_bin": {"type": "standard", "dim": 8 * 2},
+        "C21_count_bin": {"type": "standard", "dim": 8 * 2},
+        "user_proxy_count_bin": {"type": "standard", "dim": 8 * 2},
+        # Cumcount features (binned: first, 2-3, 4-10, 11-50, 51-100, 100+)
+        "device_ip_cumcount_bin": {"type": "standard", "dim": 8 * 2},
+        "device_id_cumcount_bin": {"type": "standard", "dim": 8 * 2},
+        # Nunique features (binned: 1, 2, 3-5, 6-10, 11-50, 50+)
+        "device_ip_nunique_apps_bin": {"type": "standard", "dim": 8 * 2},
+        "device_ip_nunique_sites_bin": {"type": "standard", "dim": 8 * 2},
+        "user_proxy_nunique_apps_bin": {"type": "standard", "dim": 8 * 2},
+        "user_proxy_nunique_sites_bin": {"type": "standard", "dim": 8 * 2},
+        # Likelihood features (binned: very_low, low, medium, high, very_high)
+        "app_id_likelihood_bin": {"type": "standard", "dim": 8 * 2},
+        "site_id_likelihood_bin": {"type": "standard", "dim": 8 * 2},
+        "site_domain_likelihood_bin": {"type": "standard", "dim": 8 * 2},
+        "app_domain_likelihood_bin": {"type": "standard", "dim": 8 * 2},
+        "C14_likelihood_bin": {"type": "standard", "dim": 8 * 2},
+        "C17_likelihood_bin": {"type": "standard", "dim": 8 * 2},
+        # Time/sequence features (binned)
+        "hours_since_last_click_bin": {"type": "standard", "dim": 8 * 2},
+        "user_proxy_prev_clicks_bin": {"type": "standard", "dim": 8 * 2},
+        "user_hourly_impressions_bin": {"type": "standard", "dim": 8 * 2},
         # --- Standard embeddings (true categorical features) ---
         # Very low cardinality (dim 8)
         "month": {"type": "standard", "dim": 8 * 2},
