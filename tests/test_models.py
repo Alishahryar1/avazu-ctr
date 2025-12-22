@@ -444,6 +444,7 @@ class TestFeatureEmbeddings(unittest.TestCase):
     def test_hash_embeddings_per_feature(self):
         """Test that hash embeddings work correctly."""
         from src.models.layers.hash_embedding import HashEmbedding
+        from src.models.layers.standard_embedding import StandardEmbedding
 
         config = make_test_config(
             feature_embeddings={
@@ -463,8 +464,8 @@ class TestFeatureEmbeddings(unittest.TestCase):
 
         # Verify hash embedding uses HashEmbedding
         self.assertIsInstance(model.embeddings["hash_feat"], HashEmbedding)
-        # Verify standard embedding uses nn.Embedding
-        self.assertIsInstance(model.embeddings["std_feat"], nn.Embedding)
+        # Verify standard embedding uses StandardEmbedding wrapper
+        self.assertIsInstance(model.embeddings["std_feat"], StandardEmbedding)
 
     def test_mixed_embeddings_forward_pass(self):
         """Test forward pass with mixed embedding types."""

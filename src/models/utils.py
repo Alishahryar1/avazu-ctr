@@ -85,9 +85,10 @@ def get_embedding(
         )
         output_dim = embedding.output_dim
     else:
-        # Standard nn.Embedding
-        embedding = nn.Embedding(vocab_size, embed_dim)
-        nn.init.xavier_uniform_(embedding.weight)
-        output_dim = embed_dim
+        # Standard embedding with automatic type conversion
+        from src.models.layers.standard_embedding import StandardEmbedding
+
+        embedding = StandardEmbedding(vocab_size, embed_dim)
+        output_dim = embedding.output_dim
 
     return embedding, output_dim

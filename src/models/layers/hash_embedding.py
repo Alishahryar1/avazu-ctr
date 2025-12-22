@@ -194,11 +194,14 @@ class HashEmbedding(nn.Module):
         """Forward pass.
 
         Args:
-            input: LongTensor of shape [batch_size, ...] containing input indices.
+            input: Tensor of shape [batch_size, ...] containing input indices.
 
         Returns:
             Tensor of shape [batch_size, ..., output_dim] containing embeddings.
         """
+        # Convert to long for embedding lookup (supports float32 input from dataset)
+        input = input.long()
+
         # Map inputs to valid range for importance weights
         idx_importance = input % self.num_embeddings
 

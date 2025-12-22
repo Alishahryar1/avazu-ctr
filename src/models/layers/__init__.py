@@ -10,6 +10,7 @@ from .position_wise_ffn import PositionWiseFFN
 from .bilinear_interaction import BilinearInteractionLayer
 from .hash_embedding import HashEmbedding
 from .numerical_embedding import NumericalEmbedding
+from .standard_embedding import StandardEmbedding
 
 __all__ = [
     "DCNv2",
@@ -24,4 +25,5 @@ __all__ = [
     "BilinearInteractionLayer",
     "HashEmbedding",
     "NumericalEmbedding",
+    "StandardEmbedding",
 ]
