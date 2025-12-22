@@ -22,7 +22,7 @@ class NumericalEmbedding(nn.Module):
         self,
         embedding_dim: int,
         use_log_transform: bool = False,
-        use_batch_norm: bool = True,
+        use_batch_norm: bool = False,
         dropout: float = 0.0,
     ):
         super().__init__()
