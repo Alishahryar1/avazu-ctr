@@ -102,7 +102,8 @@ class MultiHeadDiversityModel(BaseCTRModel):
             )
 
         # 6. Residual MLP (Optional)
-        if backbone_config_dict.get("mlp_hidden_dims", []):
+        self.use_mlp = bool(backbone_config_dict.get("mlp_hidden_dims", []))
+        if self.use_mlp:
             self.mlp = ResidualMLP(
                 input_dim=working_dim,
                 hidden_dims=backbone_config_dict["mlp_hidden_dims"][:-1],
@@ -112,6 +113,7 @@ class MultiHeadDiversityModel(BaseCTRModel):
                 use_layer_norm=backbone_config_dict["use_layer_norm"],
                 use_skip_connections=backbone_config_dict["mlp_use_skip_connections"],
             )
+            working_dim = backbone_config_dict["mlp_hidden_dims"][-1]
 
         self.input_dim = working_dim  # Final dimension after backbone processing
 
@@ -211,6 +213,10 @@ class MultiHeadDiversityModel(BaseCTRModel):
             # Apply DCN
             if self.use_dcn:
                 dnn_input = self.dcn(dnn_input)
+
+            # Apply Backbone MLP
+            if self.use_mlp:
+                dnn_input = self.mlp(dnn_input)
 
             # --- Head Prediction ---
             head_logits.append(head(dnn_input))
