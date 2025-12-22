@@ -11,3 +11,4 @@ AGENTS.md
 .ruff_cache
 *.db
 .venv
+uv.lock
