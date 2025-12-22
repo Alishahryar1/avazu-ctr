@@ -104,13 +104,14 @@ def train():
 
     # 3. Model Initialization
     print("\nStep 3: Initializing Model...")
-    model = create_model(CONFIG, vocab_sizes, feature_names)
-    print(f"Using {model.model_name()} model")
-    model.to(CONFIG["device"])
+    uncompiled_model = create_model(CONFIG, vocab_sizes, feature_names)
+    print(f"Using {uncompiled_model.model_name()} model")
+    uncompiled_model.to(CONFIG["device"])
     if CONFIG["compile_model"]:
-        model = torch.compile(model)
+        model = torch.compile(uncompiled_model)
         print("Model compiled with torch.compile (mode='reduce-overhead')")
     else:
+        model = uncompiled_model
         print("Model compilation disabled (compile_model=False)")
     assert isinstance(model, torch.nn.Module)
 
@@ -428,7 +429,7 @@ def train():
                     # Save best model - checkpoint format depends on optimizer mode
                     checkpoint = {
                         "epoch": epoch,
-                        "model_state_dict": model.state_dict(),
+                        "model_state_dict": uncompiled_model.state_dict(),
                         "val_loss": val_loss,
                         "val_auc": val_auc,
                         "val_logloss": val_logloss,
@@ -466,7 +467,7 @@ def train():
                 # Save best model - checkpoint format depends on optimizer mode
                 checkpoint = {
                     "epoch": epoch,
-                    "model_state_dict": model.state_dict(),
+                    "model_state_dict": uncompiled_model.state_dict(),
                     "val_loss": val_loss,
                     "val_auc": val_auc,
                     "val_logloss": val_logloss,
@@ -520,7 +521,7 @@ def train():
 
     # Save final model - checkpoint format depends on optimizer mode
     checkpoint = {
-        "model_state_dict": model.state_dict(),
+        "model_state_dict": uncompiled_model.state_dict(),
         "val_loss": val_loss,
         "val_auc": val_auc,
         "val_logloss": val_logloss,

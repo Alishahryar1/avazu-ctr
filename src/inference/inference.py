@@ -48,8 +48,8 @@ def inference():
 
     # 3. Model Initialization and Loading
     print("Step 3: Loading Model...")
-    model = create_model(CONFIG, vocab_sizes, feature_names)
-    print(f"Using {model.model_name()} model")
+    uncompiled_model = create_model(CONFIG, vocab_sizes, feature_names)
+    print(f"Using {uncompiled_model.model_name()} model")
 
     # Try to load best model first, fall back to model.pth
     model_path = os.path.join(CONFIG["models_path"], "best_model.pth")
@@ -57,7 +57,14 @@ def inference():
         checkpoint = torch.load(
             model_path, map_location=CONFIG["device"], weights_only=False
         )
-        model.load_state_dict(checkpoint["model_state_dict"])
+        uncompiled_model.load_state_dict(checkpoint["model_state_dict"])
+        if CONFIG["compile_model"]:
+            model = torch.compile(uncompiled_model)
+            print("Model compiled with torch.compile (mode='reduce-overhead')")
+        else:
+            model = uncompiled_model
+            print("Model compilation disabled (compile_model=False)")
+        assert isinstance(model, torch.nn.Module)
         model.to(CONFIG["device"])
         print(f"Best model loaded successfully (epoch {checkpoint['epoch'] + 1})")
         if "val_auc" in checkpoint:
@@ -70,7 +77,14 @@ def inference():
             checkpoint = torch.load(
                 model_path, map_location=CONFIG["device"], weights_only=False
             )
-            model.load_state_dict(checkpoint["model_state_dict"])
+            uncompiled_model.load_state_dict(checkpoint["model_state_dict"])
+            if CONFIG["compile_model"]:
+                model = torch.compile(uncompiled_model)
+                print("Model compiled with torch.compile (mode='reduce-overhead')")
+            else:
+                model = uncompiled_model
+                print("Model compilation disabled (compile_model=False)")
+            assert isinstance(model, torch.nn.Module)
             model.to(CONFIG["device"])
             print(f"Model loaded from {model_path}")
         except FileNotFoundError:
