@@ -45,7 +45,7 @@ class ParquetFullDataset(Dataset):
 
         # Convert features to tensor using native Polars to_torch()
         print("Converting features to tensor...")
-        self.X = df.select(self.feature_cols).to_torch(dtype=pl.Int64)
+        self.X = df.select(self.feature_cols).to_torch(dtype=pl.Float32)
 
         # Convert labels if present using native Polars to_torch()
         if self.label_col and self.label_col in df.columns:
