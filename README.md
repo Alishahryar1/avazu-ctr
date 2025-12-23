@@ -11,9 +11,9 @@
 
 <br/>
 
-| 🎯 **Best Private LogLoss** | 📊 **Leaderboard Percentile** | ⚡ **Training Time** |
-|:---------------------------:|:-----------------------------:|:-------------------:|
-| **0.38484** | Top 5% | ~45 min (single epoch) |
+| 🎯 **Best Private LogLoss** | 📊 **Best Public LogLoss** | ⚡ **Training Time** |
+|:---------------------------:|:--------------------------:|:-------------------:|
+| **0.38484** | **0.38671** | ~45 min (single epoch) |
 
 </div>
 
@@ -29,7 +29,9 @@ Our primary goal is to investigate how **explicit cross-networks**, **attention-
 
 ## 🏆 Best Results & Optimal Configuration
 
-Our best submission achieved a **Private LogLoss of 0.38484** on the Avazu CTR Prediction competition. Below are the optimal hyperparameters discovered through extensive Optuna-based Bayesian optimization:
+Our best submission achieved a **Private LogLoss of 0.38484** and **Public LogLoss of 0.38671** on the Avazu CTR Prediction competition. Below are the optimal hyperparameters discovered through extensive Optuna-based Bayesian optimization.
+
+> 💡 **Tip**: You can modify these parameters in [`config.py`](config.py) to experiment with different configurations.
 
 <details>
 <summary><b>📋 Click to expand full optimal configuration</b></summary>
@@ -274,7 +276,7 @@ tensorboard --logdir=runs
 | Metric | Value |
 |--------|-------|
 | 🎯 **Private LogLoss** | **0.38484** |
-| 📉 **Public LogLoss** | ~0.385 |
+| 📉 **Public LogLoss** | **0.38671** |
 | ⏱️ **Training Time** | ~45 minutes |
 | 💾 **Model Parameters** | ~50M |
 | 🔧 **Epochs** | 1 (single pass) |
