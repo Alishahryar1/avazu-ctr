@@ -109,7 +109,7 @@ def train():
     uncompiled_model.to(CONFIG["device"])
     if CONFIG["compile_model"]:
         model = torch.compile(uncompiled_model)
-        print("Model compiled with torch.compile (mode='reduce-overhead')")
+        print("Model compiled with torch.compile")
     else:
         model = uncompiled_model
         print("Model compilation disabled (compile_model=False)")
