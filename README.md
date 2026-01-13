@@ -122,7 +122,7 @@ The laboratory implements and synthesizes ideas from several key research direct
 <tr>
 <td width="50%">
 
-### 1. Deep & Cross Network Evolution (DCNv2/v3)
+### 1. Deep & Cross Network Evolution (DCNv2)
 *   **Source**: *DCN V2: Improved Deep & Cross Network* (Wang et al., 2021)
 *   **Mechanism**: Uses learnable weight matrices to model explicit, bounded-degree polynomial feature interactions.
 *   **Hybrid Implementation**: Supports low-rank decomposition for parameter efficiency and gated units for non-linear interaction selection.
