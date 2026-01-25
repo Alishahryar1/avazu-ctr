@@ -13,6 +13,7 @@ from .adagrad_config import AdagradConfig
 from .ftrl_config import FTRLConfig
 from .optimizer_config import OptimizerConfig
 from .multi_head_diversity_config import MultiHeadDiversityConfig
+from .normalized_multi_head_diversity_config import NormalizedMultiHeadDiversityConfig
 from .residual_mlp_config import ResidualMLPConfig
 
 __all__ = [
@@ -31,5 +32,6 @@ __all__ = [
     "FTRLConfig",
     "OptimizerConfig",
     "MultiHeadDiversityConfig",
+    "NormalizedMultiHeadDiversityConfig",
     "ResidualMLPConfig",
 ]

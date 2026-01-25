@@ -9,6 +9,7 @@ from src.config_types import (
     ModelConfig,
     ConfigType,
     MultiHeadDiversityConfig,
+    NormalizedMultiHeadDiversityConfig,
 )
 
 
@@ -162,13 +163,25 @@ CONFIG: ConfigType = {
             "num_hashes": 2,
         },
     },
-    # === MULTIHEAD DIVERSITY MODEL ===
+    # === NORMALIZED MULTIHEAD DIVERSITY MODEL (nGPT-style) ===
+    # Reference: "nGPT: Normalized Transformer with Representation Learning
+    #            on the Hypersphere" (Loshchilov et al., ICLR 2025)
     "model": {
         "backbone_type": "gated_dcn",
-        "diversity_weight": 0.0011772857387525658,
-        "feature_bagging_ratio": 0.8272129140018595,
+        "diversity_weight": 0.001,
+        "feature_bagging_ratio": 0.8,
         "aggregation_method": "mean",  # 'mean' | 'gated'
         "gating_hidden_dim": None,  # Optional hidden dim for gated aggregation
+        # === nGPT-specific parameters ===
+        "use_normalized_embeddings": True,  # Normalize embeddings to unit norm (hypersphere)
+        "use_normalized_weights": True,  # Normalize weight matrices
+        "alpha_init": 0.05,  # Initial eigen learning rate (~1/num_layers)
+        "alpha_scale": None,  # Scale for effective LR in Adam (None = 1/sqrt(dim))
+        "su_init": 1.0,  # Initial scaling for MLP u gate
+        "sv_init": 1.0,  # Initial scaling for MLP v gate (multiplied by sqrt(dim))
+        "use_lerp_updates": True,  # Use LERP: h ← Norm(h + α(h_block - h))
+        "normalize_before_head": True,  # Normalize hidden state before each head
+        # === Backbone config ===
         "backbone_config": {
             # Feature Gating
             "use_feature_gating": True,
@@ -183,46 +196,40 @@ CONFIG: ConfigType = {
             "senet_num_groups": 2,
             "senet_reweight_mode": "element",
             "senet_use_fuse": True,
-            "senet_use_layer_norm": True,
+            "senet_use_layer_norm": False,  # Disabled for nGPT (uses unit norm instead)
             # DCN
             "use_dcn": True,
-            "dcn_num_layers": 13,
-            "dcn_use_layernorm": True,
-            "dcn_low_rank": 52,
+            "dcn_num_layers": 8,  # Reduced for nGPT (faster convergence expected)
+            "dcn_use_layernorm": False,  # Disabled for nGPT
+            "dcn_low_rank": 32,
             # MLP
-            "mlp_hidden_dims": [1408],
-            "mlp_activation": "relu",
-            "mlp_use_skip_connections": True,
-            "mlp_dropout": 0.10081475973515186,
-            "use_layer_norm": True,
+            "mlp_hidden_dims": [512],  # Single layer (nGPT uses 4x expansion internally)
+            "mlp_activation": "silu",  # SwiGLU uses SiLU internally
+            "mlp_use_skip_connections": False,  # LERP handles residuals
+            "mlp_dropout": 0.1,
+            "use_layer_norm": False,  # Disabled for nGPT
         },
+        # === Prediction heads ===
         "heads": [
             {
                 "hidden_dims": [128],
-                "activation": "tanh",
-                "dropout": 0.454842342182756,
+                "activation": "silu",
+                "dropout": 0.3,
+                "use_layer_norm": False,
+                "use_skip_connections": False,
+            },
+            {
+                "hidden_dims": [64],
+                "activation": "silu",
+                "dropout": 0.3,
                 "use_layer_norm": False,
                 "use_skip_connections": False,
             },
             {
                 "hidden_dims": [32],
-                "activation": "tanh",
-                "dropout": 0.3833321753339457,
-                "use_layer_norm": False,
-                "use_skip_connections": False,
-            },
-            {
-                "hidden_dims": [512],
                 "activation": "silu",
-                "dropout": 0.412514520068605,
-                "use_layer_norm": True,
-                "use_skip_connections": False,
-            },
-            {
-                "hidden_dims": [16],
-                "activation": "mish",
-                "dropout": 0.06797568302967999,
-                "use_layer_norm": True,
+                "dropout": 0.2,
+                "use_layer_norm": False,
                 "use_skip_connections": False,
             },
         ],
@@ -234,25 +241,26 @@ CONFIG: ConfigType = {
     "use_tensorboard": True,
     "tensorboard_logdir": "./runs",
     "tensorboard_log_interval": 50,  # Log every N batches (reduces I/O overhead)
-    # === Optimizer Configuration ===
+    # === Optimizer Configuration (nGPT-style: no weight decay, no warmup) ===
+    # Note: nGPT normalizes weights, making weight decay unnecessary
     "dense_optimizer": {
         "type": "adamw",
-        "lr": 0.00022340908638417592,
-        "weight_decay": 3.202872256883418e-05,
+        "lr": 0.001,  # nGPT can use higher LR due to normalized optimization
+        "weight_decay": 0.0,  # No weight decay for nGPT (normalization handles it)
         "scheduler": {
-            "warmup_epoch_ratio": 0.40202705653846443,
+            "warmup_epoch_ratio": 0.0,  # No warmup for nGPT
             "min_lr": 1e-6,
-            "decay_type": "none",
+            "decay_type": "cosine",  # Cosine annealing as in nGPT paper
         },
     },
     "embedding_optimizer": {
-        "type": "adagrad",
-        "lr": 0.5891396205885899,
-        "weight_decay": 0.0,
+        "type": "adamw",  # Use Adam for embeddings too (nGPT style)
+        "lr": 0.001,  # Same LR for all parameters in nGPT
+        "weight_decay": 0.0,  # No weight decay
         "scheduler": {
-            "warmup_epoch_ratio": 0.34637463183766437,
-            "min_lr": 2.0428804342335504e-07,
-            "decay_type": "linear",
+            "warmup_epoch_ratio": 0.0,  # No warmup
+            "min_lr": 1e-6,
+            "decay_type": "cosine",
         },
     },
     # FTRL config example (uncomment to use):

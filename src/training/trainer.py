@@ -360,6 +360,11 @@ def train():
                 if scheduler is not None:
                     scheduler.step()
 
+                # Normalize weights for nGPT-style models (if applicable)
+                # This maintains unit-norm weights on the hypersphere
+                if hasattr(uncompiled_model, "normalize_weights"):
+                    uncompiled_model.normalize_weights()
+
                 total_loss += loss.item()
 
                 # Log to TensorBoard (at configured interval to reduce I/O overhead)

@@ -6,11 +6,17 @@ from src.models.architectures.gated_dcn import GatedDCNModel
 from src.models.architectures.stec import STECModel
 from src.models.architectures.ensemble import EnsembleModel
 from src.models.architectures.multi_head_diversity import MultiHeadDiversityModel
+from src.models.architectures.normalized_multi_head_diversity import (
+    NormalizedMultiHeadDiversityModel,
+)
 from src.config_types import (
     GatedDCNConfig,
     STECConfig,
     EnsembleConfig,
     MultiHeadDiversityConfig,
+)
+from src.config_types.normalized_multi_head_diversity_config import (
+    NormalizedMultiHeadDiversityConfig,
 )
 
 
@@ -42,6 +48,9 @@ def create_model(
     # Check for STEC config (has 'stec_num_layers' key)
     elif "stec_num_layers" in model_config:
         return STECModel(vocab_sizes, feature_names, config)
+    # Check for NormalizedMultiHeadDiversity config (has 'use_normalized_embeddings' key)
+    elif "heads" in model_config and "use_normalized_embeddings" in model_config:
+        return NormalizedMultiHeadDiversityModel(vocab_sizes, feature_names, config)
     # Check for MultiHeadDiversity config (has 'heads' key)
     elif "heads" in model_config and "backbone_type" in model_config:
         return MultiHeadDiversityModel(vocab_sizes, feature_names, config)
@@ -59,5 +68,6 @@ __all__ = [
     "STECModel",
     "EnsembleModel",
     "MultiHeadDiversityModel",
+    "NormalizedMultiHeadDiversityModel",
     "create_model",
 ]
