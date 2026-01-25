@@ -9,4 +9,4 @@ __pycache__
 *.db
 .venv
 .agent
-PKG-INFO
+/avazu_ctr.egg-info
