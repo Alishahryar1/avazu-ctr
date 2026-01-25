@@ -8,5 +8,5 @@ __pycache__
 .ruff_cache
 *.db
 .venv
-uv.lock
 .agent
+PKG-INFO
