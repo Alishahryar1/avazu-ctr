@@ -14,7 +14,7 @@ Reference: "nGPT: Normalized Transformer with Representation Learning
 import math
 import torch
 import torch.nn as nn
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union, cast
 
 from src.models.architectures.base import BaseCTRModel, ModelOutput
 from src.config_types import ConfigType
@@ -30,6 +30,7 @@ from src.models.layers.normalized_layers import (
     WeightNormalizationCallback,
 )
 from src.models.layers.logit_gating import LogitGatingLayer
+from src.models.layers.mlp import ResidualMLP
 
 
 class NormalizedMultiHeadDiversityModel(BaseCTRModel):
@@ -46,6 +47,10 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
     with each processing block (DCN, MLP) contributing controlled
     displacements via the LERP update rule.
     """
+
+    # Type annotations for conditional attributes
+    mlp: Union[NormalizedResidualMLP, ResidualMLP]
+    mlp_proj: Optional[NormalizedLinear]
 
     def __init__(
         self,
@@ -76,6 +81,8 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
         sv_init = model_config.get("sv_init", 1.0)
 
         # --- Embeddings ---
+        # Use standard embedding infrastructure (handles hash, numerical, standard types)
+        # Apply L2 normalization to outputs if use_normalized_embeddings is True
         embedding_dim = config["embedding_dim"]
         self.embedding_dim = embedding_dim
 
@@ -83,23 +90,16 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
         self.feature_dims: Dict[str, int] = {}
         total_embed_dim = 0
 
+        # Import the standard embedding factory
+        from src.models.utils import get_embedding
+
         for feat in feature_names:
             vocab_size = vocab_sizes.get(feat, 1)
-
-            if self.use_normalized_embeddings:
-                emb = NormalizedEmbedding(
-                    num_embeddings=vocab_size,
-                    embedding_dim=embedding_dim,
-                )
-            else:
-                # Fall back to standard embedding
-                from src.models.utils import get_embedding
-
-                emb, _ = get_embedding(feat, vocab_size, config)
-
+            # Use get_embedding to handle all embedding types (standard, hash, numerical)
+            emb, feat_dim = get_embedding(feat, vocab_size, config)
             self.embeddings[feat] = emb
-            self.feature_dims[feat] = embedding_dim
-            total_embed_dim += embedding_dim
+            self.feature_dims[feat] = feat_dim
+            total_embed_dim += feat_dim
 
         self.total_embed_dim = total_embed_dim
         working_dim = total_embed_dim
@@ -173,9 +173,8 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
                 # hidden_dims as the intermediate dimensions
                 self.mlp = NormalizedResidualMLP(
                     input_dim=working_dim,
-                    hidden_dims=[
-                        4 * working_dim
-                    ] * len(  # Use 4x expansion like nGPT
+                    hidden_dims=[4 * working_dim]
+                    * len(  # Use 4x expansion like nGPT
                         mlp_hidden_dims
                     ),
                     alpha_init=alpha_init,
@@ -196,8 +195,6 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
                     self.mlp_proj = None
             else:
                 # Fall back to standard ResidualMLP
-                from src.models.layers.mlp import ResidualMLP
-
                 self.mlp = ResidualMLP(
                     input_dim=working_dim,
                     hidden_dims=mlp_hidden_dims,
@@ -241,13 +238,15 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
                     scale_init=1.0,
                     scale_factor=1.0 / math.sqrt(self.backbone_output_dim),
                 )
-                self.heads.append(nn.ModuleDict({"mlp": head_mlp, "output": head_output}))
+                self.heads.append(
+                    nn.ModuleDict({"mlp": head_mlp, "output": head_output})
+                )
             else:
                 # Standard head
-                from src.models.layers.mlp import ResidualMLP
-
                 head_output_dim = (
-                    head_hidden_dims[-1] if head_hidden_dims else self.backbone_output_dim
+                    head_hidden_dims[-1]
+                    if head_hidden_dims
+                    else self.backbone_output_dim
                 )
                 self.heads.append(
                     nn.ModuleDict(
@@ -272,9 +271,7 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
         # --- Logit scaling (temperature control for normalized outputs) ---
         # In nGPT, logits are bounded in [-1, 1], so we need scaling
         self.logit_scale = nn.Parameter(
-            torch.full(
-                (self.num_heads,), 1.0 / math.sqrt(self.backbone_output_dim)
-            )
+            torch.full((self.num_heads,), 1.0 / math.sqrt(self.backbone_output_dim))
         )
         self._logit_scale_init = 1.0  # Will be learned to ~60-100 typically
 
@@ -324,7 +321,10 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
         # 1. Get embeddings
         embeds_list = []
         for i, feat in enumerate(self.feature_names):
-            emb = self.embeddings[feat](x[:, i])  # [B, embed_dim]
+            emb = self.embeddings[feat](x[:, i])  # [B, feat_dim]
+            # Normalize each embedding to unit norm if enabled
+            if self.use_normalized_embeddings:
+                emb = l2_normalize(emb, dim=-1)
             embeds_list.append(emb)
 
         # 2. Process each head
@@ -383,14 +383,18 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
             if self.normalize_before_head:
                 h = l2_normalize(h, dim=-1)
 
-            # Head MLP
-            if isinstance(head["mlp"], NormalizedResidualMLP):
-                h_head = head["mlp"](h, use_lerp=self.use_lerp_updates)
+            # Head MLP (cast to ModuleDict for type checker)
+            head_dict = cast(nn.ModuleDict, head)
+            head_mlp = head_dict["mlp"]
+            head_output = head_dict["output"]
+
+            if isinstance(head_mlp, NormalizedResidualMLP):
+                h_head = head_mlp(h, use_lerp=self.use_lerp_updates)
             else:
-                h_head = head["mlp"](h)
+                h_head = head_mlp(h)
 
             # Output logits with scaling
-            logits = head["output"](h_head)
+            logits = head_output(h_head)
 
             # Apply logit scaling (for proper temperature)
             actual_scale = (

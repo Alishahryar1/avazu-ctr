@@ -203,7 +203,9 @@ CONFIG: ConfigType = {
             "dcn_use_layernorm": False,  # Disabled for nGPT
             "dcn_low_rank": 32,
             # MLP
-            "mlp_hidden_dims": [512],  # Single layer (nGPT uses 4x expansion internally)
+            "mlp_hidden_dims": [
+                512
+            ],  # Single layer (nGPT uses 4x expansion internally)
             "mlp_activation": "silu",  # SwiGLU uses SiLU internally
             "mlp_use_skip_connections": False,  # LERP handles residuals
             "mlp_dropout": 0.1,

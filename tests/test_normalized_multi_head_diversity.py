@@ -206,12 +206,8 @@ class TestNormalizedMLP:
         out_no_glu, _ = mlp_no_glu(h, use_lerp=True)
 
         # Both should produce valid normalized outputs
-        assert torch.norm(out_glu, p=2, dim=-1).allclose(
-            torch.ones(16), atol=1e-5
-        )
-        assert torch.norm(out_no_glu, p=2, dim=-1).allclose(
-            torch.ones(16), atol=1e-5
-        )
+        assert torch.norm(out_glu, p=2, dim=-1).allclose(torch.ones(16), atol=1e-5)
+        assert torch.norm(out_no_glu, p=2, dim=-1).allclose(torch.ones(16), atol=1e-5)
 
 
 class TestNormalizedResidualMLP:
@@ -382,10 +378,7 @@ class TestNormalizedMultiHeadDiversityModel:
         # Create batch
         batch_size = 32
         x = torch.stack(
-            [
-                torch.randint(0, vocab_sizes[f], (batch_size,))
-                for f in feature_names
-            ],
+            [torch.randint(0, vocab_sizes[f], (batch_size,)) for f in feature_names],
             dim=1,
         )
 
@@ -406,10 +399,7 @@ class TestNormalizedMultiHeadDiversityModel:
 
         batch_size = 32
         x = torch.stack(
-            [
-                torch.randint(0, vocab_sizes[f], (batch_size,))
-                for f in feature_names
-            ],
+            [torch.randint(0, vocab_sizes[f], (batch_size,)) for f in feature_names],
             dim=1,
         )
         y = torch.rand(batch_size, 1)
@@ -431,10 +421,7 @@ class TestNormalizedMultiHeadDiversityModel:
 
         batch_size = 32
         x = torch.stack(
-            [
-                torch.randint(0, vocab_sizes[f], (batch_size,))
-                for f in feature_names
-            ],
+            [torch.randint(0, vocab_sizes[f], (batch_size,)) for f in feature_names],
             dim=1,
         )
 
@@ -455,10 +442,7 @@ class TestNormalizedMultiHeadDiversityModel:
         # Simulate training step
         batch_size = 32
         x = torch.stack(
-            [
-                torch.randint(0, vocab_sizes[f], (batch_size,))
-                for f in feature_names
-            ],
+            [torch.randint(0, vocab_sizes[f], (batch_size,)) for f in feature_names],
             dim=1,
         )
         y = torch.rand(batch_size, 1)
@@ -514,17 +498,16 @@ class TestNormalizedMultiHeadDiversityModel:
 
         batch_size = 32
         x = torch.stack(
-            [
-                torch.randint(0, vocab_sizes[f], (batch_size,))
-                for f in feature_names
-            ],
+            [torch.randint(0, vocab_sizes[f], (batch_size,)) for f in feature_names],
             dim=1,
         )
 
         output = model(x)
         assert output["logits"].shape == (batch_size, 1)
 
-    def test_without_normalized_weights(self, sample_config, vocab_sizes, feature_names):
+    def test_without_normalized_weights(
+        self, sample_config, vocab_sizes, feature_names
+    ):
         """Test model with normalized weights disabled."""
         sample_config["model"]["use_normalized_weights"] = False
 
@@ -536,10 +519,7 @@ class TestNormalizedMultiHeadDiversityModel:
 
         batch_size = 32
         x = torch.stack(
-            [
-                torch.randint(0, vocab_sizes[f], (batch_size,))
-                for f in feature_names
-            ],
+            [torch.randint(0, vocab_sizes[f], (batch_size,)) for f in feature_names],
             dim=1,
         )
 
@@ -558,10 +538,7 @@ class TestNormalizedMultiHeadDiversityModel:
 
         batch_size = 32
         x = torch.stack(
-            [
-                torch.randint(0, vocab_sizes[f], (batch_size,))
-                for f in feature_names
-            ],
+            [torch.randint(0, vocab_sizes[f], (batch_size,)) for f in feature_names],
             dim=1,
         )
 
@@ -578,10 +555,7 @@ class TestNormalizedMultiHeadDiversityModel:
 
         batch_size = 32
         x = torch.stack(
-            [
-                torch.randint(0, vocab_sizes[f], (batch_size,))
-                for f in feature_names
-            ],
+            [torch.randint(0, vocab_sizes[f], (batch_size,)) for f in feature_names],
             dim=1,
         )
         y = torch.rand(batch_size, 1)

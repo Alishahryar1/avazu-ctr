@@ -346,7 +346,8 @@ class NormalizedResidualMLP(nn.Module):
     def normalize_weights_(self):
         """In-place normalize all weights. Call after optimizer step."""
         for layer in self.layers:
-            layer.normalize_weights_()
+            if hasattr(layer, "normalize_weights_"):
+                layer.normalize_weights_()  # pyrefly: ignore
 
 
 class WeightNormalizationCallback:
@@ -369,4 +370,4 @@ class WeightNormalizationCallback:
         """Normalize all normalized layers in the model."""
         for module in self.model.modules():
             if hasattr(module, "normalize_weights_"):
-                module.normalize_weights_()
+                module.normalize_weights_()  # pyrefly: ignore
