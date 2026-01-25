@@ -50,7 +50,7 @@ class NormalizedMultiHeadDiversityConfig(TypedDict):
     use_normalized_embeddings: bool  # Normalize embedding vectors to unit norm
     use_normalized_weights: bool  # Normalize weight matrices along embed dim
     alpha_init: float  # Initial eigen learning rate (typically ~1/num_layers or 0.05)
-    alpha_scale: float  # Scale for effective learning rate in Adam
+    alpha_scale: float | None  # Scale for effective learning rate in Adam (None = 1/sqrt(d))
     su_init: float  # Initial scaling for MLP u (default 1.0)
     sv_init: float  # Initial scaling for MLP v (default 1.0)
     use_lerp_updates: bool  # Use h ← Norm(h + α(h_block - h)) updates

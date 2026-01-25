@@ -315,101 +315,132 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
         h_updated = h_norm + alpha * (h_block_norm - h_norm)
         return l2_normalize(h_updated, dim=-1)
 
+    def _process_backbone(
+        self, h: torch.Tensor, embeds_list: List[torch.Tensor]
+    ) -> torch.Tensor:
+        """Process input through backbone layers (SENET, Gating, DCN, MLP)."""
+        # SENET
+        if self.use_senet:
+            h_senet = self.senet(embeds_list)
+            alpha = self._get_alpha(self.alpha_senet)
+            h = self._lerp_update(h, h_senet, alpha)
+
+        # Feature Gating
+        if self.use_feature_gating:
+            h_gating = self.feature_gating(h)
+            alpha = self._get_alpha(self.alpha_gating)
+            h = self._lerp_update(h, h_gating, alpha)
+
+        # DCN
+        if self.use_dcn:
+            h_dcn = self.dcn(h)
+            alpha = self._get_alpha(self.alpha_dcn)
+            h = self._lerp_update(h, h_dcn, alpha)
+
+        # MLP (already has internal LERP updates if normalized)
+        if self.use_mlp:
+            if self.use_normalized_weights:
+                h = self.mlp(h, use_lerp=self.use_lerp_updates)
+                if self.mlp_proj is not None:
+                    h = self.mlp_proj(h)
+                    h = l2_normalize(h, dim=-1)
+            else:
+                h = self.mlp(h)
+                if self.use_lerp_updates:
+                    h = l2_normalize(h, dim=-1)
+
+        return h
+
+    def _process_head(
+        self, h: torch.Tensor, head_idx: int, head: nn.ModuleDict
+    ) -> torch.Tensor:
+        """Process through a single prediction head."""
+        head_mlp = head["mlp"]
+        head_output = head["output"]
+
+        if isinstance(head_mlp, NormalizedResidualMLP):
+            h_head = head_mlp(h, use_lerp=self.use_lerp_updates)
+        else:
+            h_head = head_mlp(h)
+
+        return head_output(h_head)
+
     def forward(self, x: torch.Tensor) -> ModelOutput:
         batch_size = x.size(0)
 
-        # 1. Get embeddings
-        embeds_list = []
-        for i, feat in enumerate(self.feature_names):
-            emb = self.embeddings[feat](x[:, i])  # [B, feat_dim]
-            # Normalize each embedding to unit norm if enabled
-            if self.use_normalized_embeddings:
-                emb = l2_normalize(emb, dim=-1)
-            embeds_list.append(emb)
+        # 1. Get embeddings - vectorized concatenation
+        embeds_list = [
+            l2_normalize(self.embeddings[feat](x[:, i]), dim=-1)
+            if self.use_normalized_embeddings
+            else self.embeddings[feat](x[:, i])
+            for i, feat in enumerate(self.feature_names)
+        ]
 
-        # 2. Process each head
-        head_logits = []
+        # 2. Check if we can share backbone computation (no feature bagging)
+        no_bagging = self.feature_bagging_ratio >= 1.0
 
-        for head_idx, head in enumerate(self.heads):
-            # Apply feature bagging mask
-            if self.feature_bagging_ratio < 1.0:
-                mask = getattr(self, f"head_mask_{head_idx}")
-                current_embeds = [emb * mask[i] for i, emb in enumerate(embeds_list)]
-            else:
-                current_embeds = embeds_list
+        if no_bagging:
+            # OPTIMIZED PATH: Compute backbone once, reuse for all heads
+            # Concatenate and normalize once
+            h_base = torch.cat(embeds_list, dim=1)  # [B, total_embed_dim]
+            h_base = h_base * self.embed_scale
+            h_base = l2_normalize(h_base, dim=-1)
 
-            # Concatenate embeddings
-            h = torch.cat(current_embeds, dim=1)  # [B, total_embed_dim]
+            # Process through backbone once
+            h_backbone = self._process_backbone(h_base, embeds_list)
 
-            # Apply embedding scale
-            h = h * self.embed_scale
-
-            # Normalize to hypersphere
-            h = l2_normalize(h, dim=-1)
-
-            # --- Backbone processing with LERP updates ---
-
-            # SENET
-            if self.use_senet:
-                h_senet = self.senet(current_embeds)
-                alpha = self._get_alpha(self.alpha_senet)
-                h = self._lerp_update(h, h_senet, alpha)
-
-            # Feature Gating
-            if self.use_feature_gating:
-                h_gating = self.feature_gating(h)
-                alpha = self._get_alpha(self.alpha_gating)
-                h = self._lerp_update(h, h_gating, alpha)
-
-            # DCN
-            if self.use_dcn:
-                h_dcn = self.dcn(h)
-                alpha = self._get_alpha(self.alpha_dcn)
-                h = self._lerp_update(h, h_dcn, alpha)
-
-            # MLP (already has internal LERP updates if normalized)
-            if self.use_mlp:
-                if self.use_normalized_weights:
-                    h = self.mlp(h, use_lerp=self.use_lerp_updates)
-                    if self.mlp_proj is not None:
-                        h = self.mlp_proj(h)
-                        h = l2_normalize(h, dim=-1)
-                else:
-                    h = self.mlp(h)
-                    if self.use_lerp_updates:
-                        h = l2_normalize(h, dim=-1)
-
-            # --- Head prediction ---
+            # Normalize before heads if needed
             if self.normalize_before_head:
+                h_backbone = l2_normalize(h_backbone, dim=-1)
+
+            # Process all heads (can be parallelized via torch.compile)
+            head_logits_list = []
+            for head_idx, head in enumerate(self.heads):
+                head_dict = cast(nn.ModuleDict, head)
+                logits = self._process_head(h_backbone, head_idx, head_dict)
+                head_logits_list.append(logits)
+
+            # Stack: [K, B, 1]
+            stacked_logits = torch.stack(head_logits_list, dim=0)
+
+        else:
+            # FEATURE BAGGING PATH: Each head gets different masked input
+            head_logits_list = []
+
+            for head_idx, head in enumerate(self.heads):
+                # Apply feature bagging mask
+                mask = getattr(self, f"head_mask_{head_idx}")
+                # Vectorized masking: stack embeddings, apply mask, then index
+                current_embeds = [emb * mask[i] for i, emb in enumerate(embeds_list)]
+
+                # Concatenate masked embeddings
+                h = torch.cat(current_embeds, dim=1)  # [B, total_embed_dim]
+                h = h * self.embed_scale
                 h = l2_normalize(h, dim=-1)
 
-            # Head MLP (cast to ModuleDict for type checker)
-            head_dict = cast(nn.ModuleDict, head)
-            head_mlp = head_dict["mlp"]
-            head_output = head_dict["output"]
+                # Process through backbone
+                h = self._process_backbone(h, current_embeds)
 
-            if isinstance(head_mlp, NormalizedResidualMLP):
-                h_head = head_mlp(h, use_lerp=self.use_lerp_updates)
-            else:
-                h_head = head_mlp(h)
+                # Normalize before head
+                if self.normalize_before_head:
+                    h = l2_normalize(h, dim=-1)
 
-            # Output logits with scaling
-            logits = head_output(h_head)
+                # Head prediction
+                head_dict = cast(nn.ModuleDict, head)
+                logits = self._process_head(h, head_idx, head_dict)
+                head_logits_list.append(logits)
 
-            # Apply logit scaling (for proper temperature)
-            actual_scale = (
-                torch.abs(self.logit_scale[head_idx])
-                * self._logit_scale_init
-                / (1.0 / math.sqrt(self.backbone_output_dim))
-            )
-            logits = logits * actual_scale
+            # Stack: [K, B, 1]
+            stacked_logits = torch.stack(head_logits_list, dim=0)
 
-            head_logits.append(logits)
+        # 3. Vectorized logit scaling - compute all scales at once
+        # actual_scale = |logit_scale| * init / (1/sqrt(dim)) = |logit_scale| * init * sqrt(dim)
+        scale_factor = self._logit_scale_init * math.sqrt(self.backbone_output_dim)
+        all_scales = torch.abs(self.logit_scale) * scale_factor  # [K]
+        # Broadcast: [K] -> [K, 1, 1] for element-wise mult with [K, B, 1]
+        stacked_logits = stacked_logits * all_scales.view(-1, 1, 1)
 
-        # Stack: [K, B, 1]
-        stacked_logits = torch.stack(head_logits, dim=0)
-
-        # 3. Aggregate
+        # 4. Aggregate
         if self.aggregation_method == "gated":
             logits_for_gate = stacked_logits.squeeze(-1).permute(1, 0)  # [B, K]
             aggregated_logits = self.logit_gate(logits_for_gate)  # [B, 1]
