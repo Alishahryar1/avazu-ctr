@@ -62,14 +62,14 @@ class NormalizedEmbedding(nn.Module):
                 self.weight.data[self.padding_idx].zero_()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Normalize weights before lookup (ensures unit norm even after optimizer step)
-        normalized_weight = l2_normalize(self.weight, dim=-1)
-        if self.padding_idx is not None:
-            # Ensure padding stays zero
-            normalized_weight = normalized_weight.clone()
-            normalized_weight[self.padding_idx] = 0
+        # Ensure indices are long type (required for embedding lookup)
+        if x.dtype != torch.long:
+            x = x.long()
 
-        return F.embedding(x, normalized_weight, padding_idx=self.padding_idx)
+        # For torch.compile compatibility, we normalize weights in-place before forward
+        # and use the stored weights directly (avoids dynamic computation in embedding)
+        # The normalize_weights_() should be called after optimizer step
+        return F.embedding(x, self.weight, padding_idx=self.padding_idx)
 
     def normalize_weights_(self):
         """In-place normalize weights. Call after optimizer step."""
@@ -130,11 +130,9 @@ class NormalizedLinear(nn.Module):
             self.weight.data = l2_normalize(self.weight.data, dim=-1)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        # Normalize weights along input dimension
-        normalized_weight = l2_normalize(self.weight, dim=-1)
-
-        # Linear transform (outputs are cosine similarities in [-1, 1])
-        out = F.linear(x, normalized_weight, self.bias)
+        # For torch.compile compatibility, use stored weights directly
+        # (normalize_weights_() should be called after optimizer step)
+        out = F.linear(x, self.weight, self.bias)
 
         # Apply scaling (restore actual magnitude using init/scale pattern)
         actual_scale = self.scale * (self._scale_init / self._scale_factor)
