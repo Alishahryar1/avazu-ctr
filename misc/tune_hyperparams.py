@@ -253,7 +253,9 @@ def train_single_epoch(
         scaler = None
 
     # For method calls (compute_loss, post_step), use uncompiled model when available
-    base_model: torch.nn.Module = uncompiled_model if uncompiled_model is not None else model
+    base_model: torch.nn.Module = (
+        uncompiled_model if uncompiled_model is not None else model
+    )
 
     model.train()
     total_loss = 0.0

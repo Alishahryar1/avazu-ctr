@@ -46,7 +46,9 @@ class GatedDCNModel(BaseCTRModel):
         self.num_fields = len(feature_names)
 
         # 2. Shared backbone (LayerNorm -> SENet/FeatureGating -> DCN -> MLP)
-        backbone_config_dict: dict[str, object] = {k: v for k, v in model_config.items()}
+        backbone_config_dict: dict[str, object] = {
+            k: v for k, v in model_config.items()
+        }
         self.backbone = build_backbone(
             backbone_config=backbone_config_dict,
             feature_names=feature_names,
