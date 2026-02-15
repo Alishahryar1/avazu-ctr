@@ -13,6 +13,7 @@ Run from project root: python -m misc.eda_preprocessed
 
 import pickle
 from pathlib import Path
+from typing import cast
 import math
 
 import polars as pl
@@ -149,7 +150,8 @@ def compute_vocab_sizes_from_parquet(processed_path: Path) -> dict[str, int]:
     vocab_sizes = {}
 
     for col in feature_cols:
-        max_val = lf.select(pl.col(col).max()).collect().item()
+        df = cast(pl.DataFrame, lf.select(pl.col(col).max()).collect())
+        max_val = df.row(0)[0]
         vocab_sizes[col] = int(max_val) + 1  # +1 because 0-indexed
 
     return vocab_sizes

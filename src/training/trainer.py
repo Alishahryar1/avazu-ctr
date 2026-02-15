@@ -2,6 +2,7 @@
 
 import os
 import time
+from typing import Any, cast
 
 import pyperclip
 import torch
@@ -129,7 +130,9 @@ def train():
     embed_opt_type = str(embed_opt_cfg.get("type", "adagrad"))
 
     optimizer, embedding_optimizer, other_optimizer, use_single_ftrl = setup_optimizers(
-        model, dense_opt_cfg, embed_opt_cfg
+        model,
+        cast(dict[str, Any], dense_opt_cfg),
+        cast(dict[str, Any], embed_opt_cfg),
     )
 
     if use_single_ftrl and optimizer is not None:
@@ -157,7 +160,7 @@ def train():
     steps_per_epoch = len(train_loader)
     scheduler = setup_scheduler(
         other_optimizer,
-        dense_opt_cfg,
+        cast(dict[str, Any], dense_opt_cfg),
         steps_per_epoch,
         CONFIG["epochs"],
         use_single_ftrl,
@@ -245,7 +248,7 @@ def train():
                 ):
                     # Unified interface: all models handle their own loss internally
                     output = model(X_batch)
-                    loss = model.compute_loss(output, y_batch)  # type: ignore[operator]
+                    loss = uncompiled_model.compute_loss(output, y_batch)
 
                 # Backward pass with gradient scaling for AMP
                 if use_amp and scaler is not None:

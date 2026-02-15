@@ -1,20 +1,17 @@
 import os
+from typing import cast
+
 import numpy as np
 import torch
 from src.config_types import (
-    FeatureEmbeddingConfig,
-    GatedDCNConfig,
-    STECConfig,
-    EnsembleConfig,
-    ModelConfig,
     ConfigType,
-    MultiHeadDiversityConfig,
-    NormalizedMultiHeadDiversityConfig,
 )
 
 
 # --- CONFIGURATION ---
-CONFIG: ConfigType = {
+CONFIG: ConfigType = cast(
+    ConfigType,
+    {
     # === General ===
     "seed": 42,
     "device": "cuda" if torch.cuda.is_available() else "cpu",
@@ -281,7 +278,8 @@ CONFIG: ConfigType = {
     #     "l1": 0.0,     # L1 regularization (enables sparsity)
     #     "l2": 0.0,     # L2 regularization
     # }
-}
+},
+)
 
 
 def seed_everything(seed=42):

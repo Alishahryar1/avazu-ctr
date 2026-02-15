@@ -45,7 +45,7 @@ class FTRLProximal(Optimizer):
         super().__init__(params, defaults)
 
     @torch.no_grad()
-    def step(self, closure: Callable[[], float] | None = None) -> float | None:  # type: ignore[override]
+    def step(self, closure: Callable[[], float] | None = None) -> float | None:
         """
         Performs a single optimization step.
 

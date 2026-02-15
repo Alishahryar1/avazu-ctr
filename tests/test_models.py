@@ -9,7 +9,8 @@ import unittest
 from typing import Any, cast
 import torch
 import torch.nn as nn
-from config import CONFIG, ConfigType
+from config import CONFIG
+from src.config_types import ConfigType
 from src.models.architectures.gated_dcn import GatedDCNModel
 from src.models.layers.cross_network import DCNv2
 
@@ -140,7 +141,7 @@ def make_test_config(**overrides) -> ConfigType:
         if key not in model_keys and key not in ("embedding_dim", "feature_embeddings"):
             test_config[key] = value
 
-    return test_config  # type: ignore[return-value]
+    return cast(ConfigType, test_config)
 
 
 class TestModelStructure(unittest.TestCase):

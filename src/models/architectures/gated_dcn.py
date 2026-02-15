@@ -46,8 +46,9 @@ class GatedDCNModel(BaseCTRModel):
         self.num_fields = len(feature_names)
 
         # 2. Shared backbone (LayerNorm -> SENet/FeatureGating -> DCN -> MLP)
+        backbone_config_dict: dict[str, object] = {k: v for k, v in model_config.items()}
         self.backbone = build_backbone(
-            backbone_config=dict(model_config),
+            backbone_config=backbone_config_dict,
             feature_names=feature_names,
             feature_dims=self.feature_dims,
             total_embed_dim=total_embed_dim,
@@ -55,7 +56,7 @@ class GatedDCNModel(BaseCTRModel):
         )
 
         # 3. Output layer
-        self.output_layer = nn.Linear(self.backbone.output_dim, 1)
+        self.output_layer = nn.Linear(cast(int, self.backbone.output_dim), 1)
         self._loss_fn = nn.BCEWithLogitsLoss()
 
     def forward(self, x: torch.Tensor) -> ModelOutput:

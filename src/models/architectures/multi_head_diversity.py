@@ -1,3 +1,5 @@
+from typing import cast
+
 import torch
 import torch.nn as nn
 
@@ -22,7 +24,9 @@ class MultiHeadDiversityModel(BaseCTRModel):
     ):
         super().__init__()
 
-        model_config: MultiHeadDiversityConfig = config["model"]  # type: ignore
+        model_config: MultiHeadDiversityConfig = cast(
+            MultiHeadDiversityConfig, config["model"]
+        )
         backbone_config_dict = model_config["backbone_config"]
 
         self.feature_names = feature_names
@@ -63,14 +67,14 @@ class MultiHeadDiversityModel(BaseCTRModel):
             self.heads.append(
                 nn.Sequential(
                     ResidualMLP(
-                        input_dim=self.input_dim,
+                        input_dim=cast(int, self.input_dim),
                         hidden_dims=head_hidden_dims,
                         activation=head_cfg["activation"],
                         dropout=head_cfg["dropout"],
                         use_layer_norm=head_cfg["use_layer_norm"],
                         use_skip_connections=head_cfg["use_skip_connections"],
                     ),
-                    nn.Linear(head_output_dim, 1),
+                    nn.Linear(cast(int, head_output_dim), 1),
                 )
             )
 

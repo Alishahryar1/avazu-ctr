@@ -39,7 +39,7 @@ def _create_model_from_config(
     torch.manual_seed(seed)
 
     # Create a full config by combining parent config with model-specific config
-    full_config: ConfigType = {**parent_config, "model": model_config}  # type: ignore
+    full_config: ConfigType = cast(ConfigType, {**parent_config, "model": model_config})
 
     model_type = model_config.get("model_type")
 
@@ -220,7 +220,7 @@ class EnsembleModel(BaseCTRModel):
 
     def get_model(self, idx: int) -> BaseCTRModel:
         """Get a specific model from the ensemble."""
-        return self.models[idx]  # type: ignore
+        return cast(BaseCTRModel, self.models[idx])
 
     def num_models(self) -> int:
         """Return the number of models in the ensemble."""

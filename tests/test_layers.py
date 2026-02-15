@@ -6,6 +6,8 @@ FeatureGatingLayer implementations.
 """
 
 import unittest
+from typing import cast
+
 import torch
 from src.models.layers import SENetLayer, FeatureGatingLayer
 
@@ -213,7 +215,11 @@ class TestSENetLayer(unittest.TestCase):
         """Verify SENet uses element mode for unrecognized reweight_mode."""
         # Implementation doesn't validate reweight_mode - unrecognized values
         # fall through to element mode (weights applied directly)
-        senet = SENetLayer(num_fields=5, feature_dims=16, reweight_mode="invalid")  # type: ignore[arg-type]
+        senet = SENetLayer(
+            num_fields=5,
+            feature_dims=16,
+            reweight_mode=cast(str, "invalid"),  # Test fallback to element mode
+        )
         embeddings = [torch.randn(4, 16) for _ in range(5)]
         # Should work without error, using element-level reweighting
         out = senet(embeddings)

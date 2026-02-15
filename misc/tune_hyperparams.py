@@ -32,6 +32,7 @@ from tqdm import tqdm
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config import CONFIG, seed_everything
+from src.config_types import ConfigType
 from src.processing.data_processor import load_metadata, get_parquet_path
 from src.processing.dataset import ParquetFullDataset
 from src.models.architectures import create_model
@@ -179,7 +180,7 @@ def create_config_from_trial(
 def train_single_epoch(
     model: torch.nn.Module,
     train_loader: DataLoader,
-    config: dict[str, Any],
+    config: ConfigType | dict[str, Any],
     trial: Trial,
     *,
     uncompiled_model: torch.nn.Module | None = None,
@@ -212,15 +213,17 @@ def train_single_epoch(
             other_params.append(param)
 
     # Create optimizers
+    dense_opt = config["dense_optimizer"]
+    embed_opt = config["embedding_optimizer"]
     embedding_optimizer = optim.Adagrad(
         embedding_params,
-        lr=config["embedding_optimizer"]["lr"],
-        weight_decay=config["embedding_optimizer"].get("weight_decay", 0.0),
+        lr=float(embed_opt.get("lr", 1e-2)),
+        weight_decay=float(embed_opt.get("weight_decay", 0.0)),
     )
     other_optimizer = optim.AdamW(
         other_params,
-        lr=config["dense_optimizer"]["lr"],
-        weight_decay=config["dense_optimizer"].get("weight_decay", 1e-4),
+        lr=float(dense_opt.get("lr", 1e-3)),
+        weight_decay=float(dense_opt.get("weight_decay", 1e-4)),
     )
 
     # LR scheduler with warmup (matching main trainer)
@@ -249,6 +252,9 @@ def train_single_epoch(
     else:
         scaler = None
 
+    # For method calls (compute_loss, post_step), use uncompiled model when available
+    base_model: torch.nn.Module = uncompiled_model if uncompiled_model is not None else model
+
     model.train()
     total_loss = 0.0
     num_batches = len(train_loader)
@@ -264,7 +270,7 @@ def train_single_epoch(
 
         with torch.amp.autocast(device_type="cuda", dtype=amp_dtype, enabled=use_amp):
             output = model(X_batch)
-            loss = model.compute_loss(output, y_batch)  # pyrefly: ignore
+            loss = base_model.compute_loss(output, y_batch)
 
         if use_amp and scaler is not None:
             scaler.scale(loss).backward()
@@ -285,7 +291,7 @@ def train_single_epoch(
         if scheduler is not None:
             scheduler.step()
 
-        (uncompiled_model or model).post_step()
+        base_model.post_step()
 
         loss_val = loss.item()
 
@@ -335,7 +341,10 @@ def make_objective(
             Validation LogLoss (to minimize)
         """
         # Create config with sampled hyperparameters
-        config = create_config_from_trial(trial, cast(dict[str, Any], CONFIG))
+        config = cast(
+            ConfigType,
+            create_config_from_trial(trial, cast(dict[str, Any], CONFIG)),
+        )
 
         print(f"\n[Trial {trial.number}] Hyperparameters:")
         for name, value in trial.params.items():
@@ -375,9 +384,7 @@ def make_objective(
         model = None
         uncompiled_model = None
         try:
-            uncompiled_model = create_model(
-                config, vocab_sizes, feature_names
-            )  # pyrefly: ignore
+            uncompiled_model = create_model(config, vocab_sizes, feature_names)
             uncompiled_model.to(config["device"])
             if config.get("compile_model", False):
                 model = torch.compile(uncompiled_model)
@@ -386,7 +393,7 @@ def make_objective(
 
             # Train for one epoch
             train_loss = train_single_epoch(
-                model,
+                cast(torch.nn.Module, model),
                 train_loader,
                 config,
                 trial,

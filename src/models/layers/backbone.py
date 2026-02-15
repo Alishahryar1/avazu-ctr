@@ -1,6 +1,6 @@
 """Shared CTR backbone: embeddings -> LayerNorm -> SENet/FeatureGating -> DCN -> MLP."""
 
-from typing import Any
+from typing import Any, Literal, cast
 
 import torch
 import torch.nn as nn
@@ -24,7 +24,10 @@ def _get_backbone_config(config: dict[str, Any]) -> dict[str, Any]:
             "senet_excitation_activation", "sigmoid"
         ),
         "senet_num_groups": config.get("senet_num_groups", 1),
-        "senet_reweight_mode": config.get("senet_reweight_mode", "feature"),
+        "senet_reweight_mode": cast(
+            Literal["feature", "element"],
+            config.get("senet_reweight_mode", "feature"),
+        ),
         "senet_use_fuse": config.get("senet_use_fuse", False),
         "senet_use_layer_norm": config.get("senet_use_layer_norm", False),
         "feature_gating_activation": config.get("feature_gating_activation", "sigmoid"),

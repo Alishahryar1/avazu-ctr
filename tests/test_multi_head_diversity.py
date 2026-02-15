@@ -1,8 +1,10 @@
 import unittest
+from typing import cast
+
 import torch
 import torch.nn as nn
 from src.models.architectures.multi_head_diversity import MultiHeadDiversityModel
-from src.config_types import MultiHeadDiversityConfig, ResidualMLPConfig
+from src.config_types import ConfigType, MultiHeadDiversityConfig, ResidualMLPConfig
 from src.models.losses.diversity_loss import DiversityBCELoss
 
 
@@ -50,8 +52,8 @@ class TestMultiHeadDiversityModel(unittest.TestCase):
 
     def test_initialization(self):
         model = MultiHeadDiversityModel(
-            self.vocab_sizes, self.feature_names, self.config
-        )  # type: ignore
+            self.vocab_sizes, self.feature_names, cast(ConfigType, self.config)
+        )
         self.assertIsInstance(model, MultiHeadDiversityModel)
         self.assertEqual(len(model.heads), 2)
         # Check layers (backbone contains dcn, senet, etc.)
@@ -64,8 +66,8 @@ class TestMultiHeadDiversityModel(unittest.TestCase):
 
     def test_forward_shape(self):
         model = MultiHeadDiversityModel(
-            self.vocab_sizes, self.feature_names, self.config
-        )  # type: ignore
+            self.vocab_sizes, self.feature_names, cast(ConfigType, self.config)
+        )
         batch_size = 4
         x = torch.zeros((batch_size, 2), dtype=torch.long)
 
@@ -85,8 +87,8 @@ class TestMultiHeadDiversityModel(unittest.TestCase):
 
         torch.manual_seed(42)
         model = MultiHeadDiversityModel(
-            self.vocab_sizes, self.feature_names, self.config
-        )  # type: ignore
+            self.vocab_sizes, self.feature_names, cast(ConfigType, self.config)
+        )
         x = torch.randint(0, 10, (4, 2))
 
         output = model(x)
@@ -99,8 +101,8 @@ class TestMultiHeadDiversityModel(unittest.TestCase):
 
     def test_loss(self):
         model = MultiHeadDiversityModel(
-            self.vocab_sizes, self.feature_names, self.config
-        )  # type: ignore
+            self.vocab_sizes, self.feature_names, cast(ConfigType, self.config)
+        )
         diversity_weight = 0.5
         model.loss_fn.diversity_weight = diversity_weight
 

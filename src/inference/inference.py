@@ -1,4 +1,6 @@
 import os
+from typing import cast
+
 import torch
 from torch.utils.data import DataLoader
 from tqdm import tqdm
@@ -103,7 +105,9 @@ def inference():
             X_batch = X_batch.to(CONFIG["device"])
 
             # Unified interface: get_predictions returns probabilities for all models
-            preds = model.get_predictions(X_batch)
+            # Use uncompiled_model for method calls (compiled model has different typing)
+            base_model = uncompiled_model if uncompiled_model is not None else model
+            preds = base_model.get_predictions(X_batch)
 
             predictions.append(preds.cpu().numpy())
 
@@ -117,7 +121,11 @@ def inference():
     print("Step 5: Creating submission file...")
 
     # Read IDs from parquet (memory efficient - only read ID column)
-    test_ids = pl.scan_parquet(test_parquet).select("id").collect()["id"].to_numpy()
+    test_df = cast(
+        pl.DataFrame,
+        pl.scan_parquet(test_parquet).select("id").collect(),
+    )
+    test_ids = test_df.get_column("id").to_numpy()
 
     submission = pl.DataFrame({"id": test_ids, "click": predictions})
 

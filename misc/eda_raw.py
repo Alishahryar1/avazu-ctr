@@ -13,6 +13,8 @@ Uses Polars lazy evaluation for memory efficiency.
 Run from project root: python -m misc.eda_raw
 """
 
+from typing import cast
+
 import polars as pl
 import numpy as np
 from pathlib import Path
@@ -107,32 +109,35 @@ def analyze_count_features_batched(
 
         # Compute percentiles in a single collection
         count_col_name = f"{col}_count"
-        stats_df = lf_with_count.select(
-            [
-                pl.col(count_col_name).min().alias("min"),
-                pl.col(count_col_name).max().alias("max"),
-                pl.col(count_col_name).mean().alias("mean"),
-                pl.col(count_col_name).median().alias("median"),
-                pl.col(count_col_name).quantile(0.25).alias("p25"),
-                pl.col(count_col_name).quantile(0.50).alias("p50"),
-                pl.col(count_col_name).quantile(0.75).alias("p75"),
-                pl.col(count_col_name).quantile(0.90).alias("p90"),
-                pl.col(count_col_name).quantile(0.95).alias("p95"),
-                pl.col(count_col_name).quantile(0.99).alias("p99"),
-            ]
-        ).collect()
-
+        stats_df = cast(
+            pl.DataFrame,
+            lf_with_count.select(
+                [
+                    pl.col(count_col_name).min().alias("min"),
+                    pl.col(count_col_name).max().alias("max"),
+                    pl.col(count_col_name).mean().alias("mean"),
+                    pl.col(count_col_name).median().alias("median"),
+                    pl.col(count_col_name).quantile(0.25).alias("p25"),
+                    pl.col(count_col_name).quantile(0.50).alias("p50"),
+                    pl.col(count_col_name).quantile(0.75).alias("p75"),
+                    pl.col(count_col_name).quantile(0.90).alias("p90"),
+                    pl.col(count_col_name).quantile(0.95).alias("p95"),
+                    pl.col(count_col_name).quantile(0.99).alias("p99"),
+                ]
+            ).collect(),
+        )
+        row = stats_df.row(0, named=True)
         all_stats[col] = {
-            "min": int(stats_df["min"][0]),
-            "max": int(stats_df["max"][0]),
-            "mean": float(stats_df["mean"][0]),
-            "median": float(stats_df["median"][0]),
-            "p25": float(stats_df["p25"][0]),
-            "p50": float(stats_df["p50"][0]),
-            "p75": float(stats_df["p75"][0]),
-            "p90": float(stats_df["p90"][0]),
-            "p95": float(stats_df["p95"][0]),
-            "p99": float(stats_df["p99"][0]),
+            "min": int(row["min"]),
+            "max": int(row["max"]),
+            "mean": float(row["mean"]),
+            "median": float(row["median"]),
+            "p25": float(row["p25"]),
+            "p50": float(row["p50"]),
+            "p75": float(row["p75"]),
+            "p90": float(row["p90"]),
+            "p95": float(row["p95"]),
+            "p99": float(row["p99"]),
         }
 
         # Print stats
@@ -203,7 +208,8 @@ def analyze_cumcount_features(
         cumcount_col = f"{col}_cumcount"
 
         # Compute cumcount and statistics in one pass
-        stats_df = (
+        stats_df = cast(
+            pl.DataFrame,
             lf_sorted.with_columns(
                 [pl.col(col).cum_count().over(col).alias(cumcount_col)]
             )
@@ -219,18 +225,18 @@ def analyze_cumcount_features(
                     pl.col(cumcount_col).quantile(0.95).alias("p95"),
                 ]
             )
-            .collect()
+            .collect(),
         )
-
+        row = stats_df.row(0, named=True)
         all_stats[col] = {
-            "min": int(stats_df["min"][0]),
-            "max": int(stats_df["max"][0]),
-            "mean": float(stats_df["mean"][0]),
-            "p25": float(stats_df["p25"][0]),
-            "p50": float(stats_df["p50"][0]),
-            "p75": float(stats_df["p75"][0]),
-            "p90": float(stats_df["p90"][0]),
-            "p95": float(stats_df["p95"][0]),
+            "min": int(row["min"]),
+            "max": int(row["max"]),
+            "mean": float(row["mean"]),
+            "p25": float(row["p25"]),
+            "p50": float(row["p50"]),
+            "p75": float(row["p75"]),
+            "p90": float(row["p90"]),
+            "p95": float(row["p95"]),
         }
 
         s = all_stats[col]
@@ -313,50 +319,57 @@ def analyze_time_delta(lf: pl.LazyFrame) -> dict:
     )
 
     # Collect statistics
-    stats_df = lf_with_delta.select(
-        [
-            (pl.col("hours_since_last_click") == 0).sum().alias("zero_count"),
-            pl.len().alias("total"),
-            pl.col("hours_since_last_click")
-            .filter(pl.col("hours_since_last_click") > 0)
-            .min()
-            .alias("nz_min"),
-            pl.col("hours_since_last_click")
-            .filter(pl.col("hours_since_last_click") > 0)
-            .max()
-            .alias("nz_max"),
-            pl.col("hours_since_last_click")
-            .filter(pl.col("hours_since_last_click") > 0)
-            .mean()
-            .alias("nz_mean"),
-            pl.col("hours_since_last_click")
-            .filter(pl.col("hours_since_last_click") > 0)
-            .quantile(0.50)
-            .alias("nz_p50"),
-            pl.col("hours_since_last_click")
-            .filter(pl.col("hours_since_last_click") > 0)
-            .quantile(0.75)
-            .alias("nz_p75"),
-            pl.col("hours_since_last_click")
-            .filter(pl.col("hours_since_last_click") > 0)
-            .quantile(0.90)
-            .alias("nz_p90"),
-        ]
-    ).collect()
-
-    zero_count = int(stats_df["zero_count"][0])
-    total = int(stats_df["total"][0])
+    stats_df = cast(
+        pl.DataFrame,
+        lf_with_delta.select(
+            [
+                (pl.col("hours_since_last_click") == 0).sum().alias("zero_count"),
+                pl.len().alias("total"),
+                pl.col("hours_since_last_click")
+                .filter(pl.col("hours_since_last_click") > 0)
+                .min()
+                .alias("nz_min"),
+                pl.col("hours_since_last_click")
+                .filter(pl.col("hours_since_last_click") > 0)
+                .max()
+                .alias("nz_max"),
+                pl.col("hours_since_last_click")
+                .filter(pl.col("hours_since_last_click") > 0)
+                .mean()
+                .alias("nz_mean"),
+                pl.col("hours_since_last_click")
+                .filter(pl.col("hours_since_last_click") > 0)
+                .quantile(0.50)
+                .alias("nz_p50"),
+                pl.col("hours_since_last_click")
+                .filter(pl.col("hours_since_last_click") > 0)
+                .quantile(0.75)
+                .alias("nz_p75"),
+                pl.col("hours_since_last_click")
+                .filter(pl.col("hours_since_last_click") > 0)
+                .quantile(0.90)
+                .alias("nz_p90"),
+            ]
+        ).collect(),
+    )
+    row = stats_df.row(0, named=True)
+    zero_count = int(row["zero_count"])
+    total = int(row["total"])
     zero_pct = zero_count / total * 100
+
+    def _val(key: str, default: float = 0.0) -> float:
+        v = row[key]
+        return float(v) if v is not None else default
 
     stats = {
         "zero_count": zero_count,
         "zero_pct": zero_pct,
-        "nz_min": int(stats_df["nz_min"][0]) if stats_df["nz_min"][0] else 0,
-        "nz_max": int(stats_df["nz_max"][0]) if stats_df["nz_max"][0] else 0,
-        "nz_mean": float(stats_df["nz_mean"][0]) if stats_df["nz_mean"][0] else 0,
-        "nz_p50": float(stats_df["nz_p50"][0]) if stats_df["nz_p50"][0] else 0,
-        "nz_p75": float(stats_df["nz_p75"][0]) if stats_df["nz_p75"][0] else 0,
-        "nz_p90": float(stats_df["nz_p90"][0]) if stats_df["nz_p90"][0] else 0,
+        "nz_min": int(_val("nz_min")),
+        "nz_max": int(_val("nz_max")),
+        "nz_mean": _val("nz_mean"),
+        "nz_p50": _val("nz_p50"),
+        "nz_p75": _val("nz_p75"),
+        "nz_p90": _val("nz_p90"),
     }
 
     print(f"""
@@ -399,49 +412,57 @@ def analyze_prev_clicks(lf: pl.LazyFrame) -> dict:
     )
 
     # Collect statistics
-    stats_df = lf_with_prev.select(
-        [
-            (pl.col("prev_clicks") == 0).sum().alias("zero_count"),
-            pl.len().alias("total"),
-            pl.col("prev_clicks")
-            .filter(pl.col("prev_clicks") > 0)
-            .max()
-            .alias("nz_max"),
-            pl.col("prev_clicks")
-            .filter(pl.col("prev_clicks") > 0)
-            .mean()
-            .alias("nz_mean"),
-            pl.col("prev_clicks")
-            .filter(pl.col("prev_clicks") > 0)
-            .quantile(0.50)
-            .alias("nz_p50"),
-            pl.col("prev_clicks")
-            .filter(pl.col("prev_clicks") > 0)
-            .quantile(0.75)
-            .alias("nz_p75"),
-            pl.col("prev_clicks")
-            .filter(pl.col("prev_clicks") > 0)
-            .quantile(0.90)
-            .alias("nz_p90"),
-            pl.col("prev_clicks")
-            .filter(pl.col("prev_clicks") > 0)
-            .quantile(0.99)
-            .alias("nz_p99"),
-        ]
-    ).collect()
+    stats_df = cast(
+        pl.DataFrame,
+        lf_with_prev.select(
+            [
+                (pl.col("prev_clicks") == 0).sum().alias("zero_count"),
+                pl.len().alias("total"),
+                pl.col("prev_clicks")
+                .filter(pl.col("prev_clicks") > 0)
+                .max()
+                .alias("nz_max"),
+                pl.col("prev_clicks")
+                .filter(pl.col("prev_clicks") > 0)
+                .mean()
+                .alias("nz_mean"),
+                pl.col("prev_clicks")
+                .filter(pl.col("prev_clicks") > 0)
+                .quantile(0.50)
+                .alias("nz_p50"),
+                pl.col("prev_clicks")
+                .filter(pl.col("prev_clicks") > 0)
+                .quantile(0.75)
+                .alias("nz_p75"),
+                pl.col("prev_clicks")
+                .filter(pl.col("prev_clicks") > 0)
+                .quantile(0.90)
+                .alias("nz_p90"),
+                pl.col("prev_clicks")
+                .filter(pl.col("prev_clicks") > 0)
+                .quantile(0.99)
+                .alias("nz_p99"),
+            ]
+        ).collect(),
+    )
+    row = stats_df.row(0, named=True)
 
-    zero_count = int(stats_df["zero_count"][0])
-    total = int(stats_df["total"][0])
+    def _val(key: str, default: float = 0.0) -> float:
+        v = row[key]
+        return float(v) if v is not None else default
+
+    zero_count = int(row["zero_count"])
+    total = int(row["total"])
 
     stats = {
         "zero_count": zero_count,
         "zero_pct": zero_count / total * 100,
-        "nz_max": int(stats_df["nz_max"][0]) if stats_df["nz_max"][0] else 0,
-        "nz_mean": float(stats_df["nz_mean"][0]) if stats_df["nz_mean"][0] else 0,
-        "nz_p50": float(stats_df["nz_p50"][0]) if stats_df["nz_p50"][0] else 0,
-        "nz_p75": float(stats_df["nz_p75"][0]) if stats_df["nz_p75"][0] else 0,
-        "nz_p90": float(stats_df["nz_p90"][0]) if stats_df["nz_p90"][0] else 0,
-        "nz_p99": float(stats_df["nz_p99"][0]) if stats_df["nz_p99"][0] else 0,
+        "nz_max": int(_val("nz_max")),
+        "nz_mean": _val("nz_mean"),
+        "nz_p50": _val("nz_p50"),
+        "nz_p75": _val("nz_p75"),
+        "nz_p90": _val("nz_p90"),
+        "nz_p99": _val("nz_p99"),
     }
 
     print(f"""
@@ -485,34 +506,37 @@ def analyze_hourly_impressions(lf: pl.LazyFrame) -> dict:
     )
 
     # Collect statistics
-    stats_df = hourly_counts.select(
-        [
-            pl.col("hourly_impressions").min().alias("min"),
-            pl.col("hourly_impressions").max().alias("max"),
-            pl.col("hourly_impressions").mean().alias("mean"),
-            pl.col("hourly_impressions").median().alias("median"),
-            (pl.col("hourly_impressions") == 1).sum().alias("single_count"),
-            pl.len().alias("total"),
-            pl.col("hourly_impressions").quantile(0.50).alias("p50"),
-            pl.col("hourly_impressions").quantile(0.75).alias("p75"),
-            pl.col("hourly_impressions").quantile(0.90).alias("p90"),
-            pl.col("hourly_impressions").quantile(0.95).alias("p95"),
-        ]
-    ).collect()
-
-    single_count = int(stats_df["single_count"][0])
-    total = int(stats_df["total"][0])
+    stats_df = cast(
+        pl.DataFrame,
+        hourly_counts.select(
+            [
+                pl.col("hourly_impressions").min().alias("min"),
+                pl.col("hourly_impressions").max().alias("max"),
+                pl.col("hourly_impressions").mean().alias("mean"),
+                pl.col("hourly_impressions").median().alias("median"),
+                (pl.col("hourly_impressions") == 1).sum().alias("single_count"),
+                pl.len().alias("total"),
+                pl.col("hourly_impressions").quantile(0.50).alias("p50"),
+                pl.col("hourly_impressions").quantile(0.75).alias("p75"),
+                pl.col("hourly_impressions").quantile(0.90).alias("p90"),
+                pl.col("hourly_impressions").quantile(0.95).alias("p95"),
+            ]
+        ).collect(),
+    )
+    row = stats_df.row(0, named=True)
+    single_count = int(row["single_count"])
+    total = int(row["total"])
 
     stats = {
-        "min": int(stats_df["min"][0]),
-        "max": int(stats_df["max"][0]),
-        "mean": float(stats_df["mean"][0]),
-        "median": float(stats_df["median"][0]),
+        "min": int(row["min"]),
+        "max": int(row["max"]),
+        "mean": float(row["mean"]),
+        "median": float(row["median"]),
         "single_pct": single_count / total * 100,
-        "p50": float(stats_df["p50"][0]),
-        "p75": float(stats_df["p75"][0]),
-        "p90": float(stats_df["p90"][0]),
-        "p95": float(stats_df["p95"][0]),
+        "p50": float(row["p50"]),
+        "p75": float(row["p75"]),
+        "p90": float(row["p90"]),
+        "p95": float(row["p95"]),
     }
 
     print(f"""
@@ -553,19 +577,22 @@ def analyze_cardinalities(
 
     for col in cat_cols:
         # Count unique values meeting min_freq threshold
-        counts = (
+        counts = cast(
+            pl.DataFrame,
             lf.select(pl.col(col).cast(pl.String))
             .group_by(col)
             .len()
             .filter(pl.col("len") >= min_freq)
             .select(pl.len())
-            .collect()
+            .collect(),
         )
-
-        cardinality = counts.item()
+        cardinality = counts.item(0, 0)
 
         # Total unique (no filter)
-        total_unique = lf.select(pl.col(col).n_unique()).collect().item()
+        total_unique_df = cast(
+            pl.DataFrame, lf.select(pl.col(col).n_unique()).collect()
+        )
+        total_unique = total_unique_df.item(0, 0)
 
         results[col] = {
             "cardinality": cardinality,
@@ -605,7 +632,8 @@ def main():
     lf = pl.scan_csv(train_path, schema_overrides=SCHEMA)
 
     # Get row count
-    row_count = lf.select(pl.len()).collect().item()
+    row_count_df = cast(pl.DataFrame, lf.select(pl.len()).collect())
+    row_count = row_count_df.item(0, 0)
     print(f"Total rows: {row_count:,}")
 
     # Add engineered features for full analysis

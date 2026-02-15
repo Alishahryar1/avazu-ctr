@@ -164,7 +164,7 @@ class SENetLayer(nn.Module):
             # attn_scores is [B, num_fields]. flat_embeddings is [B, total_dim].
             # We must repeat the score for field_i by dim_i times.
             # repeat_interleave is highly optimized for this.
-            expanded_scores = torch.repeat_interleave(  # type: ignore
+            expanded_scores = torch.repeat_interleave(
                 attn_scores, self.field_dims_tensor, dim=1
             )
             weighted = flat_embeddings * expanded_scores

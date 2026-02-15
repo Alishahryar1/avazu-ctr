@@ -62,7 +62,9 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
         super().__init__()
 
         # Extract configs
-        model_config: NormalizedMultiHeadDiversityConfig = config["model"]  # type: ignore
+        model_config: NormalizedMultiHeadDiversityConfig = cast(
+            NormalizedMultiHeadDiversityConfig, config["model"]
+        )
         backbone_config = model_config["backbone_config"]
 
         self.feature_names = feature_names
