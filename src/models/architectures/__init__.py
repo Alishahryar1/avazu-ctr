@@ -63,7 +63,9 @@ def create_model(
     if "use_dcn" in model_config:
         return GatedDCNModel(vocab_sizes, feature_names, config)
 
-    raise ValueError(f"Unsupported model config. Set model_type or use known keys. Keys: {list(model_config.keys())}")
+    raise ValueError(
+        f"Unsupported model config. Set model_type or use known keys. Keys: {list(model_config.keys())}"
+    )
 
 
 __all__ = [

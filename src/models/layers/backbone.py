@@ -20,7 +20,9 @@ def _get_backbone_config(config: dict[str, Any]) -> dict[str, Any]:
         "senet_squeeze_funcs": config.get("senet_squeeze_funcs", ["mean"]),
         "senet_reduction_ratio": config.get("senet_reduction_ratio", 3),
         "senet_hidden_activation": config.get("senet_hidden_activation", "relu"),
-        "senet_excitation_activation": config.get("senet_excitation_activation", "sigmoid"),
+        "senet_excitation_activation": config.get(
+            "senet_excitation_activation", "sigmoid"
+        ),
         "senet_num_groups": config.get("senet_num_groups", 1),
         "senet_reweight_mode": config.get("senet_reweight_mode", "feature"),
         "senet_use_fuse": config.get("senet_use_fuse", False),

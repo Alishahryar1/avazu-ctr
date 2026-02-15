@@ -128,8 +128,8 @@ def train():
     dense_opt_type = str(dense_opt_cfg.get("type", "adamw"))
     embed_opt_type = str(embed_opt_cfg.get("type", "adagrad"))
 
-    optimizer, embedding_optimizer, other_optimizer, use_single_ftrl = (
-        setup_optimizers(model, dense_opt_cfg, embed_opt_cfg)
+    optimizer, embedding_optimizer, other_optimizer, use_single_ftrl = setup_optimizers(
+        model, dense_opt_cfg, embed_opt_cfg
     )
 
     if use_single_ftrl and optimizer is not None:
@@ -139,8 +139,12 @@ def train():
             f"l2={dense_opt_cfg.get('l2', 0.0)})"
         )
     else:
-        emb_count = sum(p.numel() for n, p in model.named_parameters() if "embeddings" in n)
-        other_count = sum(p.numel() for n, p in model.named_parameters() if "embeddings" not in n)
+        emb_count = sum(
+            p.numel() for n, p in model.named_parameters() if "embeddings" in n
+        )
+        other_count = sum(
+            p.numel() for n, p in model.named_parameters() if "embeddings" not in n
+        )
         print(f"Embedding parameters: {emb_count:,}")
         print(f"Dense parameters: {other_count:,}")
         print(
@@ -168,7 +172,9 @@ def train():
     elif dense_opt_type == "ftrl" or use_single_ftrl:
         print("LR scheduler disabled (FTRL mode)")
     else:
-        print(f"LR scheduler disabled (decay_type={dense_opt_cfg.get('scheduler', {}).get('decay_type', 'none')})")
+        print(
+            f"LR scheduler disabled (decay_type={dense_opt_cfg.get('scheduler', {}).get('decay_type', 'none')})"
+        )
 
     # Setup Automatic Mixed Precision (AMP)
     use_amp = CONFIG["auto_amp"] and CONFIG["device"] == "cuda"

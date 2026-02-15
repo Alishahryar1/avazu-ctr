@@ -54,7 +54,9 @@ def _create_model_from_config(
             NormalizedMultiHeadDiversityModel,
         )
 
-        return NormalizedMultiHeadDiversityModel(vocab_sizes, feature_names, full_config)
+        return NormalizedMultiHeadDiversityModel(
+            vocab_sizes, feature_names, full_config
+        )
     if model_type == "multi_head_diversity" or (
         "heads" in model_config and "backbone_type" in model_config
     ):
