@@ -237,6 +237,8 @@ avazu-ctr/
 ├── 📂 misc/                      # Research tools (tune_hyperparams.py, EDA scripts)
 ├── 📂 papers/                    # Foundational research papers
 ├── 📂 data/                      # Raw and processed datasets
+├── 📄 pyproject.toml             # Project config & dependencies (uv)
+├── 📄 uv.lock                    # Locked dependency versions
 ├── 📄 config.py                  # Best hyperparameter configuration
 ├── 📄 data_processor.py          # Polars-based streaming data pipeline
 └── 📄 train.py                   # Main training entry point
@@ -247,26 +249,45 @@ avazu-ctr/
 ## 📈 Getting Started
 
 ### 1️⃣ Environment Setup
+
+This project uses [uv](https://docs.astral.sh/uv/) for fast, reliable dependency management.
+
 ```bash
-pip install -r requirements.txt
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Sync dependencies (PyTorch CUDA 13.0). For CPU-only, omit the env var.
+UV_TORCH_BACKEND=cu130 uv sync --extra dev
 ```
 
 ### 2️⃣ Data Pipeline
 ```bash
 # Blazing fast Polars-based streaming processing
-python data_processor.py
+uv run python data_processor.py
 ```
 
 ### 3️⃣ Research Loop
 ```bash
 # 1. Start a tuning study to find architectural sweet spots
-python misc/tune_hyperparams.py --n-trials 50
+uv run python misc/tune_hyperparams.py --n-trials 50
 
 # 2. Train the full model with best config
-python train.py
+uv run python train.py
 
 # 3. Analyze results via TensorBoard
-tensorboard --logdir=runs
+uv run tensorboard --logdir=runs
+```
+
+### Development
+```bash
+# Run tests
+uv run pytest
+
+# Format and lint
+uv run ruff format . && uv run ruff check .
+
+# Type check
+uv run ty check
 ```
 
 ---

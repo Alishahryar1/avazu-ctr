@@ -54,10 +54,13 @@ class TestMultiHeadDiversityModel(unittest.TestCase):
         )  # type: ignore
         self.assertIsInstance(model, MultiHeadDiversityModel)
         self.assertEqual(len(model.heads), 2)
-        # Check native layers
+        # Check layers (backbone contains dcn, senet, etc.)
         self.assertTrue(hasattr(model, "embeddings"))
-        self.assertTrue(hasattr(model, "dcn"))
-        self.assertFalse(hasattr(model, "backbone"))
+        self.assertTrue(hasattr(model, "backbone"))
+        self.assertTrue(
+            model.backbone.dcn is not None,
+            "Config has use_dcn=True, backbone should have dcn",
+        )
 
     def test_forward_shape(self):
         model = MultiHeadDiversityModel(

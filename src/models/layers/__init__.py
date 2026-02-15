@@ -1,3 +1,4 @@
+from .backbone import CTRBackbone, build_backbone
 from .cross_network import DCNv2
 from .gating import FeatureGatingLayer
 from .logit_gating import LogitGatingLayer
@@ -21,6 +22,8 @@ from .normalized_layers import (
 )
 
 __all__ = [
+    "CTRBackbone",
+    "build_backbone",
     "DCNv2",
     "FeatureGatingLayer",
     "LogitGatingLayer",

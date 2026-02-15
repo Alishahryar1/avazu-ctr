@@ -5,8 +5,10 @@ from src.models.architectures.base import BaseCTRModel
 from src.models.types import ModelOutput
 from src.config_types import ConfigType, MultiHeadDiversityConfig
 from src.models.losses.diversity_loss import DiversityBCELoss
+from src.models.layers.backbone import build_backbone
 from src.models.layers.mlp import ResidualMLP
 from src.models.layers.logit_gating import LogitGatingLayer
+from src.models.utils import get_embedding
 
 
 class MultiHeadDiversityModel(BaseCTRModel):
@@ -20,101 +22,33 @@ class MultiHeadDiversityModel(BaseCTRModel):
     ):
         super().__init__()
 
-        # Extract specific config
         model_config: MultiHeadDiversityConfig = config["model"]  # type: ignore
         backbone_config_dict = model_config["backbone_config"]
 
         self.feature_names = feature_names
         self.feature_bagging_ratio = model_config.get("feature_bagging_ratio", 1.0)
 
-        # --- Shared Backbone Initialization (Native) ---
         # 1. Embeddings
-        embedding_dim = config["embedding_dim"]
         self.embeddings = nn.ModuleDict()
         self.feature_dims: dict[str, int] = {}
         total_embed_dim = 0
-
-        # Import utils locally to avoid circular imports if any
-        from src.models.utils import get_embedding
-
         for feat in feature_names:
             emb, feat_dim = get_embedding(feat, vocab_sizes.get(feat, 1), config)
             self.embeddings[feat] = emb
             self.feature_dims[feat] = feat_dim
             total_embed_dim += feat_dim
 
-        working_dim = total_embed_dim
-        self.embedding_dim = embedding_dim
+        self.embedding_dim = config["embedding_dim"]
 
-        # 3. Layer Norm
-        self.use_layer_norm = backbone_config_dict.get("use_layer_norm", False)
-        if self.use_layer_norm:
-            self.embed_ln = nn.LayerNorm(working_dim)
-
-        # 4. SENET / Feature Gating (Optional)
-        self.use_senet = backbone_config_dict.get("use_senet", False)
-        self.use_feature_gating = backbone_config_dict.get("use_feature_gating", False)
-
-        if self.use_senet:
-            from src.models.layers.senet import SENetLayer
-
-            senet_dims = [self.feature_dims[f] for f in self.feature_names]
-
-            self.senet = SENetLayer(
-                num_fields=len(feature_names),
-                feature_dims=senet_dims,
-                squeeze_funcs=backbone_config_dict["senet_squeeze_funcs"],
-                reduction_ratio=backbone_config_dict["senet_reduction_ratio"],
-                hidden_activation=backbone_config_dict["senet_hidden_activation"],
-                excitation_activation=backbone_config_dict[
-                    "senet_excitation_activation"
-                ],
-                # Handle missing keys safely if config dict is partial, though ideally typed
-                num_groups=backbone_config_dict.get("senet_num_groups", 1),
-                reweight_mode=backbone_config_dict.get(
-                    "senet_reweight_mode", "feature"
-                ),
-                use_fuse=backbone_config_dict.get("senet_use_fuse", False),
-                use_layer_norm=backbone_config_dict.get("senet_use_layer_norm", False),
-            )
-
-        if self.use_feature_gating:
-            from src.models.layers.gating import FeatureGatingLayer
-
-            self.feature_gating = FeatureGatingLayer(
-                input_dim=working_dim,
-                gating_activation=backbone_config_dict.get(
-                    "feature_gating_activation", "sigmoid"
-                ),
-                low_rank=backbone_config_dict.get("feature_gating_low_rank", None),
-            )
-
-        # 5. DCNv2 (Optional)
-        self.use_dcn = backbone_config_dict.get("use_dcn", False)
-        if self.use_dcn:
-            from src.models.layers.cross_network import DCNv2
-
-            self.dcn = DCNv2(
-                input_dim=working_dim,
-                num_layers=backbone_config_dict["dcn_num_layers"],
-                use_layernorm=backbone_config_dict["dcn_use_layernorm"],
-                low_rank=backbone_config_dict.get("dcn_low_rank", None),
-            )
-
-        # 6. Residual MLP (Optional)
-        self.use_mlp = bool(backbone_config_dict.get("mlp_hidden_dims", []))
-        if self.use_mlp:
-            self.mlp = ResidualMLP(
-                input_dim=working_dim,
-                hidden_dims=backbone_config_dict["mlp_hidden_dims"],
-                activation=backbone_config_dict["mlp_activation"],
-                dropout=backbone_config_dict["mlp_dropout"],
-                use_layer_norm=backbone_config_dict["use_layer_norm"],
-                use_skip_connections=backbone_config_dict["mlp_use_skip_connections"],
-            )
-            working_dim = backbone_config_dict["mlp_hidden_dims"][-1]
-
-        self.input_dim = working_dim  # Final dimension after backbone processing
+        # 2. Shared backbone
+        self.backbone = build_backbone(
+            backbone_config=backbone_config_dict,
+            feature_names=feature_names,
+            feature_dims=self.feature_dims,
+            total_embed_dim=total_embed_dim,
+            num_fields=len(feature_names),
+        )
+        self.input_dim = self.backbone.output_dim
 
         # --- Heads Initialization ---
         heads_config = model_config["heads"]
@@ -162,18 +96,13 @@ class MultiHeadDiversityModel(BaseCTRModel):
         )
 
     def forward(self, x: torch.Tensor) -> ModelOutput:
-        # 1. Get Embeddings [Batch, Num_Features, Embed_Dim] (Implicitly represented as list of tensors)
-        embeds_list = []
-        for i, feat in enumerate(self.feature_names):
-            embeds_list.append(self.embeddings[feat](x[:, i]))
+        embeds_list = [
+            self.embeddings[feat](x[:, i]) for i, feat in enumerate(self.feature_names)
+        ]
 
-        # 2. Process Heads with Feature Bagging
         head_logits = []
-
         for head_idx, head in enumerate(self.heads):
-            current_head_embeds = []
             if self.feature_bagging_ratio < 1.0:
-                # Use pre-generated mask for this head
                 mask = getattr(self, f"head_mask_{head_idx}")
                 current_head_embeds = [
                     emb * mask[i] for i, emb in enumerate(embeds_list)
@@ -181,33 +110,8 @@ class MultiHeadDiversityModel(BaseCTRModel):
             else:
                 current_head_embeds = embeds_list
 
-            # --- Backbone Processing for this Head ---
-            # Now we have the masked embeddings.
-            dnn_input = torch.cat(current_head_embeds, dim=1)
-
-            # Apply Layer Norm
-            if self.use_layer_norm:
-                dnn_input = self.embed_ln(dnn_input)
-
-            # Apply SENET
-            if self.use_senet:
-                # SENet expects a list of embeddings, not concatenated tensor
-                dnn_input = self.senet(current_head_embeds)
-
-            # Apply Feature Gating
-            if self.use_feature_gating:
-                dnn_input = self.feature_gating(dnn_input)
-
-            # Apply DCN
-            if self.use_dcn:
-                dnn_input = self.dcn(dnn_input)
-
-            # Apply Backbone MLP
-            if self.use_mlp:
-                dnn_input = self.mlp(dnn_input)
-
-            # --- Head Prediction ---
-            head_logits.append(head(dnn_input))
+            backbone_out = self.backbone(current_head_embeds)
+            head_logits.append(head(backbone_out))
 
         # Stack: [K, Batch, 1]
         stacked_logits = torch.stack(head_logits, dim=0)
