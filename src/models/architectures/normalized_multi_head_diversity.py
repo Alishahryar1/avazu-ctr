@@ -456,7 +456,7 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
     def compute_loss(self, output: ModelOutput, y_true: torch.Tensor) -> torch.Tensor:
         return self.loss_fn(output["aux_logits"], y_true)
 
-    def normalize_weights(self):
+    def normalize_weights(self) -> None:
         """
         Normalize all weight matrices after optimizer step.
 
@@ -464,6 +464,10 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
         This is crucial for nGPT-style training.
         """
         self._weight_norm_callback()
+
+    def post_step(self) -> None:
+        """Called after each optimizer step to maintain normalized weights."""
+        self.normalize_weights()
 
     @classmethod
     def model_name(cls) -> str:
