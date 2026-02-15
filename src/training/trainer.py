@@ -286,9 +286,6 @@ def train():
             total_loss = 0
             start_time = time.time()
 
-            # Reset dataset shuffle order at start of each epoch
-            # train_dataset.reset()
-
             pbar = tqdm(train_loader, desc=f"Epoch {epoch + 1}/{CONFIG['epochs']}")
             for batch_idx, batch_data in enumerate(pbar):  # pyrefly: ignore
                 X_batch, y_batch = batch_data

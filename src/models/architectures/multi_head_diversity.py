@@ -1,8 +1,8 @@
 import torch
 import torch.nn as nn
-from typing import List, Dict
 
-from src.models.architectures.base import BaseCTRModel, ModelOutput
+from src.models.architectures.base import BaseCTRModel
+from src.models.types import ModelOutput
 from src.config_types import ConfigType, MultiHeadDiversityConfig
 from src.models.losses.diversity_loss import DiversityBCELoss
 from src.models.layers.mlp import ResidualMLP
@@ -16,7 +16,7 @@ class MultiHeadDiversityModel(BaseCTRModel):
     """
 
     def __init__(
-        self, vocab_sizes: Dict[str, int], feature_names: List[str], config: ConfigType
+        self, vocab_sizes: dict[str, int], feature_names: list[str], config: ConfigType
     ):
         super().__init__()
 
@@ -31,7 +31,7 @@ class MultiHeadDiversityModel(BaseCTRModel):
         # 1. Embeddings
         embedding_dim = config["embedding_dim"]
         self.embeddings = nn.ModuleDict()
-        self.feature_dims: Dict[str, int] = {}
+        self.feature_dims: dict[str, int] = {}
         total_embed_dim = 0
 
         # Import utils locally to avoid circular imports if any

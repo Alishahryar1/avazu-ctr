@@ -1,7 +1,8 @@
 """Model architectures for CTR prediction."""
 
 from config import ConfigType
-from src.models.architectures.base import BaseCTRModel, ModelOutput
+from src.models.architectures.base import BaseCTRModel
+from src.models.types import ModelOutput
 from src.models.architectures.gated_dcn import GatedDCNModel
 from src.models.architectures.stec import STECModel
 from src.models.architectures.ensemble import EnsembleModel

@@ -14,9 +14,10 @@ Reference: "nGPT: Normalized Transformer with Representation Learning
 import math
 import torch
 import torch.nn as nn
-from typing import Dict, List, Optional, Union, cast
+from typing import cast
 
-from src.models.architectures.base import BaseCTRModel, ModelOutput
+from src.models.architectures.base import BaseCTRModel
+from src.models.types import ModelOutput
 from src.config_types import ConfigType
 from src.config_types.normalized_multi_head_diversity_config import (
     NormalizedMultiHeadDiversityConfig,
@@ -49,13 +50,13 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
     """
 
     # Type annotations for conditional attributes
-    mlp: Union[NormalizedResidualMLP, ResidualMLP]
-    mlp_proj: Optional[NormalizedLinear]
+    mlp: NormalizedResidualMLP | ResidualMLP
+    mlp_proj: NormalizedLinear | None
 
     def __init__(
         self,
-        vocab_sizes: Dict[str, int],
-        feature_names: List[str],
+        vocab_sizes: dict[str, int],
+        feature_names: list[str],
         config: ConfigType,
     ):
         super().__init__()
@@ -87,7 +88,7 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
         self.embedding_dim = embedding_dim
 
         self.embeddings = nn.ModuleDict()
-        self.feature_dims: Dict[str, int] = {}
+        self.feature_dims: dict[str, int] = {}
         total_embed_dim = 0
 
         # Import the standard embedding factory
@@ -316,7 +317,7 @@ class NormalizedMultiHeadDiversityModel(BaseCTRModel):
         return l2_normalize(h_updated, dim=-1)
 
     def _process_backbone(
-        self, h: torch.Tensor, embeds_list: List[torch.Tensor]
+        self, h: torch.Tensor, embeds_list: list[torch.Tensor]
     ) -> torch.Tensor:
         """Process input through backbone layers (SENET, Gating, DCN, MLP)."""
         # SENET
