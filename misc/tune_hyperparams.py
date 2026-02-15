@@ -181,15 +181,19 @@ def train_single_epoch(
     train_loader: DataLoader,
     config: dict[str, Any],
     trial: Trial,
+    *,
+    uncompiled_model: torch.nn.Module | None = None,
 ) -> float:
     """
     Train model for a single epoch with pruning support.
 
     Args:
-        model: The model to train
+        model: The model to train (may be torch.compile'd)
         train_loader: Training data loader
         config: Configuration dictionary
         trial: Optuna trial for pruning
+        uncompiled_model: Uncompiled model for post_step (when using torch.compile).
+            When None, post_step is called on model.
 
     Returns:
         Average training loss
@@ -226,13 +230,15 @@ def train_single_epoch(
     warmup_ratio = float(scheduler_cfg.get("warmup_epoch_ratio", 0.0))
     min_lr = float(scheduler_cfg.get("min_lr", 1e-6))
     warmup_steps = int(steps_per_epoch * warmup_ratio)
-    scheduler = LRSchedulerWithWarmup(
-        other_optimizer,
-        warmup_steps=warmup_steps,
-        total_steps=total_steps,
-        min_lr=min_lr,
-        decay_type=decay_type,
-    )
+    scheduler = None
+    if decay_type != "none":
+        scheduler = LRSchedulerWithWarmup(
+            other_optimizer,
+            warmup_steps=warmup_steps,
+            total_steps=total_steps,
+            min_lr=min_lr,
+            decay_type=decay_type,
+        )
 
     # AMP setup
     use_amp = config.get("auto_amp", True) and device == "cuda"
@@ -275,7 +281,11 @@ def train_single_epoch(
                 torch.nn.utils.clip_grad_norm_(model.parameters(), config["grad_clip"])
             embedding_optimizer.step()
             other_optimizer.step()
+
+        if scheduler is not None:
             scheduler.step()
+
+        (uncompiled_model or model).post_step()
 
         loss_val = loss.item()
 
@@ -335,7 +345,6 @@ def make_objective(
         config["validation_split"] = 0.1
         config["epochs"] = 1
         config["use_tensorboard"] = False
-        config["compile_model"] = True
 
         seed_everything(config["seed"])
 
@@ -364,23 +373,40 @@ def make_objective(
 
         # Create model
         model = None
+        uncompiled_model = None
         try:
-            model = create_model(config, vocab_sizes, feature_names)  # pyrefly: ignore
-            model.to(config["device"])
+            uncompiled_model = create_model(
+                config, vocab_sizes, feature_names
+            )  # pyrefly: ignore
+            uncompiled_model.to(config["device"])
+            if config.get("compile_model", False):
+                model = torch.compile(uncompiled_model)
+            else:
+                model = uncompiled_model
 
             # Train for one epoch
-            train_loss = train_single_epoch(model, train_loader, config, trial)
+            train_loss = train_single_epoch(
+                model,
+                train_loader,
+                config,
+                trial,
+                uncompiled_model=uncompiled_model,
+            )
             print(f"[Trial {trial.number}] Train loss: {train_loss:.5f}")
         except optuna.TrialPruned:
             if model is not None:
                 del model
-                torch.cuda.empty_cache()
+            if uncompiled_model is not None:
+                del uncompiled_model
+            torch.cuda.empty_cache()
             raise
         except Exception as e:
             print(f"Model creation or training failed: {e}")
             if model is not None:
                 del model
-                torch.cuda.empty_cache()
+            if uncompiled_model is not None:
+                del uncompiled_model
+            torch.cuda.empty_cache()
             raise optuna.TrialPruned()
 
         # Evaluate
@@ -395,6 +421,7 @@ def make_objective(
 
         # Clean up GPU memory after evaluation
         del model
+        del uncompiled_model
         torch.cuda.empty_cache()
 
         # Log additional metrics

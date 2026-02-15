@@ -38,9 +38,7 @@ testpaths = ["tests"]
 search_path = ["."]
 
 [tool.ruff]
-target-version = "py310"
 line-length = 88
-src = ["src", "tests", "misc", "train.py", "data_processor.py", "inference.py", "config.py"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -49,9 +47,6 @@ quote-style = "double"
 select = ["E", "F", "I", "N", "W", "UP"]
 ignore = ["E501"]
 
-[tool.ty.environment]
-python-version = "3.11"
-
 [[tool.ty.overrides]]
-include = ["tests/**"]
+include = ["tests"]
 rules = { all = "ignore" }
