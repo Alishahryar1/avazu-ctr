@@ -119,9 +119,6 @@ class EnsembleModel(BaseCTRModel):
         # Internal loss for multi-branch architecture
         self._kbce_loss = KBCELoss()
 
-        # Cached outputs for compute_loss (set during forward)
-        self._cached_outputs: list[ModelOutput] = []
-
     def forward(self, x: torch.Tensor) -> ModelOutput:
         """
         Forward pass through all models in the ensemble.
@@ -130,23 +127,18 @@ class EnsembleModel(BaseCTRModel):
             x: Input tensor of shape [Batch, Num_Features]
 
         Returns:
-            ModelOutput with aggregated logits, branch logits, and full outputs for recursive loss
+            ModelOutput with aggregated logits, branch logits, and child outputs for recursive loss
         """
         all_logits = []
-        all_outputs = []  # Store full outputs for recursive loss computation
+        all_outputs: list[ModelOutput] = []
 
         for model in self.models:
             output = model(x)
             all_logits.append(output["logits"])
             all_outputs.append(output)
 
-        # Cache outputs for compute_loss
-        self._cached_outputs = all_outputs
-
-        # Stack all logits: [K, Batch, 1]
         stacked_logits = torch.stack(all_logits, dim=0)
 
-        # Aggregate predictions
         if self.ensemble_aggregation == "mean":
             aggregated = stacked_logits.mean(dim=0)
         elif self.ensemble_aggregation == "median":
@@ -156,7 +148,8 @@ class EnsembleModel(BaseCTRModel):
 
         return {
             "logits": aggregated,
-            "aux_logits": all_logits,  # List of k branch logits (for this level's K-BCE)
+            "aux_logits": all_logits,
+            "child_outputs": all_outputs,
         }
 
     def compute_loss(self, output: ModelOutput, y_true: torch.Tensor) -> torch.Tensor:
@@ -181,15 +174,12 @@ class EnsembleModel(BaseCTRModel):
         # Standard leaf models (GatedDCN, STEC) are already fully supervised by KBCELoss above.
         # Adding their compute_loss() again would double-count the supervision (static + dynamic).
 
+        child_outputs = output.get("child_outputs", [])
         for i, model in enumerate(self.models):
-            # Check if model requires recursive loss
-            # We use model_name() or existence of specific attributes
-            # Safe allowlist approach:
+            if i >= len(child_outputs):
+                break
+            child_output = child_outputs[i]
 
-            # Use each model's own cached output for its internal loss
-            child_output = self._cached_outputs[i]
-
-            # Cast to BaseCTRModel to access model_name
             ctr_model = cast(BaseCTRModel, model)
             if ctr_model.model_name() in ["ensemble", "multi_head_diversity"]:
                 child_loss = ctr_model.compute_loss(child_output, y_true)

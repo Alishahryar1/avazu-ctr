@@ -1,4 +1,5 @@
-from typing import TypedDict
+from typing import NotRequired, TypedDict
+
 import torch
 
 
@@ -9,3 +10,6 @@ class ModelOutput(TypedDict):
     aux_logits: (
         list[torch.Tensor] | torch.Tensor | None
     )  # Optional branch logits for multi-branch models
+    child_outputs: NotRequired[
+        list["ModelOutput"]
+    ]  # For EnsembleModel: outputs from each sub-model
