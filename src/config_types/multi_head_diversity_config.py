@@ -1,4 +1,4 @@
-from typing import TypedDict, List
+from typing import TypedDict
 from .residual_mlp_config import ResidualMLPConfig
 
 
@@ -18,7 +18,7 @@ class MultiHeadDiversityConfig(TypedDict):
 
     backbone_type: str
     backbone_config: dict
-    heads: List[ResidualMLPConfig]
+    heads: list[ResidualMLPConfig]
     diversity_weight: float
     feature_bagging_ratio: (
         float  # 1.0 = no bagging, < 1.0 = ratio of features to keep per head

@@ -6,7 +6,25 @@ build-backend = "setuptools.build_meta"
 name = "avazu-ctr"
 version = "0.1.0"
 description = "Avazu CTR Prediction"
-requires-python = ">=3.8"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=2.0",
+    "polars>=1.36",
+    "torch>=2.0",
+    "torchvision>=0.24",
+    "scikit-learn>=1.8",
+    "tqdm>=4.67",
+    "tensorboard>=2.20",
+    "optuna>=4.6",
+    "pyperclip>=1.11",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0",
+    "ruff>=0.8",
+    "ty>=0.0.17",
+]
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -18,3 +36,22 @@ testpaths = ["tests"]
 
 [tool.pyrefly]
 search_path = ["."]
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+src = ["src", "tests", "misc", "train.py", "data_processor.py", "inference.py", "config.py"]
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = ["E501"]
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[[tool.ty.overrides]]
+include = ["tests/**"]
+rules = { all = "ignore" }

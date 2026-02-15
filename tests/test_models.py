@@ -161,10 +161,11 @@ class TestModelStructure(unittest.TestCase):
             self.skipTest("DCN is disabled in config")
         expected_layers = model_config["dcn_num_layers"]
         # Check either full-rank W or low-rank U (depending on config)
+        dcn = self.model.backbone.dcn
         if model_config["dcn_low_rank"] is not None:
-            actual_layers = len(self.model.dcn.U)
+            actual_layers = len(dcn.U)
         else:
-            actual_layers = len(self.model.dcn.W)
+            actual_layers = len(dcn.W)
         self.assertEqual(
             actual_layers,
             expected_layers,
@@ -178,13 +179,17 @@ class TestModelStructure(unittest.TestCase):
         The exact structure depends on use_layer_norm config.
         """
         # Import ResidualMLP to check type
-        from src.models.model import ResidualMLP
+        from src.models.layers import ResidualMLP
 
-        # Check MLP is a ResidualMLP
-        self.assertIsInstance(self.model.mlp, ResidualMLP, "MLP should be ResidualMLP")
+        # Check MLP is a ResidualMLP (inside backbone)
+        self.assertIsInstance(
+            self.model.backbone.mlp, ResidualMLP, "MLP should be ResidualMLP"
+        )
 
         # Check it has layers (at least one hidden layer)
-        self.assertGreater(len(self.model.mlp.layers), 0, "MLP should have layers")
+        self.assertGreater(
+            len(self.model.backbone.mlp.layers), 0, "MLP should have layers"
+        )
 
         # Check final output layer exists on the model (separate from MLP) and outputs single value
         output_layer = self.model.output_layer
@@ -392,7 +397,8 @@ class TestMutualExclusivity(unittest.TestCase):
         out = model(x)
         self.assertEqual(out["logits"].shape, (4, 1))
         self.assertTrue(
-            hasattr(model, "feature_gating"), "Model should have feature_gating layer"
+            model.backbone.feature_gating is not None,
+            "Model should have feature_gating layer",
         )
 
     def test_model_with_neither_senet_nor_feature_gating(self):
@@ -410,7 +416,9 @@ class TestMutualExclusivity(unittest.TestCase):
         x = torch.randint(0, 100, (4, 1))
         out = model(x)
         self.assertEqual(out["logits"].shape, (4, 1))
-        self.assertTrue(hasattr(model, "senet"), "Model should have senet layer")
+        self.assertTrue(
+            model.backbone.senet is not None, "Model should have senet layer"
+        )
 
 
 class TestFeatureEmbeddings(unittest.TestCase):
@@ -498,7 +506,9 @@ class TestFeatureEmbeddings(unittest.TestCase):
 
         # Should now work without raising an error
         model = GatedDCNModel(vocab_sizes, ["small", "large"], config)
-        self.assertTrue(hasattr(model, "senet"), "Model should have senet layer")
+        self.assertTrue(
+            model.backbone.senet is not None, "Model should have senet layer"
+        )
 
         # Forward pass should work
         x = torch.randint(0, 5, (4, 2))

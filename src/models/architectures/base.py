@@ -65,6 +65,14 @@ class BaseCTRModel(ABC, nn.Module):
         output = self.forward(x)
         return torch.sigmoid(output["logits"])
 
+    def post_step(self) -> None:
+        """
+        Optional hook called after each optimizer step (e.g. for weight normalization).
+
+        Override in subclasses that need post-step updates (e.g. nGPT-style models).
+        """
+        pass
+
     @classmethod
     @abstractmethod
     def model_name(cls) -> str:

@@ -4,8 +4,7 @@ from typing import Any, cast
 import torch
 import torch.nn as nn
 
-from config import ConfigType, ModelConfig
-from src.config_types import EnsembleConfig
+from src.config_types import ConfigType, EnsembleConfig, ModelConfig
 from src.models.types import ModelOutput
 from src.models.architectures.base import BaseCTRModel
 from src.models.losses import KBCELoss
@@ -42,21 +41,28 @@ def _create_model_from_config(
     # Create a full config by combining parent config with model-specific config
     full_config: ConfigType = {**parent_config, "model": model_config}  # type: ignore
 
-    # Detect model type by checking for unique keys
-    if "models" in model_config:
-        # EnsembleConfig - recursive!
+    model_type = model_config.get("model_type")
+
+    if model_type == "ensemble" or "models" in model_config:
         return EnsembleModel(vocab_sizes, feature_names, full_config, base_seed=seed)
-    elif "stec_num_layers" in model_config:
-        # STECConfig
+    if model_type == "stec" or "stec_num_layers" in model_config:
         return STECModel(vocab_sizes, feature_names, full_config)
-    elif "heads" in model_config and "backbone_type" in model_config:
-        # MultiHeadDiversityConfig
+    if model_type == "normalized_multi_head_diversity" or (
+        "heads" in model_config and "use_normalized_embeddings" in model_config
+    ):
+        from src.models.architectures.normalized_multi_head_diversity import (
+            NormalizedMultiHeadDiversityModel,
+        )
+
+        return NormalizedMultiHeadDiversityModel(vocab_sizes, feature_names, full_config)
+    if model_type == "multi_head_diversity" or (
+        "heads" in model_config and "backbone_type" in model_config
+    ):
         return MultiHeadDiversityModel(vocab_sizes, feature_names, full_config)
-    elif "use_dcn" in model_config:
-        # GatedDCNConfig
+    if model_type == "gated_dcn" or "use_dcn" in model_config:
         return GatedDCNModel(vocab_sizes, feature_names, full_config)
-    else:
-        raise ValueError(f"Unknown model config type. Keys: {model_config.keys()}")
+
+    raise ValueError(f"Unknown model config type. Keys: {list(model_config.keys())}")
 
 
 class EnsembleModel(BaseCTRModel):
@@ -113,9 +119,6 @@ class EnsembleModel(BaseCTRModel):
         # Internal loss for multi-branch architecture
         self._kbce_loss = KBCELoss()
 
-        # Cached outputs for compute_loss (set during forward)
-        self._cached_outputs: list[ModelOutput] = []
-
     def forward(self, x: torch.Tensor) -> ModelOutput:
         """
         Forward pass through all models in the ensemble.
@@ -124,23 +127,18 @@ class EnsembleModel(BaseCTRModel):
             x: Input tensor of shape [Batch, Num_Features]
 
         Returns:
-            ModelOutput with aggregated logits, branch logits, and full outputs for recursive loss
+            ModelOutput with aggregated logits, branch logits, and child outputs for recursive loss
         """
         all_logits = []
-        all_outputs = []  # Store full outputs for recursive loss computation
+        all_outputs: list[ModelOutput] = []
 
         for model in self.models:
             output = model(x)
             all_logits.append(output["logits"])
             all_outputs.append(output)
 
-        # Cache outputs for compute_loss
-        self._cached_outputs = all_outputs
-
-        # Stack all logits: [K, Batch, 1]
         stacked_logits = torch.stack(all_logits, dim=0)
 
-        # Aggregate predictions
         if self.ensemble_aggregation == "mean":
             aggregated = stacked_logits.mean(dim=0)
         elif self.ensemble_aggregation == "median":
@@ -150,7 +148,8 @@ class EnsembleModel(BaseCTRModel):
 
         return {
             "logits": aggregated,
-            "aux_logits": all_logits,  # List of k branch logits (for this level's K-BCE)
+            "aux_logits": all_logits,
+            "child_outputs": all_outputs,
         }
 
     def compute_loss(self, output: ModelOutput, y_true: torch.Tensor) -> torch.Tensor:
@@ -175,15 +174,12 @@ class EnsembleModel(BaseCTRModel):
         # Standard leaf models (GatedDCN, STEC) are already fully supervised by KBCELoss above.
         # Adding their compute_loss() again would double-count the supervision (static + dynamic).
 
+        child_outputs = output.get("child_outputs", [])
         for i, model in enumerate(self.models):
-            # Check if model requires recursive loss
-            # We use model_name() or existence of specific attributes
-            # Safe allowlist approach:
+            if i >= len(child_outputs):
+                break
+            child_output = child_outputs[i]
 
-            # Use each model's own cached output for its internal loss
-            child_output = self._cached_outputs[i]
-
-            # Cast to BaseCTRModel to access model_name
             ctr_model = cast(BaseCTRModel, model)
             if ctr_model.model_name() in ["ensemble", "multi_head_diversity"]:
                 child_loss = ctr_model.compute_loss(child_output, y_true)

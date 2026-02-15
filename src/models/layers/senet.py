@@ -1,12 +1,12 @@
 """Squeeze-and-Excitation Network layer (SENet+) - Optimized."""
 
-import PIL.ImageSequence
 from typing import Literal
+
 import torch
-from torch import Tensor
 import torch.nn as nn
+from torch import Tensor
+
 from src.models.utils import get_activation
-from typing import List, Union
 
 
 class SENetLayer(nn.Module):
@@ -20,8 +20,8 @@ class SENetLayer(nn.Module):
     def __init__(
         self,
         num_fields: int,
-        feature_dims: Union[List[int], int],
-        squeeze_funcs: List[str] = ["mean"],
+        feature_dims: list[int] | int,
+        squeeze_funcs: list[str] | None = None,
         reduction_ratio: int = 3,
         hidden_activation: str = "relu",
         excitation_activation: str = "sigmoid",
@@ -32,7 +32,7 @@ class SENetLayer(nn.Module):
     ):
         super().__init__()
         self.num_fields = num_fields
-        self.squeeze_funcs = squeeze_funcs
+        self.squeeze_funcs = squeeze_funcs if squeeze_funcs is not None else ["mean"]
         self.num_groups = num_groups
         self.reweight_mode = reweight_mode
         self.use_fuse = use_fuse
@@ -62,7 +62,7 @@ class SENetLayer(nn.Module):
         )
 
         # --- 2. Network Architecture ---
-        num_squeeze_funcs = len(squeeze_funcs)
+        num_squeeze_funcs = len(self.squeeze_funcs)
 
         # Input to Excitation: (Num_Fields * Num_Groups * Num_Funcs)
         squeeze_output_dim = num_fields * num_groups * num_squeeze_funcs
@@ -88,7 +88,7 @@ class SENetLayer(nn.Module):
         if use_layer_norm:
             self.layer_norm = nn.LayerNorm(self.total_dim)
 
-    def forward(self, embeddings: List[torch.Tensor]) -> torch.Tensor:
+    def forward(self, embeddings: list[torch.Tensor]) -> torch.Tensor:
         """
         Args:
             embeddings: List of tensors, where each is [Batch, Dim_i]
