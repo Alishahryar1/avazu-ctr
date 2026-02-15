@@ -167,6 +167,7 @@ CONFIG: ConfigType = {
     # Reference: "nGPT: Normalized Transformer with Representation Learning
     #            on the Hypersphere" (Loshchilov et al., ICLR 2025)
     "model": {
+        "model_type": "normalized_multi_head_diversity",
         "backbone_type": "gated_dcn",
         "diversity_weight": 0.001,
         "feature_bagging_ratio": 0.8,

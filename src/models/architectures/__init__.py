@@ -1,6 +1,6 @@
 """Model architectures for CTR prediction."""
 
-from config import ConfigType
+from src.config_types import ConfigType
 from src.models.architectures.base import BaseCTRModel
 from src.models.types import ModelOutput
 from src.models.architectures.gated_dcn import GatedDCNModel
@@ -27,11 +27,7 @@ def create_model(
     """
     Factory function to create the appropriate model based on config.
 
-    Config flags checked (in order of priority):
-    - use_ensemble: Creates EnsembleModel
-    - use_stec: Creates STECModel
-    - MultiHeadDiversityConfig detected: Creates MultiHeadDiversityModel
-    - Otherwise: Creates GatedDCNModel (default)
+    Uses model_type if present, otherwise falls back to key-based detection.
 
     Args:
         config: Configuration dictionary
@@ -42,24 +38,32 @@ def create_model(
         Instantiated model
     """
     model_config = config.get("model", {})
+    model_type = model_config.get("model_type")
 
-    # Check for ensemble config (has 'models' key)
+    if model_type == "ensemble":
+        return EnsembleModel(vocab_sizes, feature_names, config)
+    if model_type == "stec":
+        return STECModel(vocab_sizes, feature_names, config)
+    if model_type == "normalized_multi_head_diversity":
+        return NormalizedMultiHeadDiversityModel(vocab_sizes, feature_names, config)
+    if model_type == "multi_head_diversity":
+        return MultiHeadDiversityModel(vocab_sizes, feature_names, config)
+    if model_type == "gated_dcn":
+        return GatedDCNModel(vocab_sizes, feature_names, config)
+
+    # Fallback: key-based detection for backward compatibility
     if "models" in model_config:
         return EnsembleModel(vocab_sizes, feature_names, config)
-    # Check for STEC config (has 'stec_num_layers' key)
-    elif "stec_num_layers" in model_config:
+    if "stec_num_layers" in model_config:
         return STECModel(vocab_sizes, feature_names, config)
-    # Check for NormalizedMultiHeadDiversity config (has 'use_normalized_embeddings' key)
-    elif "heads" in model_config and "use_normalized_embeddings" in model_config:
+    if "heads" in model_config and "use_normalized_embeddings" in model_config:
         return NormalizedMultiHeadDiversityModel(vocab_sizes, feature_names, config)
-    # Check for MultiHeadDiversity config (has 'heads' key)
-    elif "heads" in model_config and "backbone_type" in model_config:
+    if "heads" in model_config and "backbone_type" in model_config:
         return MultiHeadDiversityModel(vocab_sizes, feature_names, config)
-    # Default to GatedDCN (has 'use_dcn' key or fallback)
-    elif "use_dcn" in model_config:
+    if "use_dcn" in model_config:
         return GatedDCNModel(vocab_sizes, feature_names, config)
-    else:
-        raise ValueError(f"Unsupported model config keys: {model_config.keys()}")
+
+    raise ValueError(f"Unsupported model config. Set model_type or use known keys. Keys: {list(model_config.keys())}")
 
 
 __all__ = [

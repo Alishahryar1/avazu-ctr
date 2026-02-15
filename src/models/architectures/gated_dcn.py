@@ -4,7 +4,7 @@ from typing import cast
 import torch
 import torch.nn as nn
 
-from config import ConfigType
+from src.config_types import ConfigType
 from src.config_types import GatedDCNConfig
 from src.models.utils import get_embedding
 from src.models.types import ModelOutput

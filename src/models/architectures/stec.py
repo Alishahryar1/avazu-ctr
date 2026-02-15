@@ -12,7 +12,7 @@ from typing import Any, Optional, cast
 import torch
 import torch.nn as nn
 
-from config import ConfigType
+from src.config_types import ConfigType
 from src.models.utils import get_embedding
 from src.models.types import ModelOutput
 from src.models.architectures.base import BaseCTRModel

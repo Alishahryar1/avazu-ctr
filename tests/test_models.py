@@ -178,7 +178,7 @@ class TestModelStructure(unittest.TestCase):
         The exact structure depends on use_layer_norm config.
         """
         # Import ResidualMLP to check type
-        from src.models.model import ResidualMLP
+        from src.models.layers import ResidualMLP
 
         # Check MLP is a ResidualMLP
         self.assertIsInstance(self.model.mlp, ResidualMLP, "MLP should be ResidualMLP")
