@@ -17,9 +17,11 @@ evaluation.
 
 ## Requirements
 
-- Python 3.12
 - [`uv`](https://docs.astral.sh/uv/)
 - An NVIDIA driver compatible with the CUDA 13.0 PyTorch build for GPU training
+
+uv automatically downloads and manages the Python 3.12 runtime requested by
+`.python-version`; a system Python installation is not required.
 
 Install one—and only one—PyTorch backend:
 
@@ -46,23 +48,23 @@ Install the locked official Kaggle CLI alongside the selected PyTorch backend:
 
 ```powershell
 uv sync --extra cu130 --group dev --group kaggle
-uv run --frozen --extra cu130 --group kaggle kaggle --version
+uv run --locked --extra cu130 --group kaggle kaggle --version
 ```
 
 Authenticate through Kaggle's browser-based OAuth flow. Credentials are stored
 outside the repository:
 
 ```powershell
-uv run --frozen --extra cu130 --group kaggle kaggle auth login
+uv run --locked --extra cu130 --group kaggle kaggle auth login
 ```
 
 Download the competition data, inspect submission history, or submit a generated
 file:
 
 ```powershell
-uv run --frozen --extra cu130 --group kaggle kaggle competitions download avazu-ctr-prediction -p data/raw
-uv run --frozen --extra cu130 --group kaggle kaggle competitions submissions avazu-ctr-prediction
-uv run --frozen --extra cu130 --group kaggle kaggle competitions submit avazu-ctr-prediction -f submission.csv -m "reproduction"
+uv run --locked --extra cu130 --group kaggle kaggle competitions download avazu-ctr-prediction -p data/raw
+uv run --locked --extra cu130 --group kaggle kaggle competitions submissions avazu-ctr-prediction
+uv run --locked --extra cu130 --group kaggle kaggle competitions submit avazu-ctr-prediction -f submission.csv -m "reproduction"
 ```
 
 Use `--extra cpu` instead of `--extra cu130` on CPU-only systems. Never commit
