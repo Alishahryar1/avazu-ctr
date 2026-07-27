@@ -1,5 +1,11 @@
-"""Unified production training."""
+"""Evaluation training and fixed-budget production refitting."""
 
-from avazu_ctr.training.engine import Trainer, TrainingResult
+from avazu_ctr.training.candidate import CandidateResult, CandidateTrainer
+from avazu_ctr.training.refit import ProductionRefitter, RefitResult
 
-__all__ = ["Trainer", "TrainingResult"]
+__all__ = [
+    "CandidateResult",
+    "CandidateTrainer",
+    "ProductionRefitter",
+    "RefitResult",
+]

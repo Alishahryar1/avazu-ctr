@@ -207,8 +207,13 @@ class TrainingConfig(StrictModel):
 class TrackingConfig(StrictModel):
     database: Path = Path("artifacts/experiments.sqlite3")
     tensorboard_dir: Path = Path("artifacts/tensorboard")
-    champion_dir: Path = Path("artifacts/champion")
+    selection_dir: Path = Path("artifacts/selection")
     tensorboard: bool = True
+
+
+class DeploymentConfig(StrictModel):
+    champion_dir: Path = Path("artifacts/champion")
+    max_weight_bytes: Annotated[int, Field(gt=0)] = 512 * 1024 * 1024
 
 
 class TuningConfig(StrictModel):
@@ -224,22 +229,24 @@ class PromotionConfig(StrictModel):
     bootstrap_block_rows: Annotated[int, Field(gt=0)] = 100_000
     confidence: Annotated[float, Field(gt=0.5, lt=1.0)] = 0.95
     fold_guard: Annotated[float, Field(ge=0.0)] = 0.0001
-    max_weight_bytes: Annotated[int, Field(gt=0)] = 512 * 1024 * 1024
 
 
 class ExperimentConfig(StrictModel):
-    schema_version: Literal[2]
+    schema_version: Literal[3]
     name: str
     data: DataConfig = DataConfig()
     model: ModelConfig
     objective: ObjectiveConfig = ObjectiveConfig()
     training: TrainingConfig = TrainingConfig()
     tracking: TrackingConfig = TrackingConfig()
+    deployment: DeploymentConfig = DeploymentConfig()
     tuning: TuningConfig = TuningConfig()
     promotion: PromotionConfig = PromotionConfig()
 
     @model_validator(mode="after")
     def validate_feature_configuration(self) -> Self:
+        if self.tracking.selection_dir.resolve() == self.deployment.champion_dir.resolve():
+            raise ValueError("selection and champion directories must differ")
         allowed_raw = set(AVAZU_CATEGORICAL_COLUMNS)
         categorical = set(self.data.categorical_columns)
         if len(categorical) != len(self.data.categorical_columns):

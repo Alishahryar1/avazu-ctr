@@ -15,8 +15,13 @@ from avazu_ctr.config.loader import resolved_config
 from avazu_ctr.config.schema import EmbeddingKind, ExperimentConfig
 from avazu_ctr.data.manifest import (
     DatasetManifest,
+    DatasetPurpose,
     FittedTableManifest,
+    HourRange,
+    RawSource,
     ShardManifest,
+    load_manifest,
+    population_sha256,
     sha256_file,
     sha256_json,
     write_manifest,
@@ -25,7 +30,7 @@ from avazu_ctr.data.schema import ENGINEERED_CATEGORICAL_COLUMNS, scan_raw
 from avazu_ctr.data.split import TemporalWindow, build_temporal_windows
 
 NUMERICAL_BASE = ("hour_sin", "hour_cos")
-CANONICAL_SCHEMA_VERSION = 2
+CANONICAL_SCHEMA_VERSION = 3
 
 
 @dataclass(slots=True)
@@ -117,6 +122,31 @@ def temporal_windows(config: ExperimentConfig) -> tuple[TemporalWindow, ...]:
 
     raw, _ = _canonical_scan(config, config.data.train_path, labelled=True)
     return _temporal_windows(raw, config)
+
+
+def feature_config_sha256(config: ExperimentConfig) -> str:
+    """Hash only configuration fields that change processed feature values."""
+
+    categorical = (*config.data.categorical_columns, *ENGINEERED_CATEGORICAL_COLUMNS)
+    embedding_kinds = {
+        feature: config.model.feature_embeddings.get(
+            feature,
+            config.model.default_embedding,
+        ).kind.value
+        for feature in categorical
+    }
+    return sha256_json(
+        {
+            "schema_version": 3,
+            "categorical_columns": config.data.categorical_columns,
+            "count_columns": config.data.count_columns,
+            "minimum_frequency": config.data.minimum_frequency,
+            "vocabulary_limit": config.data.vocabulary_limit,
+            "target_encoding": config.data.target_encoding.model_dump(mode="json"),
+            "embedding_kinds": embedding_kinds,
+            "hash_seed": config.training.seed,
+        }
+    )
 
 
 def _write_table(frame: pl.DataFrame, path: Path, feature: str, kind: str) -> FittedTableManifest:
@@ -286,14 +316,17 @@ def _training_target_encodings(
     train: pl.LazyFrame,
     state: FittedState,
     config: ExperimentConfig,
-    window: TemporalWindow,
+    training_range: HourRange,
 ) -> pl.LazyFrame:
     target = config.data.target_encoding
     if not target.enabled:
         return train
-    width = max(1, (window.train_end - window.train_start + target.blocks - 1) // target.blocks)
+    width = max(
+        1,
+        (training_range.end - training_range.start + target.blocks - 1) // target.blocks,
+    )
     transformed = train.with_columns(
-        ((pl.col("_timestamp_hour") - window.train_start) // width)
+        ((pl.col("_timestamp_hour") - training_range.start) // width)
         .clip(0, target.blocks - 1)
         .alias("_te_block")
     )
@@ -399,11 +432,11 @@ def _finalize(
     *,
     labelled: bool,
     training: bool,
-    window: TemporalWindow,
+    training_range: HourRange,
 ) -> pl.LazyFrame:
     transformed = _apply_counts(frame, state)
     transformed = (
-        _training_target_encodings(transformed, state, config, window)
+        _training_target_encodings(transformed, state, config, training_range)
         if training
         else _validation_target_encodings(transformed, state, config)
     )
@@ -456,105 +489,52 @@ def _relative_shards(shards: tuple[ShardManifest, ...], root: Path) -> tuple[Sha
     )
 
 
-def preprocess(
-    config: ExperimentConfig,
+def _staging_root(root: Path, artifact_root: Path, *, overwrite: bool) -> Path:
+    resolved_root = root.resolve()
+    resolved_artifact_root = artifact_root.resolve()
+    if (
+        resolved_root == resolved_artifact_root
+        or resolved_artifact_root not in resolved_root.parents
+    ):
+        raise ValueError(f"dataset output must be below the artifact root: {resolved_root}")
+    if root.exists() and not overwrite:
+        raise FileExistsError(f"{root} already exists; pass overwrite=True to replace it")
+    root.parent.mkdir(parents=True, exist_ok=True)
+    staging = root.parent / f".{root.name}-{uuid.uuid4().hex}.staging"
+    staging.mkdir()
+    return staging
+
+
+def _publish_dataset(staging: Path, root: Path) -> Path:
+    backup = root.parent / f".{root.name}-{uuid.uuid4().hex}.backup"
+    replaced = root.exists()
+    if replaced:
+        root.replace(backup)
+    try:
+        staging.replace(root)
+        load_manifest(root / "manifest.json", verify_shards=True)
+    except Exception:
+        if root.exists():
+            shutil.rmtree(root)
+        if replaced:
+            backup.replace(root)
+        raise
+    if replaced:
+        shutil.rmtree(backup)
+    return root / "manifest.json"
+
+
+def _write_preprocessor(
+    state: FittedState,
+    path: Path,
     *,
-    window_name: str = "final_holdout",
-    include_test: bool = True,
-    overwrite: bool = False,
-) -> Path:
-    raw, raw_sha256 = _canonical_scan(
-        config,
-        config.data.train_path,
-        labelled=True,
-    )
-    _validate_labels(raw)
-    windows = {window.name: window for window in _temporal_windows(raw, config)}
-    if window_name not in windows:
-        raise ValueError(f"unknown window {window_name!r}; choose one of {sorted(windows)}")
-    window = windows[window_name]
-
-    root = config.data.artifact_root / "datasets" / config.name / window.name
-    if root.exists():
-        if not overwrite:
-            raise FileExistsError(f"{root} already exists; pass overwrite=True to replace it")
-        resolved_root = root.resolve()
-        artifact_root = config.data.artifact_root.resolve()
-        if artifact_root not in resolved_root.parents:
-            raise ValueError(f"refusing to remove output outside artifact root: {resolved_root}")
-        shutil.rmtree(resolved_root)
-    root.mkdir(parents=True)
-    state_dir = root / "state"
-
-    train = _within(raw, window.train_start, window.train_end)
-    validation = _within(raw, window.valid_start, window.valid_end)
-    state = _fit_state(train, config, state_dir)
-
-    train_frame = _finalize(
-        train,
-        state,
-        config,
-        labelled=True,
-        training=True,
-        window=window,
-    )
-    valid_frame = _finalize(
-        validation,
-        state,
-        config,
-        labelled=True,
-        training=False,
-        window=window,
-    )
-    train_shards = _write_shards(train_frame, root / "train", config.data.shard_rows)
-    validation_shards = _write_shards(valid_frame, root / "validation", config.data.shard_rows)
-
-    test_shards: tuple[ShardManifest, ...] = ()
-    if include_test and window.final_holdout and config.data.test_path.exists():
-        test, _ = _canonical_scan(
-            config,
-            config.data.test_path,
-            labelled=False,
-        )
-        test_frame = _finalize(
-            test,
-            state,
-            config,
-            labelled=False,
-            training=False,
-            window=window,
-        )
-        test_shards = _write_shards(test_frame, root / "test", config.data.shard_rows)
-
-    lock_path = Path("uv.lock")
-    config_dict = resolved_config(config)
-    manifest = DatasetManifest(
-        name=window.name,
-        raw_path=str(config.data.train_path),
-        raw_sha256=raw_sha256,
-        train_start=window.train_start,
-        train_end=window.train_end,
-        valid_start=window.valid_start,
-        valid_end=window.valid_end,
-        categorical_columns=state.categorical_columns,
-        numerical_columns=state.numerical_columns,
-        cardinalities=state.cardinalities,
-        embedding_kinds=state.embedding_kinds,
-        train_shards=_relative_shards(train_shards, root),
-        validation_shards=_relative_shards(validation_shards, root),
-        test_shards=_relative_shards(test_shards, root),
-        fitted_tables=tuple(
-            table.model_copy(update={"path": f"state/{table.path}"}) for table in state.tables
-        ),
-        config_sha256=sha256_json(config_dict),
-        package_lock_sha256=sha256_file(lock_path) if lock_path.exists() else None,
-    )
-    manifest_path = root / "manifest.json"
-    write_manifest(manifest, manifest_path)
-    (state_dir / "preprocessor.json").write_text(
+    purpose: DatasetPurpose,
+) -> None:
+    path.write_text(
         json.dumps(
             {
-                "schema_version": 2,
+                "schema_version": 3,
+                "purpose": purpose.value,
                 "global_prior": state.global_prior,
                 "categorical_columns": state.categorical_columns,
                 "numerical_columns": state.numerical_columns,
@@ -566,4 +546,184 @@ def preprocess(
         ),
         encoding="utf-8",
     )
-    return manifest_path
+
+
+def _package_lock_sha256() -> str | None:
+    lock_path = Path("uv.lock")
+    return sha256_file(lock_path) if lock_path.exists() else None
+
+
+def preprocess_evaluation(
+    config: ExperimentConfig,
+    *,
+    window_name: str = "final_holdout",
+    overwrite: bool = False,
+) -> Path:
+    """Fit one train/validation window without touching prediction data."""
+
+    raw, raw_sha256 = _canonical_scan(config, config.data.train_path, labelled=True)
+    _validate_labels(raw)
+    windows = {window.name: window for window in _temporal_windows(raw, config)}
+    if window_name not in windows:
+        raise ValueError(f"unknown window {window_name!r}; choose one of {sorted(windows)}")
+    window = windows[window_name]
+    training_range = HourRange(start=window.train_start, end=window.train_end)
+    validation_range = HourRange(start=window.valid_start, end=window.valid_end)
+
+    root = config.data.artifact_root / "datasets" / config.name / window.name
+    staging = _staging_root(root, config.data.artifact_root, overwrite=overwrite)
+    try:
+        state_dir = staging / "state"
+        train = _within(raw, training_range.start, training_range.end)
+        validation = _within(raw, validation_range.start, validation_range.end)
+        state = _fit_state(train, config, state_dir)
+        train_shards = _write_shards(
+            _finalize(
+                train,
+                state,
+                config,
+                labelled=True,
+                training=True,
+                training_range=training_range,
+            ),
+            staging / "train",
+            config.data.shard_rows,
+        )
+        validation_shards = _write_shards(
+            _finalize(
+                validation,
+                state,
+                config,
+                labelled=True,
+                training=False,
+                training_range=training_range,
+            ),
+            staging / "validation",
+            config.data.shard_rows,
+        )
+        manifest = DatasetManifest(
+            name=window.name,
+            purpose=DatasetPurpose.EVALUATION,
+            labelled_source=RawSource(path=str(config.data.train_path), sha256=raw_sha256),
+            training_range=training_range,
+            validation_range=validation_range,
+            training_population_sha256=population_sha256(
+                raw_sha256,
+                split="labelled",
+                hour_range=training_range,
+            ),
+            validation_population_sha256=population_sha256(
+                raw_sha256,
+                split="labelled",
+                hour_range=validation_range,
+            ),
+            categorical_columns=state.categorical_columns,
+            numerical_columns=state.numerical_columns,
+            cardinalities=state.cardinalities,
+            embedding_kinds=state.embedding_kinds,
+            train_shards=_relative_shards(train_shards, staging),
+            validation_shards=_relative_shards(validation_shards, staging),
+            fitted_tables=tuple(
+                table.model_copy(update={"path": f"state/{table.path}"}) for table in state.tables
+            ),
+            resolved_config_sha256=sha256_json(resolved_config(config)),
+            feature_config_sha256=feature_config_sha256(config),
+            package_lock_sha256=_package_lock_sha256(),
+        )
+        write_manifest(manifest, staging / "manifest.json")
+        _write_preprocessor(
+            state,
+            state_dir / "preprocessor.json",
+            purpose=DatasetPurpose.EVALUATION,
+        )
+        return _publish_dataset(staging, root)
+    except Exception:
+        if staging.exists():
+            shutil.rmtree(staging)
+        raise
+
+
+def preprocess_production(
+    config: ExperimentConfig,
+    *,
+    overwrite: bool = False,
+) -> Path:
+    """Fit the deployable feature state on every labelled row."""
+
+    raw, raw_sha256 = _canonical_scan(config, config.data.train_path, labelled=True)
+    _validate_labels(raw)
+    windows = _temporal_windows(raw, config)
+    final_window = windows[-1]
+    training_range = HourRange(start=final_window.train_start, end=final_window.valid_end)
+    test, test_sha256 = _canonical_scan(config, config.data.test_path, labelled=False)
+
+    root = config.data.artifact_root / "datasets" / config.name / "production"
+    staging = _staging_root(root, config.data.artifact_root, overwrite=overwrite)
+    try:
+        state_dir = staging / "state"
+        train = _within(raw, training_range.start, training_range.end)
+        state = _fit_state(train, config, state_dir)
+        train_shards = _write_shards(
+            _finalize(
+                train,
+                state,
+                config,
+                labelled=True,
+                training=True,
+                training_range=training_range,
+            ),
+            staging / "train",
+            config.data.shard_rows,
+        )
+        test_shards = _write_shards(
+            _finalize(
+                test,
+                state,
+                config,
+                labelled=False,
+                training=False,
+                training_range=training_range,
+            ),
+            staging / "test",
+            config.data.shard_rows,
+        )
+        manifest = DatasetManifest(
+            name="production",
+            purpose=DatasetPurpose.PRODUCTION,
+            labelled_source=RawSource(path=str(config.data.train_path), sha256=raw_sha256),
+            prediction_source=RawSource(path=str(config.data.test_path), sha256=test_sha256),
+            training_range=training_range,
+            training_population_sha256=population_sha256(
+                raw_sha256,
+                split="labelled",
+                hour_range=training_range,
+            ),
+            test_population_sha256=population_sha256(
+                test_sha256,
+                split="prediction",
+                hour_range=None,
+            ),
+            categorical_columns=state.categorical_columns,
+            numerical_columns=state.numerical_columns,
+            cardinalities=state.cardinalities,
+            embedding_kinds=state.embedding_kinds,
+            train_shards=_relative_shards(train_shards, staging),
+            test_shards=_relative_shards(test_shards, staging),
+            fitted_tables=tuple(
+                table.model_copy(update={"path": f"state/{table.path}"}) for table in state.tables
+            ),
+            resolved_config_sha256=sha256_json(resolved_config(config)),
+            feature_config_sha256=feature_config_sha256(config),
+            package_lock_sha256=_package_lock_sha256(),
+        )
+        write_manifest(manifest, staging / "manifest.json")
+        _write_preprocessor(
+            state,
+            state_dir / "preprocessor.json",
+            purpose=DatasetPurpose.PRODUCTION,
+        )
+        return _publish_dataset(staging, root)
+    except Exception:
+        if staging.exists():
+            shutil.rmtree(staging)
+        raise

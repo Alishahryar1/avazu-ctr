@@ -10,7 +10,7 @@ from typing import Any
 
 import polars as pl
 
-from avazu_ctr.data.manifest import load_manifest
+from avazu_ctr.data.manifest import DatasetPurpose, load_manifest
 from avazu_ctr.data.schema import RAW_CATEGORICAL_COLUMNS, scan_raw
 
 
@@ -42,16 +42,43 @@ def _write_report(payload: dict[str, Any], output: Path, title: str) -> tuple[Pa
 def dataset_report(manifest_path: str | Path, output: str | Path) -> tuple[Path, Path]:
     path = Path(manifest_path)
     manifest = load_manifest(path, verify_shards=True)
-    validation = pl.scan_parquet([path.parent / shard.path for shard in manifest.validation_shards])
-    summary = validation.select(
-        pl.len().alias("rows"),
-        pl.col("click").mean().alias("click_rate"),
-        pl.col("_timestamp_hour").min().alias("first_hour"),
-        pl.col("_timestamp_hour").max().alias("last_hour"),
-    ).collect(engine="streaming")
+    if manifest.purpose is DatasetPurpose.EVALUATION:
+        validation = pl.scan_parquet(
+            [path.parent / shard.path for shard in manifest.validation_shards]
+        )
+        summaries = {
+            "validation": validation.select(
+                pl.len().alias("rows"),
+                pl.col("click").mean().alias("click_rate"),
+                pl.col("_timestamp_hour").min().alias("first_hour"),
+                pl.col("_timestamp_hour").max().alias("last_hour"),
+            )
+            .collect(engine="streaming")
+            .to_dicts()[0]
+        }
+    else:
+        train = pl.scan_parquet([path.parent / shard.path for shard in manifest.train_shards])
+        test = pl.scan_parquet([path.parent / shard.path for shard in manifest.test_shards])
+        summaries = {
+            "train": train.select(
+                pl.len().alias("rows"),
+                pl.col("click").mean().alias("click_rate"),
+                pl.col("_timestamp_hour").min().alias("first_hour"),
+                pl.col("_timestamp_hour").max().alias("last_hour"),
+            )
+            .collect(engine="streaming")
+            .to_dicts()[0],
+            "test": test.select(
+                pl.len().alias("rows"),
+                pl.col("_timestamp_hour").min().alias("first_hour"),
+                pl.col("_timestamp_hour").max().alias("last_hour"),
+            )
+            .collect(engine="streaming")
+            .to_dicts()[0],
+        }
     payload = {
         "manifest": json.loads(manifest.model_dump_json()),
-        "validation_summary": summary.to_dicts()[0],
+        "split_summaries": summaries,
         "weight_cardinality_estimate": sum(manifest.cardinalities.values()),
     }
     return _write_report(payload, Path(output), f"Dataset report: {manifest.name}")
@@ -94,14 +121,23 @@ def run_report(database: str | Path, output: str | Path) -> tuple[Path, Path]:
                 "SELECT * FROM metrics ORDER BY run_id, step, split, name"
             )
         ]
-        promotions = [
+        selection_decisions = [
             dict(row)
-            for row in connection.execute("SELECT * FROM promotions ORDER BY promotion_id")
+            for row in connection.execute("SELECT * FROM selection_decisions ORDER BY decision_id")
+        ]
+        deployments = [
+            dict(row)
+            for row in connection.execute("SELECT * FROM deployments ORDER BY deployment_id")
         ]
     finally:
         connection.close()
     return _write_report(
-        {"runs": runs, "metrics": metrics, "promotions": promotions},
+        {
+            "runs": runs,
+            "metrics": metrics,
+            "selection_decisions": selection_decisions,
+            "deployments": deployments,
+        },
         Path(output),
         "Experiment comparison",
     )

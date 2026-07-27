@@ -13,4 +13,10 @@ bitwise equivalence is therefore required for data and CPU state round trips,
 while normal GPU comparisons use recorded seeds and metric tolerances.
 
 Every run stores the package-lock hash, data manifest, resolved configuration,
-source commit/diff fingerprint, and environment snapshot.
+source commit/diff fingerprint, environment snapshot, immutable training plan,
+and terminal execution summary.
+
+The selected final-holdout epoch is evidence, not a checkpoint. Production
+refit restarts from the recorded seed on the all-labelled manifest, rebuilds
+the optimizer and scheduler for exactly `best_epoch + 1` epochs, and records
+the resulting epoch and step counts in the deployed bundle.

@@ -11,7 +11,9 @@
 - Python, PyTorch, CUDA, platform, and device details;
 - train/validation metrics;
 - Optuna trial identity;
-- artifacts and promotion decisions;
+- immutable training plans and terminal summaries;
+- selection decisions and evidence checksums;
+- production deployments and replacement lineage;
 - terminal status and failure traceback.
 
 Failed trials stay failed. Only explicit Optuna pruning is recorded as pruned.
@@ -30,15 +32,23 @@ Only scalar histories are mirrored. SQLite remains authoritative.
 ## Weight retention
 
 - Optuna trials never write weights.
-- Production resume state is disabled by default.
-- When enabled, one `resume.pt` is atomically overwritten and deleted after a
-  successful run.
-- Candidate inference artifacts are temporary.
-- Later runs retain no weights unless `train --export-candidate` is explicit.
-- Evaluation comparison files carry the originating run ID and ordered rows.
-- `promote` requires paired final-holdout rows plus every walk-forward loss.
+- Candidate resume state is opt-in. One `resume.pt` is atomically overwritten
+  and deleted after a successful run.
+- Production refits never write resume checkpoints.
+- Tuning trials, confirmations, and final-holdout candidates retain no weights.
+- Confirmation evidence contains exact fold run IDs, manifests, populations,
+  row counts, and logloss values.
+- Selection evidence adds the final-holdout run, best epoch, metrics, and
+  checksummed row losses.
+- Evaluation uses a single ordered validation reader so paired row losses stay
+  aligned even when training uses multiple workers.
+- `promote` cross-checks evidence against completed SQLite runs before applying
+  the paired gate.
 - Uncertainty uses a paired contiguous-block bootstrap, avoiding billions of
   row resamples while retaining local temporal dependence.
-- Promotion verifies strict loading and checksums before replacement.
-- Superseded champion weights are deleted only after the new champion loads.
-- Promoted model weights cannot exceed 512 MiB.
+- The active selection stores no model weights.
+- Production refit runs a recorded fixed epoch/step plan without validation.
+- Deployment verifies that the selection did not change during refit.
+- Superseded champion weights are deleted only after the staged replacement
+  strictly loads and its deployment record commits.
+- Exactly one production bundle is retained, with a 512 MiB weight cap.

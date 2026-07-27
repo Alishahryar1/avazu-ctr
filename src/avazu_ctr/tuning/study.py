@@ -1,34 +1,22 @@
-"""Focused Optuna stages backed by the production trainer."""
+"""Focused Optuna stages with typed walk-forward confirmation."""
 
 from __future__ import annotations
 
 import json
+import traceback
 from collections.abc import Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 import optuna
 
 from avazu_ctr.config.loader import resolved_config
-from avazu_ctr.config.schema import (
-    Aggregation,
-    ExperimentConfig,
-)
-from avazu_ctr.data.manifest import load_manifest
-from avazu_ctr.tracking import RunStore
-from avazu_ctr.training import Trainer
+from avazu_ctr.config.schema import Aggregation, ExperimentConfig
+from avazu_ctr.data.manifest import DatasetPurpose, load_manifest, sha256_file, sha256_json
+from avazu_ctr.tracking.evidence import ConfirmationEvidence, FoldEvidence
+from avazu_ctr.tracking.store import RunStore
+from avazu_ctr.training import CandidateTrainer
 
 STAGES = ("optimizer", "capacity", "multihead", "regularization")
-
-
-@dataclass(frozen=True, slots=True)
-class ConfirmationResult:
-    config: ExperimentConfig
-    fold_losses: tuple[float, ...]
-
-    @property
-    def mean_logloss(self) -> float:
-        return sum(self.fold_losses) / len(self.fold_losses)
 
 
 def _sample_config(
@@ -46,7 +34,12 @@ def _sample_config(
         scheduler = dense.scheduler.model_copy(
             update={
                 "warmup_ratio": trial.suggest_float("warmup_ratio", 0.0, 0.15),
-                "minimum_lr_ratio": trial.suggest_float("minimum_lr_ratio", 0.001, 0.1, log=True),
+                "minimum_lr_ratio": trial.suggest_float(
+                    "minimum_lr_ratio",
+                    0.001,
+                    0.1,
+                    log=True,
+                ),
             }
         )
         dense = dense.model_copy(update={"scheduler": scheduler})
@@ -80,8 +73,18 @@ def _sample_config(
         )
         objective = base.objective.model_copy(
             update={
-                "auxiliary_weight": trial.suggest_float("auxiliary_weight", 0.05, 0.5, log=True),
-                "diversity_weight": trial.suggest_float("diversity_weight", 1e-3, 0.2, log=True),
+                "auxiliary_weight": trial.suggest_float(
+                    "auxiliary_weight",
+                    0.05,
+                    0.5,
+                    log=True,
+                ),
+                "diversity_weight": trial.suggest_float(
+                    "diversity_weight",
+                    1e-3,
+                    0.2,
+                    log=True,
+                ),
             }
         )
         return base.model_copy(update={"model": model, "objective": objective})
@@ -97,6 +100,53 @@ def _sample_config(
     return base.model_copy(update={"model": model})
 
 
+def confirm_configuration(
+    config: ExperimentConfig,
+    manifests: Sequence[str | Path],
+    *,
+    store: RunStore | None = None,
+    parent_run_id: str | None = None,
+) -> ConfirmationEvidence:
+    expected_names = tuple(
+        f"walk_forward_{index}" for index in range(config.data.split.walk_forward_folds)
+    )
+    paths = tuple(Path(path) for path in manifests)
+    if len(paths) != len(expected_names):
+        raise ValueError(f"confirmation requires exactly {len(expected_names)} fold manifests")
+    run_store = store or RunStore(config.tracking.database)
+    folds: list[FoldEvidence] = []
+    for expected_name, path in zip(expected_names, paths, strict=True):
+        manifest = load_manifest(path, verify_shards=True)
+        if manifest.purpose is not DatasetPurpose.EVALUATION:
+            raise ValueError(f"{path} is not an evaluation dataset")
+        if manifest.name != expected_name:
+            raise ValueError(f"expected {expected_name!r}, got {manifest.name!r}")
+        if manifest.validation_range is None or manifest.validation_population_sha256 is None:
+            raise ValueError(f"{path} has incomplete validation provenance")
+        result = CandidateTrainer(config, path, store=run_store).fit(
+            parent_run_id=parent_run_id,
+            kind="confirmation",
+        )
+        folds.append(
+            FoldEvidence(
+                window=manifest.name,
+                run_id=result.run_id,
+                manifest_sha256=sha256_file(path),
+                labelled_source_sha256=manifest.labelled_source.sha256,
+                training_range=manifest.training_range,
+                validation_range=manifest.validation_range,
+                population_sha256=manifest.validation_population_sha256,
+                rows=manifest.validation_rows,
+                logloss=result.validation.metrics["logloss"],
+            )
+        )
+    return ConfirmationEvidence(
+        config=config,
+        config_sha256=sha256_json(resolved_config(config)),
+        folds=tuple(folds),
+    )
+
+
 class StagedTuner:
     def __init__(
         self,
@@ -109,17 +159,27 @@ class StagedTuner:
             raise ValueError("tuning.enabled must be true for a staged search")
         self.config = config
         self.screening_manifest = Path(screening_manifest)
-        self.manifest = load_manifest(self.screening_manifest)
+        self.manifest = load_manifest(self.screening_manifest, verify_shards=True)
+        if self.manifest.purpose is not DatasetPurpose.EVALUATION:
+            raise ValueError("tuning requires an evaluation dataset")
         self.store = store or RunStore(config.tracking.database)
         database = config.tracking.database.resolve().as_posix()
         self.storage = f"sqlite:///{database}"
+        self.parent_run_id: str | None = None
 
     def run(self) -> tuple[ExperimentConfig, optuna.Study]:
         parent_run_id = self.store.start_run(
             self.config,
             self.manifest,
             kind="tuning",
+            plan={
+                "mode": "staged_tuning",
+                "stages": list(STAGES),
+                "trials_per_stage": self.config.tuning.trials_per_stage,
+                "screening_manifest_sha256": sha256_file(self.screening_manifest),
+            },
         )
+        self.parent_run_id = parent_run_id
         current = self.config
         final_study: optuna.Study | None = None
         try:
@@ -148,7 +208,7 @@ class StagedTuner:
                         "resolved_config",
                         json.dumps(resolved_config(sampled), sort_keys=True),
                     )
-                    result = Trainer(
+                    result = CandidateTrainer(
                         sampled,
                         self.screening_manifest,
                         store=self.store,
@@ -168,9 +228,22 @@ class StagedTuner:
                     study.best_trial.user_attrs["resolved_config"]
                 )
                 final_study = study
-            self.store.finish_run(parent_run_id, status="completed")
+            self.store.finish_run(
+                parent_run_id,
+                status="completed",
+                summary={
+                    "stages_completed": len(STAGES),
+                    "best_screening_logloss": (
+                        final_study.best_value if final_study is not None else None
+                    ),
+                },
+            )
         except Exception:
-            self.store.finish_run(parent_run_id, status="failed")
+            self.store.finish_run(
+                parent_run_id,
+                status="failed",
+                error=traceback.format_exc(),
+            )
             raise
         if final_study is None:
             raise RuntimeError("staged tuning completed without a study")
@@ -180,7 +253,7 @@ class StagedTuner:
         self,
         study: optuna.Study,
         manifests: Sequence[str | Path],
-    ) -> list[ConfirmationResult]:
+    ) -> list[ConfirmationEvidence]:
         complete_trials = [
             trial
             for trial in study.trials
@@ -195,12 +268,13 @@ class StagedTuner:
         complete = sorted(complete_trials, key=completed_value)[
             : self.config.tuning.confirmation_candidates
         ]
-        results: list[ConfirmationResult] = []
-        for trial in complete:
-            candidate = ExperimentConfig.model_validate_json(trial.user_attrs["resolved_config"])
-            losses = tuple(
-                Trainer(candidate, manifest, store=self.store).fit().validation.metrics["logloss"]
-                for manifest in manifests
+        results = [
+            confirm_configuration(
+                ExperimentConfig.model_validate_json(trial.user_attrs["resolved_config"]),
+                manifests,
+                store=self.store,
+                parent_run_id=self.parent_run_id,
             )
-            results.append(ConfirmationResult(candidate, losses))
+            for trial in complete
+        ]
         return sorted(results, key=lambda result: result.mean_logloss)

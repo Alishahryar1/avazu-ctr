@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 
 from avazu_ctr.contracts import FeatureBatch
 from avazu_ctr.data.dataset import ParquetBatchDataset
-from avazu_ctr.data.manifest import load_manifest
+from avazu_ctr.data.manifest import DatasetPurpose, load_manifest, sha256_file
 from avazu_ctr.inference.bundle import LoadedBundle, load_bundle
 
 
@@ -32,23 +32,12 @@ class Predictor:
         )
 
     def validate_manifest_contract(self, manifest_path: str | Path) -> None:
-        manifest = load_manifest(manifest_path, verify_shards=True)
-        trained = self.bundle.manifest
-        fitted_state = tuple(
-            (table.feature, table.kind, table.sha256) for table in manifest.fitted_tables
-        )
-        trained_state = tuple(
-            (table.feature, table.kind, table.sha256) for table in trained.fitted_tables
-        )
-        if (
-            manifest.categorical_columns != trained.categorical_columns
-            or manifest.numerical_columns != trained.numerical_columns
-            or manifest.cardinalities != trained.cardinalities
-            or manifest.embedding_kinds != trained.embedding_kinds
-            or manifest.config_sha256 != trained.config_sha256
-            or fitted_state != trained_state
-        ):
-            raise ValueError("prediction manifest does not match the promoted feature contract")
+        path = Path(manifest_path)
+        manifest = load_manifest(path, verify_shards=True)
+        if manifest.purpose is not DatasetPurpose.PRODUCTION:
+            raise ValueError("prediction requires a production dataset")
+        if sha256_file(path) != self.bundle.metadata["source_manifest_sha256"]:
+            raise ValueError("prediction manifest is not the deployed production manifest")
 
     @torch.inference_mode()
     def predict_batch(self, batch: FeatureBatch) -> torch.Tensor:
@@ -59,13 +48,12 @@ class Predictor:
         self,
         manifest_path: str | Path,
         *,
-        split: str = "test",
         batch_size: int | None = None,
     ) -> Iterator[tuple[list[str], np.ndarray]]:
         self.validate_manifest_contract(manifest_path)
         dataset = ParquetBatchDataset(
             manifest_path,
-            split,
+            "test",
             batch_size or self.bundle.config.training.batch_size,
             shuffle=False,
             seed=self.bundle.config.training.seed,

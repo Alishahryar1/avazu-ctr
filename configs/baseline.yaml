@@ -1,4 +1,4 @@
-schema_version: 2
+schema_version: 3
 name: dcnv2-baseline
 
 data:
@@ -47,5 +47,9 @@ training:
 tracking:
   database: artifacts/experiments.sqlite3
   tensorboard_dir: artifacts/tensorboard
-  champion_dir: artifacts/champion
+  selection_dir: artifacts/selection
   tensorboard: true
+
+deployment:
+  champion_dir: artifacts/champion
+  max_weight_bytes: 536870912

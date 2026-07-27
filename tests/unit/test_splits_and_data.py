@@ -12,8 +12,12 @@ from torch.utils.data import DataLoader
 
 from avazu_ctr.config.schema import ExperimentConfig, TemporalSplitConfig
 from avazu_ctr.data.dataset import ParquetBatchDataset
-from avazu_ctr.data.manifest import load_manifest
-from avazu_ctr.data.preprocessing import CANONICAL_SCHEMA_VERSION, preprocess, scan_raw
+from avazu_ctr.data.manifest import DatasetPurpose, load_manifest
+from avazu_ctr.data.preprocessing import (
+    CANONICAL_SCHEMA_VERSION,
+    preprocess_evaluation,
+    scan_raw,
+)
 from avazu_ctr.data.split import build_temporal_windows
 from avazu_ctr.data.synthetic import write_synthetic_avazu
 
@@ -45,7 +49,7 @@ def test_unsupported_manifest_schema_is_rejected(
     raw["schema_version"] = 1
     unsupported = tmp_path / "manifest.json"
     unsupported.write_text(json.dumps(raw), encoding="utf-8")
-    with pytest.raises(ValueError, match="Input should be 2"):
+    with pytest.raises(ValueError, match="Input should be 3"):
         load_manifest(unsupported)
 
 
@@ -60,6 +64,8 @@ def test_processed_batches_have_typed_lanes(
     assert batch.labels.dtype is torch.float32
     assert batch.categorical.shape[0] == 16
     manifest = load_manifest(manifest_path)
+    assert manifest.purpose is DatasetPurpose.EVALUATION
+    assert not manifest.test_shards
     device_id = manifest.categorical_columns.index("device_id")
     buckets = config.model.feature_embeddings["device_id"].buckets
     assert torch.any(batch.categorical[:, device_id].abs() >= buckets)
@@ -110,8 +116,8 @@ def test_validation_labels_and_covariates_cannot_change_fitted_training_state(
 
     config_a = config_factory(tmp_path / "artifacts-a", original_train, original_test, name="a")
     config_b = config_factory(tmp_path / "artifacts-b", changed_train, changed_test, name="b")
-    manifest_a = load_manifest(preprocess(config_a))
-    manifest_b = load_manifest(preprocess(config_b))
+    manifest_a = load_manifest(preprocess_evaluation(config_a))
+    manifest_b = load_manifest(preprocess_evaluation(config_b))
     assert [(item.feature, item.kind, item.sha256) for item in manifest_a.fitted_tables] == [
         (item.feature, item.kind, item.sha256) for item in manifest_b.fitted_tables
     ]
@@ -126,13 +132,13 @@ def test_canonical_cache_is_reused_and_invalidated_by_raw_checksum(
 ) -> None:
     train, test = write_synthetic_avazu(tmp_path / "raw", hours=120, rows_per_hour=2)
     config = config_factory(tmp_path / "artifacts", train, test)
-    preprocess(config)
+    preprocess_evaluation(config)
 
     cache = config.data.artifact_root / "cache" / "canonical" / f"v{CANONICAL_SCHEMA_VERSION}"
     assert len(list(cache.glob("train-*.parquet"))) == 1
 
     with patch("avazu_ctr.data.preprocessing.scan_raw", wraps=scan_raw) as cached_scan:
-        preprocess(config, overwrite=True)
+        preprocess_evaluation(config, overwrite=True)
     cached_scan.assert_not_called()
 
     (
@@ -148,7 +154,7 @@ def test_canonical_cache_is_reused_and_invalidated_by_raw_checksum(
         .write_csv(train)
     )
     with patch("avazu_ctr.data.preprocessing.scan_raw", wraps=scan_raw) as refreshed_scan:
-        preprocess(config, overwrite=True)
+        preprocess_evaluation(config, overwrite=True)
     assert refreshed_scan.call_count == 1
     assert len(list(cache.glob("train-*.parquet"))) == 2
 
@@ -169,4 +175,23 @@ def test_nonbinary_labels_are_rejected_before_feature_fitting(
     invalid.write_csv(train)
     config = config_factory(tmp_path / "artifacts", train, test)
     with pytest.raises(ValueError, match="binary"):
-        preprocess(config)
+        preprocess_evaluation(config)
+
+
+def test_production_dataset_uses_all_labels_and_has_no_validation(
+    processed_project: tuple[ExperimentConfig, Path],
+    production_project: tuple[ExperimentConfig, Path],
+) -> None:
+    _, evaluation_path = processed_project
+    _, production_path = production_project
+    evaluation = load_manifest(evaluation_path)
+    production = load_manifest(production_path)
+
+    assert production.purpose is DatasetPurpose.PRODUCTION
+    assert not production.validation_shards
+    assert production.validation_range is None
+    assert production.test_rows > 0
+    assert production.train_rows == evaluation.train_rows + evaluation.validation_rows
+    assert production.training_range.start == evaluation.training_range.start
+    assert evaluation.validation_range is not None
+    assert production.training_range.end == evaluation.validation_range.end
