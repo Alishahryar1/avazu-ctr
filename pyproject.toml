@@ -60,6 +60,7 @@ exclude = [
 ]
 
 [tool.uv]
+python-preference = "only-managed"
 conflicts = [
     [
         { extra = "cpu" },
