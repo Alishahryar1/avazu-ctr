@@ -1,0 +1,51 @@
+schema_version: 2
+name: dcnv2-baseline
+
+data:
+  train_path: data/raw/train.gz
+  test_path: data/raw/test.gz
+  artifact_root: artifacts
+  shard_rows: 1000000
+  vocabulary_limit: 1000000
+  minimum_frequency: 2
+
+model:
+  kind: gated_dcn
+  default_embedding:
+    kind: standard
+    dim: 16
+  feature_embeddings:
+    device_id: {kind: hash, dim: 16, buckets: 100000, hashes: 2}
+    device_ip: {kind: hash, dim: 16, buckets: 200000, hashes: 2}
+  backbone:
+    senet: {enabled: false}
+    dcn_layers: 4
+    dcn_rank: 32
+    mlp_hidden: [256, 128]
+    activation: gelu
+    dropout: 0.1
+    layer_norm: true
+
+objective:
+  aggregate_weight: 1.0
+  auxiliary_weight: 0.0
+  diversity_weight: 0.0
+  child_weight: 0.0
+
+training:
+  seed: 42
+  epochs: 10
+  batch_size: 4096
+  device: auto
+  amp: true
+  optimizer:
+    dense:
+      kind: adamw
+      learning_rate: 0.001
+      weight_decay: 0.00001
+
+tracking:
+  database: artifacts/experiments.sqlite3
+  tensorboard_dir: artifacts/tensorboard
+  champion_dir: artifacts/champion
+  tensorboard: true

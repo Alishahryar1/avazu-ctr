@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v9
+        with:
+          enable-cache: true
+      - name: Verify lockfile
+        run: uv lock --check
+      - name: Install CPU development environment
+        run: uv sync --frozen --extra cpu --group dev
+      - name: Format
+        run: uv run --frozen --extra cpu ruff format --check .
+      - name: Lint
+        run: uv run --frozen --extra cpu ruff check .
+      - name: Type check
+        run: uv run --frozen --extra cpu ty check
+      - name: Pyrefly compatibility check
+        run: uv run --frozen --extra cpu pyrefly check --min-severity warn
+      - name: Test
+        run: uv run --frozen --extra cpu pytest
+      - name: Audit dependencies
+        run: uv run --frozen --extra cpu pip-audit
+      - name: Build package
+        run: uv build
+      - name: CLI smoke test
+        run: uv run --frozen --extra cpu avazu-ctr --help

@@ -1,321 +1,133 @@
-# 🔬 CTR Architecture Research Laboratory
+# Avazu CTR
 
-<div align="center">
+A correctness-first PyTorch pipeline for temporal click-through-rate modelling on
+the Avazu dataset.
 
-### 🏆 Advancing State-of-the-Art Click-Through Rate Prediction via Literature-Hybrid Architectures
+The repository covers schema validation, leakage-safe feature fitting, sharded
+preprocessing, model training, staged tuning, experiment tracking, TensorBoard,
+champion promotion, and deterministic submission generation.
 
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
-[![Optuna](https://img.shields.io/badge/Optuna-Optimization-4433FF?style=for-the-badge&logo=optuna&logoColor=white)](https://optuna.org/)
-[![Polars](https://img.shields.io/badge/Polars-Streaming-CD792C?style=for-the-badge&logo=polars&logoColor=white)](https://pola.rs/)
+## Historical result
 
-<br/>
+The original repository reported a Kaggle private logloss of **0.38484** and a
+public logloss of **0.38671** using a SENet + DCNv2 multihead model. Those values
+are preserved as provenance, not regression targets: the historical tuning and
+final-training paths used different effective architectures, and the old
+validation ordering was not temporal.
 
-| 🎯 **Best Private LogLoss** | 📊 **Best Public LogLoss** | ⚡ **Training Time** |
-|:---------------------------:|:--------------------------:|:-------------------:|
-| **0.38484** | **0.38671** | ~45 min (single epoch) |
+Version 2 starts from that model family but retrains it under the corrected
+protocol.
 
-</div>
+## Requirements
 
----
+- Python 3.12
+- [`uv`](https://docs.astral.sh/uv/)
+- An NVIDIA driver compatible with the CUDA 13.0 PyTorch build for GPU training
 
-## 🏛 Research Vision
+Install one—and only one—PyTorch backend:
 
-This project serves as a laboratory for exploring and synthesizing state-of-the-art architectures in **Click-Through Rate (CTR)** prediction. Rather than implementing a single traditional model, we focus on **Hybrid Architecture Synthesis**—combining orthogonal strengths from various seminal research papers into unified, high-performance encoders.
+```powershell
+# CPU development and CI
+uv sync --extra cpu --group dev
 
-Our primary goal is to investigate how **explicit cross-networks**, **attention-based encoders**, and **field-level importance gating** can be fused to capture complex feature interactions in high-cardinality sparse datasets like Avazu.
-
----
-
-## 🏆 Best Results & Optimal Configuration
-
-Our best submission achieved a **Private LogLoss of 0.38484** and **Public LogLoss of 0.38671** on the Avazu CTR Prediction competition. Below are the optimal hyperparameters discovered through extensive Optuna-based Bayesian optimization.
-
-> 💡 **Tip**: You can modify these parameters in [`config.py`](config.py) to experiment with different configurations.
-
-<details>
-<summary><b>📋 Click to expand full optimal configuration</b></summary>
-
-### 🔧 Model Architecture
-
-| Component | Parameter | Value |
-|-----------|-----------|-------|
-| **Backbone** | Type | `gated_dcn` |
-| **Diversity** | Weight | `0.001177` |
-| **Feature Bagging** | Ratio | `0.827` |
-| **Aggregation** | Method | `mean` |
-
-### 🌐 DCN (Deep Cross Network)
-
-| Parameter | Value |
-|-----------|-------|
-| Enabled | ✅ `True` |
-| Layers | `13` |
-| Low Rank | `52` |
-| LayerNorm | ✅ `True` |
-
-### 🧠 MLP Backbone
-
-| Parameter | Value |
-|-----------|-------|
-| Hidden Dims | `[1408]` |
-| Activation | `relu` |
-| Dropout | `0.101` |
-| Skip Connections | ✅ `True` |
-| LayerNorm | ✅ `True` |
-
-### 🎯 Feature Gating
-
-| Parameter | Value |
-|-----------|-------|
-| Enabled | ✅ `True` |
-| Activation | `gelu` |
-| Low Rank | `None` |
-
-### 🔀 Diverse Prediction Heads
-
-| Head | Hidden Dims | Activation | Dropout | LayerNorm |
-|------|-------------|------------|---------|-----------|
-| 1 | `[128]` | `tanh` | `0.455` | ❌ |
-| 2 | `[32]` | `tanh` | `0.383` | ❌ |
-| 3 | `[512]` | `silu` | `0.413` | ✅ |
-| 4 | `[16]` | `mish` | `0.068` | ✅ |
-
-### ⚡ Optimizer Configuration
-
-**Dense Parameters (AdamW)**
-| Parameter | Value |
-|-----------|-------|
-| Learning Rate | `2.234e-4` |
-| Weight Decay | `3.203e-5` |
-| Warmup Ratio | `0.402` |
-| Decay Type | `none` |
-
-**Embedding Parameters (Adagrad)**
-| Parameter | Value |
-|-----------|-------|
-| Learning Rate | `0.589` |
-| Weight Decay | `0.0` |
-| Warmup Ratio | `0.346` |
-| Decay Type | `linear` |
-| Min LR | `2.04e-7` |
-
-### 📐 Training Settings
-
-| Parameter | Value |
-|-----------|-------|
-| Batch Size | `4096` |
-| Epochs | `1` |
-| Gradient Clipping | `4.968` |
-| AMP | ✅ `float16` |
-| Compile | ✅ `torch.compile` |
-
-</details>
-
----
-
-## 📚 Literature-Informed Architectural Pillars
-
-The laboratory implements and synthesizes ideas from several key research directions:
-
-<table>
-<tr>
-<td width="50%">
-
-### 1. Deep & Cross Network Evolution (DCNv2)
-*   **Source**: *DCN V2: Improved Deep & Cross Network* (Wang et al., 2021)
-*   **Mechanism**: Uses learnable weight matrices to model explicit, bounded-degree polynomial feature interactions.
-*   **Hybrid Implementation**: Supports low-rank decomposition for parameter efficiency and gated units for non-linear interaction selection.
-
-</td>
-<td width="50%">
-
-### 2. Squeeze-Excitation & Bilinear Interaction (FiBiNET/++)
-*   **Source**: *FiBiNET: Combining Feature Importance and Bilinear feature Interaction* (Huang et al., 2019)
-*   **Mechanism**: **SENet** layer dynamically learns field-level importance weights, followed by a **Bilinear Interaction** layer.
-*   **Hybrid Implementation**: Incorporates multi-mode squeezing (Mean, Max, Min, Std) and grouped squeeze operations.
-
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-### 3. See-Through Transformer Encoding (STEC)
-*   **Source**: *STEC-Transformer: See-Through Transformer-based Encoder for CTR*
-*   **Mechanism**: A transformer-based encoder that extracts multi-head group bilinear interactions directly from attention mechanisms.
-*   **Hybrid Implementation**: Features "See-Through" paths that preserve signal flow from all layers to the prediction head.
-
-</td>
-<td width="50%">
-
-### 4. Multi-Head Diversity Enrichment
-*   **Source**: *Research into Deep Ensembles & Diversity Regularization*
-*   **Mechanism**: Utilizes a **Shared Backbone** with **Diverse Prediction Heads**, regularized by a **Diversity Loss** term.
-*   **Implementation**: Features **Feature Bagging** (random field masking per head) and gated logit aggregation.
-
-</td>
-</tr>
-</table>
-
----
-
-## 🏗 The Hybrid: MultiHeadDiversityModel
-
-The flagship architecture of this lab is the `MultiHeadDiversityModel`. It represents our current best attempt at architectural synthesis:
-
-```mermaid
-graph TD
-    subgraph Input["🔌 Sparse Input"]
-        F1[Fields 1..N] --> EMB[Hybrid Embedding Layer]
-        EMB --> BAG[Feature Bagging / Masking]
-    end
-
-    subgraph Backbone["🧠 Shared Research Backbone"]
-        BAG --> FG[Feature Gating Layer]
-        FG --> DCN["DCNv2 Cross Layers<br/>(13 layers, rank 52)"]
-        DCN --> MLP["Residual MLP<br/>(1408 units)"]
-    end
-
-    subgraph DiverseHeads["🎯 Multi-Head Prediction"]
-        MLP --> H1["Head 1: tanh<br/>(128 units)"]
-        MLP --> H2["Head 2: tanh<br/>(32 units)"]
-        MLP --> H3["Head 3: silu<br/>(512 units)"]
-        MLP --> H4["Head 4: mish<br/>(16 units)"]
-    end
-
-    subgraph Aggregation["🔗 Adaptive Fusion"]
-        H1 & H2 & H3 & H4 --> AGG[Mean Aggregation]
-        AGG --> OUT[Final CTR Probability]
-    end
-
-    subgraph Optimization["📉 Objective Function"]
-        OUT --> BCE[BCE Loss]
-        H1 & H2 & H3 & H4 --> DIV["Diversity Regularization<br/>(λ = 0.00118)"]
-        BCE & DIV --> LOSS[Total Multi-Objective Loss]
-    end
+# Windows/Linux NVIDIA training
+uv sync --extra cu130 --group dev
 ```
 
----
+Verify that a CUDA environment really resolved a GPU build:
 
-## 🚀 Experimental Framework
-
-### Automated Hyperparameter Optimization (Optuna)
-
-We use **Optuna** to navigate the vast search space (~34 parameters) of our hybrid architectures. Our advanced tuning script supports:
-
-| Feature | Description |
-|---------|-------------|
-| 🌳 **TPE Sampler** | Tree-structured Parzen Estimator for Bayesian search |
-| ✂️ **MedianPruner** | Aggressive early stopping of unpromising trials |
-| 💾 **SQLite Persistence** | Resume large-scale studies across sessions |
-| 📊 **Real-time Dashboard** | Optuna Dashboard for visualization |
-
-```bash
-# Launch a 100-trial optimization study
-python misc/tune_hyperparams.py --n-trials 100 --timeout 28800
+```powershell
+uv run --extra cu130 python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name())"
 ```
 
-### Key Search Dimensions
+All retained dependencies are resolved to current stable releases in
+[`uv.lock`](uv.lock). Weekly dependency and GitHub Actions updates are enabled.
 
-- 🔢 **Interaction Depth**: Number of DCN layers vs. Transformer layers
-- 🎛️ **Diversity Calibration**: Tuning the weight of diversity regularization
-- 🎨 **Per-Head Hyperparameters**: Individual activation functions and skip-connection strategies
-- 📐 **Embedding Dynamics**: Adaptive learning rates for sparse vs. dense parameters
+## Workflow
 
----
+Place Kaggle files at `data/raw/train.gz` and `data/raw/test.gz`. Data and all
+generated artifacts are ignored by Git.
 
-## 🛠 Project Structure
+```powershell
+# Build the final holdout dataset
+uv run --extra cu130 avazu-ctr preprocess configs/champion.yaml
 
-```
-avazu-ctr/
-├── 📂 src/
-│   ├── 📂 models/
-│   │   ├── 📂 architectures/     # Full hybrid implementations (STEC, MultiHeadDiversity, GatedDCN)
-│   │   └── 📂 layers/            # Primitive research blocks (CrossNetwork, SENet, FeatureGating)
-│   ├── 📂 training/              # Training engine with hybrid optimizer support
-│   └── 📂 config_types/          # Type definitions for configuration validation
-├── 📂 misc/                      # Research tools (tune_hyperparams.py, EDA scripts)
-├── 📂 papers/                    # Foundational research papers
-├── 📂 data/                      # Raw and processed datasets
-├── 📄 pyproject.toml             # Project config & dependencies (uv)
-├── 📄 uv.lock                    # Locked dependency versions
-├── 📄 config.py                  # Best hyperparameter configuration
-├── 📄 data_processor.py          # Polars-based streaming data pipeline
-└── 📄 train.py                   # Main training entry point
-```
+# Build all walk-forward folds plus the final holdout
+uv run --extra cu130 avazu-ctr preprocess configs/champion.yaml --all-windows
 
----
+# Train; the first valid run becomes the initial champion
+uv run --extra cu130 avazu-ctr train configs/champion.yaml artifacts/datasets/senet-dcnv2-multihead/final_holdout/manifest.json
 
-## 📈 Getting Started
+# Watch live curves
+uv run --extra cu130 avazu-ctr tensorboard configs/champion.yaml
 
-### 1️⃣ Environment Setup
+# Run staged tuning
+uv run --extra cu130 avazu-ctr tune configs/tuning.yaml artifacts/datasets/senet-dcnv2-multihead/walk_forward_0/manifest.json `
+  --confirm-manifest artifacts/datasets/senet-dcnv2-multihead/walk_forward_0/manifest.json `
+  --confirm-manifest artifacts/datasets/senet-dcnv2-multihead/walk_forward_1/manifest.json `
+  --confirm-manifest artifacts/datasets/senet-dcnv2-multihead/walk_forward_2/manifest.json
 
-This project uses [uv](https://docs.astral.sh/uv/) for fast, reliable dependency management.
-
-```bash
-# Install uv (if not already installed)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Sync dependencies (PyTorch CUDA 13.0). For CPU-only, omit the env var.
-UV_TORCH_BACKEND=cu130 uv sync --extra dev
+# Produce the competition submission
+uv run --extra cu130 avazu-ctr predict artifacts/champion artifacts/datasets/senet-dcnv2-multihead/final_holdout/manifest.json --device cuda --output submission.csv
 ```
 
-### 2️⃣ Data Pipeline
-```bash
-# Blazing fast Polars-based streaming processing
-uv run python data_processor.py
+After an initial champion exists, `train --export-candidate` retains that run's
+inference bundle. Evaluate the candidate and incumbent on the same final rows,
+then use `avazu-ctr promote` with their `row_losses.npz` files and three
+walk-forward losses each. Promotion verifies run IDs, row IDs, and labels before
+the paired bootstrap and fold guard. The temporary candidate is deleted after
+either acceptance or rejection.
+
+`configs/baseline.yaml` is the clean DCNv2 benchmark.
+`configs/champion.yaml` is the corrected SENet + DCNv2 multihead candidate.
+`configs/tuning.yaml` defines the staged search.
+
+## Correctness contracts
+
+- Temporal windows are chosen before fitting any data-dependent transform.
+- Validation/test covariates cannot affect vocabularies, counts, numerical
+  statistics, priors, or target encodings.
+- Training target rates use labels only from earlier temporal blocks.
+- Categorical values stay `int64`; numerical values stay `float32`.
+- Models return the exact aggregate logit deployed by inference.
+- The aggregate logit receives direct BCE supervision.
+- Hash coefficients and masks are serialized model state.
+- Every architecture is tested for complete expected gradient coverage.
+- Inference only accepts strict, checksummed `safetensors` bundles.
+
+See [data lineage](docs/data-lineage.md) and
+[architecture](docs/architecture.md) for the full contracts.
+
+## Tracking and storage
+
+SQLite is authoritative for run lineage and metrics. TensorBoard mirrors scalar
+histories under the same run ID for live curves:
+
+```powershell
+uv run --extra cu130 avazu-ctr tensorboard configs/champion.yaml --port 6006
 ```
 
-### 3️⃣ Research Loop
-```bash
-# 1. Start a tuning study to find architectural sweet spots
-uv run python misc/tune_hyperparams.py --n-trials 50
+TensorBoard stores no weights, graphs, datasets, or embeddings. Optuna trials
+store no checkpoints. Production resume state is opt-in, overwritten in place,
+and deleted after successful completion. Only the promoted champion's
+inference-only weights are retained, with a hard 512 MiB cap.
 
-# 2. Train the full model with best config
-uv run python train.py
+See [experiment tracking](docs/tracking.md).
 
-# 3. Analyze results via TensorBoard
-uv run tensorboard --logdir=runs
+## Development
+
+```powershell
+uv run --extra cpu ruff format --check .
+uv run --extra cpu ruff check .
+uv run --extra cpu ty check
+uv run --extra cpu pyrefly check --min-severity warn
+uv run --extra cpu pytest
+uv build
 ```
 
-### Development
-```bash
-# Run tests
-uv run pytest
+Linux CI runs the CPU suite. Before GPU-facing changes are merged, run the same
+checks on Windows plus a CUDA forward/backward and AMP smoke run.
 
-# Format and lint
-uv run ruff format . && uv run ruff check .
+## License
 
-# Type check
-uv run ty check
-```
-
----
-
-## 📊 Performance Highlights
-
-| Metric | Value |
-|--------|-------|
-| 🎯 **Private LogLoss** | **0.38484** |
-| 📉 **Public LogLoss** | **0.38671** |
-| ⏱️ **Training Time** | ~45 minutes |
-| 💾 **Model Parameters** | ~50M |
-| 🔧 **Epochs** | 1 (single pass) |
-
----
-
-## 📄 License & Acknowledgments
-
-- **Foundation**: Avazu CTR Prediction Dataset
-- **Architecture**: Synthesized from DCNv2, FiBiNET, and STEC papers
-- **Tools**: Built with PyTorch, Polars, and Optuna
-
-<div align="center">
-
-**Licensed under the MIT License**
-
----
-
-*Built with ❤️ for the CTR research community*
-
-</div>
+MIT. See [LICENSE](LICENSE).
