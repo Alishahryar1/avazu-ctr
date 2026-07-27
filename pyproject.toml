@@ -1,59 +1,129 @@
 [build-system]
-requires = ["setuptools>=45"]
-build-backend = "setuptools.build_meta"
+requires = ["hatchling>=1.31.0"]
+build-backend = "hatchling.build"
 
 [project]
 name = "avazu-ctr"
-version = "0.1.0"
-description = "Avazu CTR Prediction"
-requires-python = ">=3.11"
+version = "2.0.0"
+description = "Leakage-safe, reproducible CTR modelling for the Avazu dataset"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+authors = [{ name = "Ali Shahryar" }]
 dependencies = [
-    "numpy>=2.0",
-    "polars>=1.36",
-    "torch>=2.0",
-    "torchvision>=0.24",
-    "scikit-learn>=1.8",
-    "tqdm>=4.67",
-    "tensorboard>=2.20",
-    "optuna>=4.6",
-    "pyperclip>=1.11",
+    "numpy>=2.5.1",
+    "optuna>=4.9.0",
+    "polars>=1.43.0",
+    "pyarrow>=25.0.0",
+    "pydantic>=2.13.4",
+    "pyyaml>=6.0.3",
+    "rich>=15.0.0",
+    "safetensors>=0.8.0",
+    "scikit-learn>=1.9.0",
+    "tensorboard>=2.21.0",
+    "typer>=0.27.0",
 ]
 
 [project.optional-dependencies]
+cpu = ["torch>=2.13.0"]
+cu130 = ["torch>=2.13.0"]
+
+[dependency-groups]
 dev = [
-    "pytest>=9.0",
-    "ruff>=0.8",
-    "ty>=0.0.17",
+    "build>=1.5.0",
+    "pip-audit>=2.10.1",
+    "pyrefly>=1.1.1",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.0",
+    "setuptools>=83",
+    "types-pyyaml>=6.0.12.20260724",
+    "ty>=0.0.63",
 ]
 
-[tool.setuptools.packages.find]
-where = ["."]
-include = ["src*"]
+[project.scripts]
+avazu-ctr = "avazu_ctr.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/avazu_ctr"]
+
+[tool.hatch.build]
+exclude = [
+    "/.agent",
+    "/artifacts",
+    "/checkpoints",
+    "/data",
+    "/dist",
+    "/runs",
+]
+
+[tool.uv]
+conflicts = [
+    [
+        { extra = "cpu" },
+        { extra = "cu130" },
+    ],
+]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cpu", extra = "cpu" },
+    { index = "pytorch-cu130", extra = "cu130" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+addopts = "-ra --cov=avazu_ctr --cov-report=term-missing:skip-covered --cov-fail-under=80"
 testpaths = ["tests"]
 
-[tool.pyrefly]
-search_path = ["."]
+[tool.coverage.run]
+branch = true
+source = ["avazu_ctr"]
 
 [tool.ruff]
-line-length = 88
+line-length = 100
+target-version = "py312"
 
 [tool.ruff.format]
 quote-style = "double"
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "W", "UP"]
+select = [
+    "B",
+    "C4",
+    "E",
+    "F",
+    "I",
+    "N",
+    "PERF",
+    "PIE",
+    "PT",
+    "PTH",
+    "RET",
+    "RSE",
+    "RUF",
+    "SIM",
+    "T20",
+    "UP",
+    "W",
+]
 ignore = ["E501"]
 
-# PyTorch nn.Module and Polars have incomplete type stubs - minimal overrides for known limitations
-[[tool.ty.overrides]]
-include = ["src/models", "src/processing", "misc", "tests"]
-rules = { "unresolved-attribute" = "ignore", "call-non-callable" = "ignore", "non-subscriptable" = "ignore", "possibly-missing-attribute" = "ignore", "invalid-argument-type" = "ignore", "no-matching-overload" = "ignore", "invalid-assignment" = "ignore", "invalid-method-override" = "ignore", "invalid-key" = "ignore", "unresolved-import" = "ignore" }
+[tool.ty.environment]
+python-version = "3.12"
 
-# FTRL step() return type differs from base Optimizer - intentional
-[[tool.ty.overrides]]
-include = ["src/training/optimizers.py"]
-rules = { "invalid-method-override" = "ignore" }
+[tool.ty.src]
+include = ["src", "tests"]
 
+[tool.pyrefly]
+project-includes = ["src/**/*.py", "tests/**/*.py"]
+python-version = "3.12"
