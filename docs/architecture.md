@@ -24,7 +24,7 @@ tracking → inference → exploration
   and recursive ensemble terms.
 - `training` is the only optimization loop. Tuning invokes it directly.
 - `tracking` owns run lineage, metrics, artifacts, and promotion records.
-- `inference` only loads validated version-two bundles.
+- `inference` only loads validated bundles.
 - `exploration` emits JSON and self-contained HTML from public contracts.
 
 No module reads a global configuration. The CLI composes these boundaries and
@@ -43,4 +43,4 @@ positive residual-correlation penalties cannot replace aggregate supervision.
 
 A processed dataset is valid only with its manifest and checksums. An inference
 model is valid only as a `safetensors` file plus `bundle.json` and its fitted
-preprocessor state. Version-one artifacts are rejected rather than migrated.
+preprocessor state. Artifacts must match their declared schemas.

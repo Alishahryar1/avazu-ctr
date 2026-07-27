@@ -21,12 +21,12 @@ def test_shipped_configs_are_strict_and_current(path: str) -> None:
     assert config.schema_version == 2
 
 
-def test_unknown_and_legacy_fields_are_rejected() -> None:
+def test_unknown_fields_and_schema_versions_are_rejected() -> None:
     raw = load_experiment("configs/champion.yaml").model_dump(mode="json")
-    raw["legacy_checkpoint"] = True
+    raw["unsupported_checkpoint"] = True
     with pytest.raises(ValidationError, match="Extra inputs"):
         ExperimentConfig.model_validate(raw)
-    raw.pop("legacy_checkpoint")
+    raw.pop("unsupported_checkpoint")
     raw["schema_version"] = 1
     with pytest.raises(ValidationError):
         ExperimentConfig.model_validate(raw)

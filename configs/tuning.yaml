@@ -51,7 +51,7 @@ training:
 
 tuning:
   enabled: true
-  study_name: avazu-v2
+  study_name: avazu-ctr
   trials_per_stage: 30
   confirmation_candidates: 5
 

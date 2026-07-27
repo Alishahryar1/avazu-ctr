@@ -1,4 +1,4 @@
-"""Pydantic schemas for version-two experiments."""
+"""Pydantic schemas for Avazu CTR experiments."""
 
 from __future__ import annotations
 
@@ -213,7 +213,7 @@ class TrackingConfig(StrictModel):
 
 class TuningConfig(StrictModel):
     enabled: bool = False
-    study_name: str = "avazu-v2"
+    study_name: str = "avazu-ctr"
     trials_per_stage: Annotated[int, Field(gt=0)] = 30
     confirmation_candidates: Annotated[int, Field(gt=0)] = 5
     timeout_seconds: Annotated[int | None, Field(gt=0)] = None

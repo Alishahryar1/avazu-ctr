@@ -36,17 +36,17 @@ def test_missing_hours_are_rejected() -> None:
         build_temporal_windows([0, 1, 3, 4], TemporalSplitConfig(walk_forward_folds=1))
 
 
-def test_legacy_manifest_schema_is_rejected(
+def test_unsupported_manifest_schema_is_rejected(
     processed_project: tuple[ExperimentConfig, Path],
     tmp_path: Path,
 ) -> None:
     _, manifest_path = processed_project
     raw = json.loads(manifest_path.read_text(encoding="utf-8"))
     raw["schema_version"] = 1
-    legacy = tmp_path / "manifest.json"
-    legacy.write_text(json.dumps(raw), encoding="utf-8")
+    unsupported = tmp_path / "manifest.json"
+    unsupported.write_text(json.dumps(raw), encoding="utf-8")
     with pytest.raises(ValueError, match="Input should be 2"):
-        load_manifest(legacy)
+        load_manifest(unsupported)
 
 
 def test_processed_batches_have_typed_lanes(

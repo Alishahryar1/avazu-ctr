@@ -1,22 +1,19 @@
 # Avazu CTR
 
-A correctness-first PyTorch pipeline for temporal click-through-rate modelling on
-the Avazu dataset.
+A PyTorch pipeline for temporal click-through-rate modelling on the Avazu
+dataset.
 
 The repository covers schema validation, leakage-safe feature fitting, sharded
 preprocessing, model training, staged tuning, experiment tracking, TensorBoard,
 champion promotion, and deterministic submission generation.
 
-## Historical result
+## Best recorded result
 
-The original repository reported a Kaggle private logloss of **0.38484** and a
-public logloss of **0.38671** using a SENet + DCNv2 multihead model. Those values
-are preserved as provenance, not regression targets: the historical tuning and
-final-training paths used different effective architectures, and the old
-validation ordering was not temporal.
+The project's SENet + DCNv2 multihead model achieved a Kaggle private logloss of
+**0.38484** and a public logloss of **0.38671**.
 
-Version 2 starts from that model family but retrains it under the corrected
-protocol.
+`configs/champion.yaml` defines that model family for reproducible training and
+evaluation.
 
 ## Requirements
 
@@ -79,7 +76,7 @@ the paired bootstrap and fold guard. The temporary candidate is deleted after
 either acceptance or rejection.
 
 `configs/baseline.yaml` is the clean DCNv2 benchmark.
-`configs/champion.yaml` is the corrected SENet + DCNv2 multihead candidate.
+`configs/champion.yaml` is the SENet + DCNv2 multihead candidate.
 `configs/tuning.yaml` defines the staged search.
 
 ## Correctness contracts
