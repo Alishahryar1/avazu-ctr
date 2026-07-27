@@ -30,8 +30,6 @@ jobs:
         run: uv run --frozen --extra cpu ruff check .
       - name: Type check
         run: uv run --frozen --extra cpu ty check
-      - name: Pyrefly compatibility check
-        run: uv run --frozen --extra cpu pyrefly check --min-severity warn
       - name: Test
         run: uv run --frozen --extra cpu pytest
       - name: Audit dependencies

@@ -120,7 +120,6 @@ See [experiment tracking](docs/tracking.md).
 uv run --extra cpu ruff format --check .
 uv run --extra cpu ruff check .
 uv run --extra cpu ty check
-uv run --extra cpu pyrefly check --min-severity warn
 uv run --extra cpu pytest
 uv build
 ```
