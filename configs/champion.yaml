@@ -1,4 +1,4 @@
-schema_version: 2
+schema_version: 3
 name: senet-dcnv2-multihead
 
 data:
@@ -73,12 +73,15 @@ training:
 tracking:
   database: artifacts/experiments.sqlite3
   tensorboard_dir: artifacts/tensorboard
-  champion_dir: artifacts/champion
+  selection_dir: artifacts/selection
   tensorboard: true
+
+deployment:
+  champion_dir: artifacts/champion
+  max_weight_bytes: 536870912
 
 promotion:
   bootstrap_samples: 2000
   bootstrap_block_rows: 100000
   confidence: 0.95
   fold_guard: 0.0001
-  max_weight_bytes: 536870912

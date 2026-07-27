@@ -4,8 +4,9 @@ A PyTorch pipeline for temporal click-through-rate modelling on the Avazu
 dataset.
 
 The repository covers schema validation, leakage-safe feature fitting, sharded
-preprocessing, model training, staged tuning, experiment tracking, TensorBoard,
-champion promotion, and deterministic submission generation.
+preprocessing, candidate training, staged tuning, experiment tracking,
+TensorBoard, full-data production refitting, and deterministic submission
+generation.
 
 ## Best recorded result
 
@@ -77,34 +78,56 @@ Place Kaggle files at `data/raw/train.gz` and `data/raw/test.gz`. Data and all
 generated artifacts are ignored by Git.
 
 ```powershell
-# Build the final holdout dataset
-uv run --extra cu130 avazu-ctr preprocess configs/champion.yaml
-
-# Build all walk-forward folds plus the final holdout
+# Build three walk-forward folds and the final holdout.
+# Evaluation preprocessing never reads test.gz.
 uv run --extra cu130 avazu-ctr preprocess configs/champion.yaml --all-windows
-
-# Train; the first valid run becomes the initial champion
-uv run --extra cu130 avazu-ctr train configs/champion.yaml artifacts/datasets/senet-dcnv2-multihead/final_holdout/manifest.json
 
 # Watch live curves
 uv run --extra cu130 avazu-ctr tensorboard configs/champion.yaml
 
-# Run staged tuning
-uv run --extra cu130 avazu-ctr tune configs/tuning.yaml artifacts/datasets/senet-dcnv2-multihead/walk_forward_0/manifest.json `
-  --confirm-manifest artifacts/datasets/senet-dcnv2-multihead/walk_forward_0/manifest.json `
-  --confirm-manifest artifacts/datasets/senet-dcnv2-multihead/walk_forward_1/manifest.json `
-  --confirm-manifest artifacts/datasets/senet-dcnv2-multihead/walk_forward_2/manifest.json
+# Confirm a fixed configuration on every walk-forward fold
+uv run --extra cu130 avazu-ctr confirm configs/champion.yaml `
+  --fold-manifest artifacts/datasets/senet-dcnv2-multihead/walk_forward_0/manifest.json `
+  --fold-manifest artifacts/datasets/senet-dcnv2-multihead/walk_forward_1/manifest.json `
+  --fold-manifest artifacts/datasets/senet-dcnv2-multihead/walk_forward_2/manifest.json `
+  --output artifacts/tuning/confirmation.json
 
-# Produce the competition submission
-uv run --extra cu130 avazu-ctr predict artifacts/champion artifacts/datasets/senet-dcnv2-multihead/final_holdout/manifest.json --device cuda --output submission.csv
+# Train once on the final-holdout protocol and retain evidence, not weights
+uv run --extra cu130 avazu-ctr candidate artifacts/tuning/confirmation.json `
+  artifacts/datasets/senet-dcnv2-multihead/final_holdout/manifest.json `
+  --output artifacts/selection-candidates/champion
+
+# Select the configuration through the paired statistical gate
+uv run --extra cu130 avazu-ctr promote configs/champion.yaml `
+  artifacts/selection-candidates/champion
+
+# Fit features on every labelled row, refit for best_epoch + 1, and deploy
+uv run --extra cu130 avazu-ctr prepare-production configs/champion.yaml
+uv run --extra cu130 avazu-ctr refit configs/champion.yaml `
+  artifacts/datasets/senet-dcnv2-multihead/production/manifest.json
+
+# Produce the competition submission from the production-only bundle
+uv run --extra cu130 avazu-ctr predict artifacts/champion `
+  artifacts/datasets/senet-dcnv2-multihead/production/manifest.json `
+  --device cuda --output submission.csv
 ```
 
-After an initial champion exists, `train --export-candidate` retains that run's
-inference bundle. Evaluate the candidate and incumbent on the same final rows,
-then use `avazu-ctr promote` with their `row_losses.npz` files and three
-walk-forward losses each. Promotion verifies run IDs, row IDs, and labels before
-the paired bootstrap and fold guard. The temporary candidate is deleted after
-either acceptance or rejection.
+Staged tuning produces the same typed confirmation artifact:
+
+```powershell
+uv run --extra cu130 avazu-ctr preprocess configs/tuning.yaml --all-windows
+uv run --extra cu130 avazu-ctr tune configs/tuning.yaml artifacts/datasets/senet-dcnv2-staged-tuning/walk_forward_0/manifest.json `
+  --confirm-manifest artifacts/datasets/senet-dcnv2-staged-tuning/walk_forward_0/manifest.json `
+  --confirm-manifest artifacts/datasets/senet-dcnv2-staged-tuning/walk_forward_1/manifest.json `
+  --confirm-manifest artifacts/datasets/senet-dcnv2-staged-tuning/walk_forward_2/manifest.json `
+  --output artifacts/tuning/confirmation.json
+```
+
+`promote` accepts only complete, checksummed evidence generated from recorded
+confirmation and final-holdout runs. It verifies ordered populations, run
+configurations, manifests, and SQLite metrics before applying the paired
+bootstrap and fold guard. Candidate evidence is deleted after rejection or
+atomically becomes the active selection after acceptance.
 
 `configs/baseline.yaml` is the clean DCNv2 benchmark.
 `configs/champion.yaml` is the SENet + DCNv2 multihead candidate.
@@ -113,15 +136,20 @@ either acceptance or rejection.
 ## Correctness contracts
 
 - Temporal windows are chosen before fitting any data-dependent transform.
-- Validation/test covariates cannot affect vocabularies, counts, numerical
-  statistics, priors, or target encodings.
+- Evaluation datasets contain train/validation only; test data is forbidden.
+- Production datasets contain all labelled rows plus test; validation is
+  forbidden.
+- Validation/test covariates cannot affect evaluation vocabularies, counts,
+  numerical statistics, priors, or target encodings.
 - Training target rates use labels only from earlier temporal blocks.
 - Categorical values stay `int64`; numerical values stay `float32`.
 - Models return the exact aggregate logit deployed by inference.
 - The aggregate logit receives direct BCE supervision.
 - Hash coefficients and masks are serialized model state.
 - Every architecture is tested for complete expected gradient coverage.
-- Inference only accepts strict, checksummed `safetensors` bundles.
+- Final-holdout weights can never become an inference bundle.
+- Inference accepts only strict, checksummed production-refit bundles and the
+  exact production manifest embedded by that deployment.
 
 See [data lineage](docs/data-lineage.md) and
 [architecture](docs/architecture.md) for the full contracts.
@@ -135,10 +163,11 @@ histories under the same run ID for live curves:
 uv run --extra cu130 avazu-ctr tensorboard configs/champion.yaml --port 6006
 ```
 
-TensorBoard stores no weights, graphs, datasets, or embeddings. Optuna trials
-store no checkpoints. Production resume state is opt-in, overwritten in place,
-and deleted after successful completion. Only the promoted champion's
-inference-only weights are retained, with a hard 512 MiB cap.
+TensorBoard stores no weights, graphs, datasets, or embeddings. Tuning,
+confirmation, and final-holdout runs retain no weights. Selection retains only
+configuration, lineage, metrics, the epoch budget, and row-level holdout losses.
+Production refit trains without validation for exactly `best_epoch + 1` epochs.
+Only one deployed production bundle is retained, with a hard 512 MiB weight cap.
 
 See [experiment tracking](docs/tracking.md).
 

@@ -7,7 +7,11 @@ import pytest
 
 from avazu_ctr.config import load_experiment
 from avazu_ctr.config.schema import EmbeddingConfig, EmbeddingKind, ExperimentConfig
-from avazu_ctr.data.preprocessing import preprocess
+from avazu_ctr.data.preprocessing import (
+    preprocess_evaluation,
+    preprocess_production,
+    temporal_windows,
+)
 from avazu_ctr.data.synthetic import write_synthetic_avazu
 
 
@@ -67,9 +71,10 @@ def small_config(
         update={
             "database": root / "experiments.sqlite3",
             "tensorboard_dir": root / "tensorboard",
-            "champion_dir": root / "champion",
+            "selection_dir": root / "selection",
         }
     )
+    deployment = config.deployment.model_copy(update={"champion_dir": root / "champion"})
     return config.model_copy(
         update={
             "name": name,
@@ -77,19 +82,39 @@ def small_config(
             "model": model,
             "training": training,
             "tracking": tracking,
+            "deployment": deployment,
         }
     )
 
 
 @pytest.fixture(scope="session")
-def processed_project(
+def evaluation_project(
     tmp_path_factory: pytest.TempPathFactory,
-) -> tuple[ExperimentConfig, Path]:
+) -> tuple[ExperimentConfig, dict[str, Path]]:
     root = tmp_path_factory.mktemp("processed")
     train, test = write_synthetic_avazu(root / "raw", hours=120, rows_per_hour=6)
     config = small_config(root, train, test)
-    manifest = preprocess(config)
-    return config, manifest
+    manifests = {
+        window.name: preprocess_evaluation(config, window_name=window.name)
+        for window in temporal_windows(config)
+    }
+    return config, manifests
+
+
+@pytest.fixture(scope="session")
+def processed_project(
+    evaluation_project: tuple[ExperimentConfig, dict[str, Path]],
+) -> tuple[ExperimentConfig, Path]:
+    config, manifests = evaluation_project
+    return config, manifests["final_holdout"]
+
+
+@pytest.fixture(scope="session")
+def production_project(
+    evaluation_project: tuple[ExperimentConfig, dict[str, Path]],
+) -> tuple[ExperimentConfig, Path]:
+    config, _ = evaluation_project
+    return config, preprocess_production(config)
 
 
 @pytest.fixture

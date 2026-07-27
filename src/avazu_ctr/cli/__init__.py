@@ -2,36 +2,61 @@
 
 from __future__ import annotations
 
-import json
+import shutil
 import subprocess
 import sys
+import uuid
 from pathlib import Path
 from typing import Annotated
 
-import numpy as np
-import torch
 import typer
 from rich.console import Console
-from torch.utils.data import DataLoader
 
 from avazu_ctr.config import load_experiment
-from avazu_ctr.data import preprocess, temporal_windows
-from avazu_ctr.data.dataset import ParquetBatchDataset
-from avazu_ctr.data.manifest import sha256_file
-from avazu_ctr.exploration import dataset_report, raw_report, run_report
-from avazu_ctr.inference import Predictor, export_bundle, load_bundle
-from avazu_ctr.tracking import RunStore
-from avazu_ctr.tracking.promotion import (
-    PromotionDecision,
-    decide_promotion,
-    promote_bundle,
+from avazu_ctr.config.schema import ExperimentConfig
+from avazu_ctr.data import (
+    DatasetPurpose,
+    load_manifest,
+    preprocess_evaluation,
+    preprocess_production,
+    temporal_windows,
 )
-from avazu_ctr.training import Trainer
-from avazu_ctr.training.evaluation import evaluate
-from avazu_ctr.tuning import StagedTuner
+from avazu_ctr.exploration import dataset_report, raw_report, run_report
+from avazu_ctr.inference import Predictor, export_production_bundle
+from avazu_ctr.tracking import (
+    HoldoutEvidence,
+    RunStore,
+    deploy_bundle,
+    load_confirmation,
+    load_selection,
+    write_confirmation,
+    write_selection,
+)
+from avazu_ctr.tracking.promotion import activate_selection
+from avazu_ctr.training import CandidateTrainer, ProductionRefitter
+from avazu_ctr.tuning import StagedTuner, confirm_configuration
 
 app = typer.Typer(no_args_is_help=True, pretty_exceptions_show_locals=False)
 console = Console()
+
+
+def _active_selected_config(control: ExperimentConfig) -> ExperimentConfig:
+    active = load_selection(control.tracking.selection_dir)
+    recorded = RunStore(control.tracking.database).active_selection()
+    if (
+        recorded is None
+        or recorded["candidate_run_id"] != active.evidence.selection_id
+        or recorded["candidate_evidence_sha256"] != active.evidence_sha256
+    ):
+        raise typer.BadParameter("selection directory is not the active recorded selection")
+    selected = active.evidence.confirmation.config
+    if selected.tracking.database.resolve() != control.tracking.database.resolve():
+        raise typer.BadParameter("active selection belongs to a different experiment store")
+    if selected.tracking.selection_dir.resolve() != control.tracking.selection_dir.resolve():
+        raise typer.BadParameter("active selection declares a different selection directory")
+    if selected.deployment.champion_dir.resolve() != control.deployment.champion_dir.resolve():
+        raise typer.BadParameter("active selection declares a different champion directory")
+    return selected
 
 
 @app.command("preprocess")
@@ -41,245 +66,191 @@ def preprocess_command(
     all_windows: Annotated[bool, typer.Option("--all-windows")] = False,
     overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
 ) -> None:
+    """Build leakage-safe evaluation folds without reading test data."""
+
     config = load_experiment(config_path)
     names = [item.name for item in temporal_windows(config)] if all_windows else [window]
     for name in names:
-        manifest = preprocess(
+        manifest = preprocess_evaluation(
             config,
             window_name=name,
-            include_test=name == "final_holdout",
             overwrite=overwrite,
         )
-        console.print(f"[green]Wrote[/green] {manifest}")
+        console.print(f"[green]Wrote evaluation dataset[/green] {manifest}")
 
 
-@app.command("train")
-def train_command(
+@app.command("confirm")
+def confirm_command(
     config_path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
-    manifest_path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
-    resume_from: Annotated[
-        Path | None, typer.Option("--resume", exists=True, dir_okay=False)
-    ] = None,
-    export_candidate: Annotated[bool, typer.Option("--export-candidate")] = False,
+    fold_manifests: Annotated[
+        list[Path],
+        typer.Option("--fold-manifest", exists=True, dir_okay=False),
+    ],
+    output: Annotated[Path | None, typer.Option("--output")] = None,
 ) -> None:
+    """Evaluate one configuration across every walk-forward fold."""
+
     config = load_experiment(config_path)
-    store = RunStore(config.tracking.database)
-    result = Trainer(config, manifest_path, store=store).fit(resume_from=resume_from)
+    evidence = confirm_configuration(config, fold_manifests)
+    destination = output or config.data.artifact_root / "tuning" / "confirmation.json"
+    write_confirmation(evidence, destination)
     console.print(
-        f"[green]Run {result.run_id} completed[/green] "
-        f"(best epoch {result.best_epoch}, "
-        f"logloss {result.validation.metrics['logloss']:.6f})"
+        f"[green]Confirmed[/green] mean walk-forward logloss "
+        f"{evidence.mean_logloss:.6f}; wrote {destination}"
     )
-    first_champion = not config.tracking.champion_dir.exists()
-    if first_champion or export_candidate:
-        candidate = config.data.artifact_root / "candidates" / result.run_id
-        bundle = export_bundle(
-            result.model,
-            config,
-            result.manifest,
-            manifest_path,
-            candidate,
-            run_id=result.run_id,
-            validation_metrics=result.validation.metrics,
-        )
-        if not first_champion:
-            store.record_artifact(
-                result.run_id,
-                kind="candidate_bundle",
-                path=bundle,
-                sha256=sha256_file(bundle),
-            )
-            console.print(
-                f"[green]Exported candidate[/green] at {candidate}; "
-                "evaluate it and run the promote command to apply the statistical gate"
-            )
-            return
-        initial = PromotionDecision(
-            promoted=True,
-            reason="first valid champion",
-            mean_difference=float("-inf"),
-            upper_confidence_bound=float("-inf"),
-            candidate_fold_mean=result.validation.metrics["logloss"],
-            incumbent_fold_mean=float("inf"),
-        )
-        promote_bundle(
-            candidate,
-            config.tracking.champion_dir,
-            initial,
-            store=store,
-            candidate_run_id=result.run_id,
-            incumbent_run_id=None,
-        )
-        champion_bundle = config.tracking.champion_dir / bundle.name
-        store.record_artifact(
-            result.run_id,
-            kind="champion_bundle",
-            path=champion_bundle,
-            sha256=sha256_file(champion_bundle),
-        )
-        console.print(f"[green]Promoted first champion[/green] at {config.tracking.champion_dir}")
-
-
-def _evaluation_arrays(path: Path) -> dict[str, np.ndarray]:
-    with np.load(path, allow_pickle=False) as payload:
-        required = {"schema_version", "run_id", "row_ids", "labels", "row_losses"}
-        missing = required.difference(payload.files)
-        if missing:
-            raise ValueError(f"{path} is missing evaluation fields: {sorted(missing)}")
-        if int(payload["schema_version"].item()) != 2:
-            raise ValueError(f"{path} has an unsupported evaluation schema")
-        arrays = {name: payload[name].copy() for name in required}
-    row_ids = arrays["row_ids"]
-    labels = arrays["labels"]
-    row_losses = arrays["row_losses"]
-    if row_ids.ndim != 1 or labels.ndim != 1 or row_losses.ndim != 1:
-        raise ValueError(f"{path} evaluation rows must be one-dimensional")
-    if not row_ids.size or not (row_ids.size == labels.size == row_losses.size):
-        raise ValueError(f"{path} evaluation arrays have inconsistent lengths")
-    if not np.isfinite(labels).all() or not np.isfinite(row_losses).all():
-        raise ValueError(f"{path} evaluation values must be finite")
-    return arrays
-
-
-@app.command("promote")
-def promote_command(
-    config_path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
-    candidate: Annotated[Path, typer.Argument(exists=True)],
-    candidate_evaluation: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
-    incumbent_evaluation: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
-    candidate_fold_loss: Annotated[
-        list[float] | None, typer.Option("--candidate-fold-loss")
-    ] = None,
-    incumbent_fold_loss: Annotated[
-        list[float] | None, typer.Option("--incumbent-fold-loss")
-    ] = None,
-) -> None:
-    config = load_experiment(config_path)
-    candidate_dir = candidate.parent if candidate.is_file() else candidate
-    candidate_bundle = load_bundle(candidate_dir)
-    incumbent_bundle = load_bundle(config.tracking.champion_dir)
-    candidate_arrays = _evaluation_arrays(candidate_evaluation)
-    incumbent_arrays = _evaluation_arrays(incumbent_evaluation)
-    candidate_run_id = str(candidate_arrays["run_id"].item())
-    incumbent_run_id = str(incumbent_arrays["run_id"].item())
-    if candidate_run_id != str(candidate_bundle.metadata["run_id"]):
-        raise typer.BadParameter("candidate evaluation belongs to a different run")
-    if incumbent_run_id != str(incumbent_bundle.metadata["run_id"]):
-        raise typer.BadParameter("incumbent evaluation belongs to a different run")
-    if not np.array_equal(candidate_arrays["row_ids"], incumbent_arrays["row_ids"]):
-        raise typer.BadParameter("candidate and incumbent evaluations contain different rows")
-    if not np.array_equal(candidate_arrays["labels"], incumbent_arrays["labels"]):
-        raise typer.BadParameter("candidate and incumbent evaluations contain different labels")
-    candidate_folds = candidate_fold_loss or []
-    incumbent_folds = incumbent_fold_loss or []
-    expected_folds = config.data.split.walk_forward_folds
-    if len(candidate_folds) != expected_folds or len(incumbent_folds) != expected_folds:
-        raise typer.BadParameter(
-            f"provide exactly {expected_folds} candidate and incumbent fold losses"
-        )
-    decision = decide_promotion(
-        candidate_arrays["row_losses"],
-        incumbent_arrays["row_losses"],
-        candidate_folds,
-        incumbent_folds,
-        config.promotion,
-        seed=config.training.seed,
-    )
-    store = RunStore(config.tracking.database)
-    promoted = promote_bundle(
-        candidate_dir,
-        config.tracking.champion_dir,
-        decision,
-        store=store,
-        candidate_run_id=candidate_run_id,
-        incumbent_run_id=incumbent_run_id,
-    )
-    store.delete_artifacts(candidate_run_id, kind="candidate_bundle")
-    if promoted:
-        store.delete_artifacts(incumbent_run_id, kind="champion_bundle")
-        champion_bundle_path = config.tracking.champion_dir / "bundle.json"
-        store.record_artifact(
-            candidate_run_id,
-            kind="champion_bundle",
-            path=champion_bundle_path,
-            sha256=sha256_file(champion_bundle_path),
-        )
-        console.print(
-            f"[green]Promoted {candidate_run_id}[/green]: {decision.reason} "
-            f"(paired mean {decision.mean_difference:.8f}, "
-            f"upper bound {decision.upper_confidence_bound:.8f})"
-        )
-    else:
-        console.print(f"[yellow]Rejected {candidate_run_id}[/yellow]: {decision.reason}")
 
 
 @app.command("tune")
 def tune_command(
     config_path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
     screening_manifest: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
-    confirmation_manifests: Annotated[list[Path] | None, typer.Option("--confirm-manifest")] = None,
+    confirmation_manifests: Annotated[
+        list[Path],
+        typer.Option("--confirm-manifest", exists=True, dir_okay=False),
+    ],
+    output: Annotated[Path | None, typer.Option("--output")] = None,
 ) -> None:
+    """Run staged screening and emit typed evidence for the best confirmed config."""
+
     config = load_experiment(config_path)
     tuner = StagedTuner(config, screening_manifest)
-    best, study = tuner.run()
+    _, study = tuner.run()
     console.print(f"[green]Search completed[/green]; best screening logloss {study.best_value:.6f}")
-    if confirmation_manifests:
-        confirmed = tuner.confirm(study, confirmation_manifests)
-        if confirmed:
-            best = confirmed[0].config
-            console.print(f"Best walk-forward mean: {confirmed[0].mean_logloss:.6f}")
-    output = config.data.artifact_root / "tuning" / "best-config.json"
-    output.parent.mkdir(parents=True, exist_ok=True)
-    output.write_text(best.model_dump_json(indent=2), encoding="utf-8")
-    console.print(f"Wrote {output}")
-
-
-@app.command("evaluate")
-def evaluate_command(
-    bundle: Annotated[Path, typer.Argument(exists=True)],
-    manifest: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
-    output: Annotated[Path, typer.Option("--output")] = Path("artifacts/reports/evaluation"),
-    device: Annotated[str, typer.Option("--device")] = "cpu",
-) -> None:
-    predictor = Predictor(bundle, device=device)
-    predictor.validate_manifest_contract(manifest)
-    loader = DataLoader(
-        ParquetBatchDataset(
-            manifest,
-            "validation",
-            predictor.bundle.config.training.batch_size,
-            shuffle=False,
-        ),
-        batch_size=None,
-    )
-    amp_dtype = (
-        torch.float16 if predictor.bundle.config.training.amp_dtype == "float16" else torch.bfloat16
-    )
-    result = evaluate(
-        predictor.model,
-        loader,
-        torch.device(device),
-        amp=predictor.bundle.config.training.amp,
-        amp_dtype=amp_dtype,
-    )
-    output.mkdir(parents=True, exist_ok=True)
-    (output / "metrics.json").write_text(
-        json.dumps(result.metrics, indent=2, sort_keys=True),
-        encoding="utf-8",
-    )
-    np.savez_compressed(
-        output / "row_losses.npz",
-        schema_version=np.asarray(2, dtype=np.int64),
-        run_id=np.asarray(str(predictor.bundle.metadata["run_id"])),
-        row_ids=np.asarray(result.row_ids),
-        labels=result.labels,
-        probabilities=result.probabilities,
-        row_losses=result.row_losses,
-    )
-    _, report_html = dataset_report(manifest, output / "dataset")
+    confirmed = tuner.confirm(study, confirmation_manifests)
+    if not confirmed:
+        raise RuntimeError("tuning produced no configuration eligible for confirmation")
+    best = confirmed[0]
+    destination = output or config.data.artifact_root / "tuning" / "confirmation.json"
+    write_confirmation(best, destination)
     console.print(
-        f"[green]Logloss {result.metrics['logloss']:.6f}[/green]; "
-        f"wrote {output / 'metrics.json'} and {report_html}"
+        f"[green]Best walk-forward mean {best.mean_logloss:.6f}[/green]; wrote {destination}"
+    )
+
+
+@app.command("candidate")
+def candidate_command(
+    confirmation_path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
+    holdout_manifest: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
+    output: Annotated[Path | None, typer.Option("--output")] = None,
+) -> None:
+    """Train the final holdout candidate and retain evidence, never its weights."""
+
+    confirmation = load_confirmation(confirmation_path)
+    config = confirmation.config
+    manifest = load_manifest(holdout_manifest, verify_shards=True)
+    if manifest.purpose is not DatasetPurpose.EVALUATION or manifest.name != "final_holdout":
+        raise typer.BadParameter("candidate requires the final_holdout evaluation manifest")
+    if manifest.validation_range is None or manifest.validation_population_sha256 is None:
+        raise typer.BadParameter("final holdout has incomplete validation provenance")
+    result = CandidateTrainer(config, holdout_manifest).fit(kind="candidate")
+    holdout = HoldoutEvidence(
+        run_id=result.run_id,
+        manifest_sha256=result.manifest_sha256,
+        labelled_source_sha256=manifest.labelled_source.sha256,
+        training_range=manifest.training_range,
+        validation_range=manifest.validation_range,
+        population_sha256=manifest.validation_population_sha256,
+        rows=manifest.validation_rows,
+        best_epoch=result.best_epoch,
+        metrics=result.validation.metrics,
+    )
+    destination = output or (config.data.artifact_root / "selection-candidates" / result.run_id)
+    evidence_path = write_selection(
+        confirmation,
+        holdout,
+        result.validation.row_losses,
+        destination,
+    )
+    console.print(
+        f"[green]Candidate {result.run_id} completed[/green] "
+        f"(best epoch {result.best_epoch}, "
+        f"logloss {result.validation.metrics['logloss']:.6f}); "
+        f"retained evidence at {evidence_path}"
+    )
+
+
+@app.command("promote")
+def promote_command(
+    config_path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
+    candidate: Annotated[Path, typer.Argument(exists=True)],
+) -> None:
+    """Apply the paired gate and activate configuration evidence."""
+
+    config = load_experiment(config_path)
+    loaded = load_selection(candidate)
+    candidate_config = loaded.evidence.confirmation.config
+    if candidate_config.tracking.database.resolve() != config.tracking.database.resolve():
+        raise typer.BadParameter("candidate evidence belongs to a different experiment store")
+    decision = activate_selection(
+        candidate,
+        config.tracking.selection_dir,
+        config.promotion,
+        seed=config.training.seed,
+        store=RunStore(config.tracking.database),
+    )
+    if decision.selected:
+        console.print(f"[green]Selected {loaded.evidence.selection_id}[/green]: {decision.reason}")
+    else:
+        console.print(
+            f"[yellow]Rejected {loaded.evidence.selection_id}[/yellow]: {decision.reason}"
+        )
+
+
+@app.command("prepare-production")
+def prepare_production_command(
+    config_path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
+    overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
+) -> None:
+    """Fit production features from the active selection on all labelled rows."""
+
+    control = load_experiment(config_path)
+    selected = _active_selected_config(control)
+    manifest = preprocess_production(selected, overwrite=overwrite)
+    console.print(f"[green]Wrote production dataset[/green] {manifest}")
+
+
+@app.command("refit")
+def refit_command(
+    config_path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
+    production_manifest: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
+) -> None:
+    """Refit the active selection and atomically replace the deployed champion."""
+
+    control = load_experiment(config_path)
+    selected = _active_selected_config(control)
+    store = RunStore(control.tracking.database)
+    result = ProductionRefitter(
+        production_manifest,
+        control.tracking.selection_dir,
+        store=store,
+    ).fit()
+    champion = control.deployment.champion_dir
+    staged = champion.parent / f".champion-{result.run_id}-{uuid.uuid4().hex}.staging"
+    try:
+        export_production_bundle(
+            result.model,
+            selected,
+            result.manifest,
+            production_manifest,
+            staged,
+            refit_run_id=result.run_id,
+            selection_id=result.selection_id,
+            selection_sha256=result.selection_sha256,
+            epochs=result.epochs,
+            steps=result.steps,
+        )
+        deployed = deploy_bundle(
+            staged,
+            champion,
+            selection_path=control.tracking.selection_dir,
+            store=store,
+        )
+    finally:
+        if staged.exists():
+            shutil.rmtree(staged)
+    console.print(
+        f"[green]Deployed production refit {deployed.metadata['refit_run_id']}[/green] "
+        f"at {champion}"
     )
 
 
@@ -292,7 +263,8 @@ def predict_command(
     compile_model: Annotated[bool, typer.Option("--compile")] = False,
 ) -> None:
     written = Predictor(bundle, device=device, compile_model=compile_model).write_submission(
-        manifest, output
+        manifest,
+        output,
     )
     console.print(f"[green]Wrote[/green] {written}")
 
@@ -302,7 +274,8 @@ def report_command(
     config_path: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
     output: Annotated[Path, typer.Option("--output")] = Path("artifacts/reports/runs"),
     manifest: Annotated[
-        Path | None, typer.Option("--manifest", exists=True, dir_okay=False)
+        Path | None,
+        typer.Option("--manifest", exists=True, dir_okay=False),
     ] = None,
     raw: Annotated[Path | None, typer.Option("--raw", exists=True, dir_okay=False)] = None,
 ) -> None:

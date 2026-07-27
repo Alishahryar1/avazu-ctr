@@ -80,7 +80,7 @@ def environment_snapshot() -> dict[str, Any]:
 
 
 class RunStore:
-    SCHEMA_VERSION = 2
+    SCHEMA_VERSION = 3
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
@@ -120,6 +120,8 @@ class RunStore:
                     dataset_json TEXT NOT NULL,
                     code_json TEXT NOT NULL,
                     environment_json TEXT NOT NULL,
+                    plan_json TEXT NOT NULL,
+                    summary_json TEXT,
                     study_name TEXT,
                     trial_number INTEGER,
                     error TEXT
@@ -142,13 +144,24 @@ class RunStore:
                     created_at TEXT NOT NULL,
                     PRIMARY KEY (run_id, kind, path)
                 );
-                CREATE TABLE IF NOT EXISTS promotions (
-                    promotion_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                CREATE TABLE IF NOT EXISTS selection_decisions (
+                    decision_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     candidate_run_id TEXT NOT NULL REFERENCES runs(run_id),
                     incumbent_run_id TEXT REFERENCES runs(run_id),
-                    promoted INTEGER NOT NULL,
+                    candidate_evidence_sha256 TEXT NOT NULL,
+                    incumbent_evidence_sha256 TEXT,
+                    selected INTEGER NOT NULL,
                     reason TEXT NOT NULL,
                     statistics_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS deployments (
+                    deployment_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    selection_run_id TEXT NOT NULL REFERENCES runs(run_id),
+                    refit_run_id TEXT NOT NULL REFERENCES runs(run_id),
+                    replaced_refit_run_id TEXT REFERENCES runs(run_id),
+                    bundle_path TEXT NOT NULL,
+                    bundle_sha256 TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
                 """
@@ -160,7 +173,8 @@ class RunStore:
         config: ExperimentConfig,
         manifest: DatasetManifest,
         *,
-        kind: str = "train",
+        kind: str,
+        plan: dict[str, Any],
         parent_run_id: str | None = None,
         run_id: str | None = None,
         study_name: str | None = None,
@@ -174,8 +188,8 @@ class RunStore:
                 INSERT INTO runs (
                     run_id, parent_run_id, kind, name, status, started_at,
                     config_json, config_sha256, dataset_json, code_json,
-                    environment_json, study_name, trial_number
-                ) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?)
+                    environment_json, plan_json, study_name, trial_number
+                ) VALUES (?, ?, ?, ?, 'running', ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     identifier,
@@ -188,6 +202,7 @@ class RunStore:
                     manifest.model_dump_json(),
                     json.dumps(code_fingerprint(), sort_keys=True),
                     json.dumps(environment_snapshot(), sort_keys=True),
+                    json.dumps(plan, sort_keys=True),
                     study_name,
                     trial_number,
                 ),
@@ -215,13 +230,30 @@ class RunStore:
                 rows,
             )
 
-    def finish_run(self, run_id: str, *, status: str, error: str | None = None) -> None:
+    def finish_run(
+        self,
+        run_id: str,
+        *,
+        status: str,
+        error: str | None = None,
+        summary: dict[str, Any] | None = None,
+    ) -> None:
         if status not in {"completed", "failed", "pruned"}:
             raise ValueError(f"invalid terminal status: {status}")
         with self.connect() as connection:
             connection.execute(
-                "UPDATE runs SET status = ?, finished_at = ?, error = ? WHERE run_id = ?",
-                (status, utc_now(), error, run_id),
+                """
+                UPDATE runs
+                SET status = ?, finished_at = ?, error = ?, summary_json = ?
+                WHERE run_id = ?
+                """,
+                (
+                    status,
+                    utc_now(),
+                    error,
+                    json.dumps(summary, sort_keys=True) if summary is not None else None,
+                    run_id,
+                ),
             )
 
     def record_artifact(
@@ -249,32 +281,100 @@ class RunStore:
                 (run_id, kind),
             )
 
-    def record_promotion(
+    def record_selection_decision(
         self,
         candidate_run_id: str,
         incumbent_run_id: str | None,
         *,
-        promoted: bool,
+        candidate_evidence_sha256: str,
+        incumbent_evidence_sha256: str | None,
+        selected: bool,
         reason: str,
-        statistics: dict[str, float | bool | int],
+        statistics: dict[str, float | bool | int | None],
     ) -> None:
         with self.connect() as connection:
             connection.execute(
                 """
-                INSERT INTO promotions (
-                    candidate_run_id, incumbent_run_id, promoted, reason,
-                    statistics_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                INSERT INTO selection_decisions (
+                    candidate_run_id, incumbent_run_id, candidate_evidence_sha256,
+                    incumbent_evidence_sha256, selected, reason, statistics_json,
+                    created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     candidate_run_id,
                     incumbent_run_id,
-                    int(promoted),
+                    candidate_evidence_sha256,
+                    incumbent_evidence_sha256,
+                    int(selected),
                     reason,
                     json.dumps(statistics, sort_keys=True),
                     utc_now(),
                 ),
             )
+
+    def active_selection(self) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute(
+                """
+                SELECT * FROM selection_decisions
+                WHERE selected = 1
+                ORDER BY decision_id DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def record_deployment(
+        self,
+        *,
+        selection_run_id: str,
+        refit_run_id: str,
+        replaced_refit_run_id: str | None,
+        bundle_path: Path,
+        bundle_sha256: str,
+    ) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO deployments (
+                    selection_run_id, refit_run_id, replaced_refit_run_id,
+                    bundle_path, bundle_sha256, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    selection_run_id,
+                    refit_run_id,
+                    replaced_refit_run_id,
+                    str(bundle_path),
+                    bundle_sha256,
+                    utc_now(),
+                ),
+            )
+            connection.execute("DELETE FROM artifacts WHERE kind = 'production_bundle'")
+            connection.execute(
+                """
+                INSERT INTO artifacts
+                (run_id, kind, path, sha256, bytes, created_at)
+                VALUES (?, 'production_bundle', ?, ?, ?, ?)
+                """,
+                (
+                    refit_run_id,
+                    str(bundle_path),
+                    bundle_sha256,
+                    bundle_path.stat().st_size,
+                    utc_now(),
+                ),
+            )
+
+    def latest_deployment(self) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            connection.row_factory = sqlite3.Row
+            row = connection.execute(
+                "SELECT * FROM deployments ORDER BY deployment_id DESC LIMIT 1"
+            ).fetchone()
+        return dict(row) if row is not None else None
 
     def latest_metrics(self, run_id: str, split: str) -> dict[str, float]:
         with self.connect() as connection:

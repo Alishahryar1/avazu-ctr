@@ -14,6 +14,7 @@ from avazu_ctr.models import create_model
 from avazu_ctr.models.architectures import MultiHeadModel
 from avazu_ctr.models.factory import enforce_weight_budget, serialized_weight_bytes
 from avazu_ctr.models.layers import LogitGate, NumericalProjection, StableHashEmbedding
+from avazu_ctr.models.state import state_dict_sha256
 from avazu_ctr.objectives import CTRObjective
 
 
@@ -142,6 +143,15 @@ def test_serialized_size_accounts_for_integer_buffers() -> None:
     module.register_buffer("integer_state", torch.zeros(3, dtype=torch.int64))
     expected = sum(value.numel() * value.element_size() for value in module.state_dict().values())
     assert serialized_weight_bytes(module) == expected
+
+
+def test_logical_state_hash_covers_values_and_buffers() -> None:
+    module = torch.nn.Linear(2, 1)
+    module.register_buffer("integer_state", torch.arange(3, dtype=torch.int64))
+    before = state_dict_sha256(module.state_dict())
+    assert before == state_dict_sha256(dict(reversed(module.state_dict().items())))
+    module.get_buffer("integer_state")[0] = 9
+    assert state_dict_sha256(module.state_dict()) != before
 
 
 def test_weight_budget_rejects_before_training(

@@ -22,9 +22,12 @@ tracking → inference → exploration
 - `models` only map `FeatureBatch` to `ModelOutput`.
 - `objectives` own all supervision, including aggregate, auxiliary, diversity,
   and recursive ensemble terms.
-- `training` is the only optimization loop. Tuning invokes it directly.
-- `tracking` owns run lineage, metrics, artifacts, and promotion records.
-- `inference` only loads validated bundles.
+- `training` owns the only batch-level optimization loop. Candidate training
+  adds validation and early stopping; production refit supplies a fixed epoch
+  budget and no validation loader.
+- `tracking` owns run lineage, metrics, typed selection evidence, selection
+  decisions, deployment records, and atomic replacement.
+- `inference` only exports and loads validated production bundles.
 - `exploration` emits JSON and self-contained HTML from public contracts.
 
 No module reads a global configuration. The CLI composes these boundaries and
@@ -39,8 +42,30 @@ ensemble structure is explicit through auxiliary and child outputs.
 The primary objective is BCE on `aggregate_logits`. Auxiliary head BCE and
 positive residual-correlation penalties cannot replace aggregate supervision.
 
+## Selection and deployment
+
+Selection and deployment are separate state transitions:
+
+```text
+screening → walk-forward confirmation → final-holdout evidence
+                                              ↓
+                                      active selection
+                                              ↓
+all-labelled preprocessing → fixed-budget refit → atomic deployment
+```
+
+Promotion selects configuration and evidence. It never promotes a validation
+checkpoint. The final holdout's best zero-based epoch becomes the production
+budget `best_epoch + 1`; the production scheduler is rebuilt for the resulting
+all-data step count.
+
 ## Artifact contract
 
-A processed dataset is valid only with its manifest and checksums. An inference
-model is valid only as a `safetensors` file plus `bundle.json` and its fitted
-preprocessor state. Artifacts must match their declared schemas.
+A processed dataset is valid only with its schema-v3 role-specific manifest and
+checksums. Evaluation manifests require validation and forbid test. Production
+manifests require test and forbid validation.
+
+An inference model is valid only as a production `safetensors` file plus
+`bundle.json` and its fitted all-data preprocessor state. The bundle records the
+selection evidence checksum, refit run, exact epoch/step plan, exact production
+manifest, and state checksums.

@@ -18,7 +18,7 @@ from avazu_ctr.config.schema import ExperimentConfig, ModelKind
 )
 def test_shipped_configs_are_strict_and_current(path: str) -> None:
     config = load_experiment(path)
-    assert config.schema_version == 2
+    assert config.schema_version == 3
 
 
 def test_unknown_fields_and_schema_versions_are_rejected() -> None:
@@ -53,6 +53,13 @@ def test_unknown_embedding_feature_fails_during_config_validation() -> None:
         ExperimentConfig.model_validate(raw)
 
 
+def test_selection_and_champion_directories_must_differ() -> None:
+    raw = load_experiment("configs/champion.yaml").model_dump(mode="json")
+    raw["tracking"]["selection_dir"] = raw["deployment"]["champion_dir"]
+    with pytest.raises(ValidationError, match="must differ"):
+        ExperimentConfig.model_validate(raw)
+
+
 def test_ensemble_children_must_share_the_dataset_encoding_kind() -> None:
     raw = load_experiment("configs/champion.yaml").model_dump(mode="json")
     child = deepcopy(raw["model"])
@@ -68,10 +75,12 @@ def test_cli_exposes_final_commands() -> None:
     assert result.exit_code == 0
     for command in (
         "preprocess",
-        "train",
+        "confirm",
         "tune",
-        "evaluate",
+        "candidate",
         "promote",
+        "prepare-production",
+        "refit",
         "predict",
         "report",
         "tensorboard",
