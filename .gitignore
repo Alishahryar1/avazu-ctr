@@ -23,6 +23,10 @@ build/
 *.pth
 *.safetensors
 
+# Kaggle credentials must remain local.
+/.kaggle/
+/kaggle.json
+
 # Editors and operating systems.
 .idea/
 .vscode/

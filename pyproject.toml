@@ -39,6 +39,9 @@ dev = [
     "types-pyyaml>=6.0.12.20260724",
     "ty>=0.0.63",
 ]
+kaggle = [
+    "kaggle>=2.2.4",
+]
 
 [project.scripts]
 avazu-ctr = "avazu_ctr.cli:app"
