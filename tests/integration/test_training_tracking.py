@@ -43,8 +43,8 @@ def test_successful_run_removes_resume_state(
 
 
 def test_unversioned_run_store_is_rejected(tmp_path: Path) -> None:
-    database = tmp_path / "legacy.sqlite3"
+    database = tmp_path / "unversioned.sqlite3"
     with sqlite3.connect(database) as connection:
         connection.execute("CREATE TABLE old_runs (id INTEGER)")
-    with pytest.raises(ValueError, match="intentionally unsupported"):
+    with pytest.raises(ValueError, match="unsupported"):
         RunStore(database)

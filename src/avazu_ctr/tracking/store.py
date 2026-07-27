@@ -102,15 +102,9 @@ class RunStore:
                 if not str(row[0]).startswith("sqlite_")
             }
             if version == 0 and tables:
-                raise ValueError(
-                    f"{self.path} is an unversioned experiment store; "
-                    "legacy stores are intentionally unsupported"
-                )
+                raise ValueError(f"{self.path} is an unsupported unversioned experiment store")
             if version not in {0, self.SCHEMA_VERSION}:
-                raise ValueError(
-                    f"unsupported experiment-store schema {version}; "
-                    "database migrations are intentionally unsupported"
-                )
+                raise ValueError(f"unsupported experiment-store schema {version}")
             connection.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS runs (

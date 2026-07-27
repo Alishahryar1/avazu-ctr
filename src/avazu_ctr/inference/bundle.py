@@ -92,7 +92,7 @@ def load_bundle(path: str | Path, *, device: str | torch.device = "cpu") -> Load
     metadata_path = root / "bundle.json"
     metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
     if metadata.get("schema_version") != BUNDLE_SCHEMA_VERSION:
-        raise ValueError("unsupported bundle schema; legacy bundles are intentionally unsupported")
+        raise ValueError("unsupported bundle schema")
     weights_path = root / "model.safetensors"
     if sha256_file(weights_path) != metadata["weights_sha256"]:
         raise ValueError("model weight checksum mismatch")
