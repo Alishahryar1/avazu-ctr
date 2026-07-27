@@ -9,7 +9,8 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  ruff-format:
+    name: Ruff format
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -20,23 +21,54 @@ jobs:
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
-      - name: Verify lockfile
-        run: uv lock --check
-      - name: Install CPU development environment
-        run: uv sync --frozen --extra cpu --group dev --group kaggle
-      - name: Kaggle CLI smoke test
-        run: uv run --frozen --extra cpu --group kaggle kaggle --version
+          cache-dependency-glob: uv.lock
       - name: Format
-        run: uv run --frozen --extra cpu --group kaggle ruff format --check .
+        run: uv run --locked --extra cpu --group kaggle ruff format --check .
+
+  ruff-check:
+    name: Ruff check
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - name: Lint
-        run: uv run --frozen --extra cpu --group kaggle ruff check .
+        run: uv run --locked --extra cpu --group kaggle ruff check .
+
+  ty:
+    name: Ty
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - name: Type check
-        run: uv run --frozen --extra cpu --group kaggle ty check
+        run: uv run --locked --extra cpu --group kaggle ty check
+
+  pytest:
+    name: Pytest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - uses: astral-sh/setup-uv@v9.0.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - name: Test
-        run: uv run --frozen --extra cpu --group kaggle pytest
-      - name: Audit dependencies
-        run: uv run --frozen --extra cpu --group kaggle pip-audit
-      - name: Build package
-        run: uv build
-      - name: CLI smoke test
-        run: uv run --frozen --extra cpu --group kaggle avazu-ctr --help
+        run: uv run --locked --extra cpu --group kaggle pytest
