@@ -40,6 +40,35 @@ uv run --extra cu130 python -c "import torch; print(torch.__version__, torch.cud
 All retained dependencies are resolved to current stable releases in
 [`uv.lock`](uv.lock). Weekly dependency and GitHub Actions updates are enabled.
 
+## Kaggle CLI
+
+Install the locked official Kaggle CLI alongside the selected PyTorch backend:
+
+```powershell
+uv sync --extra cu130 --group dev --group kaggle
+uv run --frozen --extra cu130 --group kaggle kaggle --version
+```
+
+Authenticate through Kaggle's browser-based OAuth flow. Credentials are stored
+outside the repository:
+
+```powershell
+uv run --frozen --extra cu130 --group kaggle kaggle auth login
+```
+
+Download the competition data, inspect submission history, or submit a generated
+file:
+
+```powershell
+uv run --frozen --extra cu130 --group kaggle kaggle competitions download avazu-ctr-prediction -p data/raw
+uv run --frozen --extra cu130 --group kaggle kaggle competitions submissions avazu-ctr-prediction
+uv run --frozen --extra cu130 --group kaggle kaggle competitions submit avazu-ctr-prediction -f submission.csv -m "reproduction"
+```
+
+Use `--extra cpu` instead of `--extra cu130` on CPU-only systems. Never commit
+Kaggle tokens or credential files; repository-local credential fallbacks are
+ignored by Git.
+
 ## Workflow
 
 Place Kaggle files at `data/raw/train.gz` and `data/raw/test.gz`. Data and all

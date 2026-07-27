@@ -23,18 +23,20 @@ jobs:
       - name: Verify lockfile
         run: uv lock --check
       - name: Install CPU development environment
-        run: uv sync --frozen --extra cpu --group dev
+        run: uv sync --frozen --extra cpu --group dev --group kaggle
+      - name: Kaggle CLI smoke test
+        run: uv run --frozen --extra cpu --group kaggle kaggle --version
       - name: Format
-        run: uv run --frozen --extra cpu ruff format --check .
+        run: uv run --frozen --extra cpu --group kaggle ruff format --check .
       - name: Lint
-        run: uv run --frozen --extra cpu ruff check .
+        run: uv run --frozen --extra cpu --group kaggle ruff check .
       - name: Type check
-        run: uv run --frozen --extra cpu ty check
+        run: uv run --frozen --extra cpu --group kaggle ty check
       - name: Test
-        run: uv run --frozen --extra cpu pytest
+        run: uv run --frozen --extra cpu --group kaggle pytest
       - name: Audit dependencies
-        run: uv run --frozen --extra cpu pip-audit
+        run: uv run --frozen --extra cpu --group kaggle pip-audit
       - name: Build package
         run: uv build
       - name: CLI smoke test
-        run: uv run --frozen --extra cpu avazu-ctr --help
+        run: uv run --frozen --extra cpu --group kaggle avazu-ctr --help
