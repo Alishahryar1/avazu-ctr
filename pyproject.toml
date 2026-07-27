@@ -32,7 +32,6 @@ cu130 = ["torch>=2.13.0"]
 dev = [
     "build>=1.5.0",
     "pip-audit>=2.10.1",
-    "pyrefly>=1.1.1",
     "pytest>=9.1.1",
     "pytest-cov>=7.1.0",
     "ruff>=0.16.0",
@@ -123,7 +122,3 @@ python-version = "3.12"
 
 [tool.ty.src]
 include = ["src", "tests"]
-
-[tool.pyrefly]
-project-includes = ["src/**/*.py", "tests/**/*.py"]
-python-version = "3.12"
