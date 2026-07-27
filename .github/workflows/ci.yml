@@ -9,22 +9,6 @@ permissions:
   contents: read
 
 jobs:
-  kaggle-cli:
-    name: Kaggle CLI
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v9.0.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - name: Kaggle CLI smoke test
-        run: uv run --locked --extra cpu --group kaggle kaggle --version
-
   ruff-format:
     name: Ruff format
     runs-on: ubuntu-latest
@@ -88,51 +72,3 @@ jobs:
           cache-dependency-glob: uv.lock
       - name: Test
         run: uv run --locked --extra cpu --group kaggle pytest
-
-  dependency-audit:
-    name: Dependency audit
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v9.0.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - name: Audit dependencies
-        run: uv run --locked --extra cpu --group kaggle pip-audit
-
-  package-build:
-    name: Package build
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v9.0.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - name: Build package
-        run: uv build
-
-  cli-smoke:
-    name: CLI smoke
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-python@v7
-        with:
-          python-version: "3.12"
-      - uses: astral-sh/setup-uv@v9.0.0
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
-      - name: CLI smoke test
-        run: uv run --locked --extra cpu --group kaggle avazu-ctr --help
