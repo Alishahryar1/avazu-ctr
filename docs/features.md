@@ -1,0 +1,136 @@
+# Feature system
+
+The feature system compiles strict configuration recipes into one ordered model
+contract. The compiled definitions, fitted-table provenance, categorical
+coverage, and resolved configuration are stored in every dataset manifest.
+Training and inference consume that contract; neither rediscovers columns.
+
+## Shipped feature set
+
+The shipped configurations expose 63 fields without duplicating numerical
+signals into hand-selected categorical bins:
+
+| Family | Categorical | Numerical |
+| --- | ---: | ---: |
+| Raw Avazu fields | 21 | 0 |
+| Calendar and cyclic time | 4 | 2 |
+| User and ad crosses | 7 | 0 |
+| Covariate frequency | 0 | 8 |
+| Covariate distinct counts | 0 | 4 |
+| Causal impression history | 0 | 5 |
+| Temporal target evidence | 0 | 12 |
+| **Total** | **32** | **31** |
+
+Crosses are built in declared order, so a recipe may consume an earlier derived
+field such as `user_proxy`. Every cross must use a bounded hash embedding.
+High-drift raw identifiers (`site_id`, `app_id`, `device_id`, `device_ip`,
+`C14`, `C17`, and `C21`) are also hashed in the shipped configurations.
+
+## Covariate modes
+
+`data.features.mode` controls only label-free fitted state:
+
+- `inductive` fits vocabularies, frequencies, and distinct counts from the
+  training partition. Validation or prediction covariates cannot change
+  training features.
+- `competition_transductive` fits those transforms from every covariate batch
+  available at prediction time. Evaluation uses train plus validation
+  covariates; production uses labelled train plus competition-test covariates.
+
+Target tables and priors always use training labels only. Evaluation never opens
+the competition test source. The explicit mode exists because batch
+transduction is useful for a fixed Kaggle test set but is not an honest model of
+an unseen online stream. Metrics from different modes must not be compared as
+if their information sets were identical.
+
+Every fitted table records:
+
+- the feature and transform kind;
+- whether labels were used;
+- its exact source splits;
+- row count, relative path, and SHA-256 checksum.
+
+The manifest rejects a label-dependent table sourced from validation or
+prediction data, an undeclared transductive table, or a table whose sources do
+not match the configured mode.
+
+## Row-local categorical features
+
+Calendar fields are deterministic functions of Avazu's parsed timestamp:
+
+- `hour_of_day`;
+- `day_of_week`;
+- `day_of_month`;
+- `hour_of_week`.
+
+The default crosses are:
+
+- `user_proxy = device_ip × device_model`;
+- `device_id_x_app_id`;
+- `device_ip_x_C14`;
+- `user_proxy_x_app_id`;
+- `user_proxy_x_site_id`;
+- `site_id_x_C14`;
+- `app_id_x_C14`.
+
+Cross inputs are joined with a non-data separator before stable full-width
+hashing. Model-side hash coefficients are serialized buffers, so preprocessing,
+training, and deployed inference use the same deterministic mapping.
+
+## Covariate aggregates
+
+Frequency features are `log1p` counts looked up from the configured covariate
+population. Distinct-count recipes measure how many apps or sites were observed
+for `device_ip` and `user_proxy`, also transformed with `log1p`.
+
+These transforms use no labels. In transductive mode they deliberately describe
+the complete fixed scoring batch; their fitted-table sources make that choice
+auditable.
+
+## Causal impression history
+
+History consumes canonical rows in `(_timestamp_hour, source partition,
+_row_index)` order. Polars 1.43.1 streams the canonical scan into compact
+open-addressed `uint64`/`uint32` identity state, then consumes that ordered Arrow
+stream as the source of the remaining lazy feature plan. Fitted-table joins,
+hashing, projection, and output collection therefore stay inside the native
+streaming engine. No global group sort or full-population history tensor is
+materialized. A training row sees only earlier training events; a scoring row
+may see training context and earlier events from its own scoring stream.
+
+The features are:
+
+- prior impressions for `user_proxy` and `device_ip`;
+- hours since the previous impression for both identities;
+- prior impressions in the current hour for `user_proxy`.
+
+All are `log1p` transformed. They are intentionally named *impressions*: no
+click label is read. A zero prior count distinguishes the first observation
+from a repeated impression occurring in the same hour.
+
+## Temporal target evidence
+
+For `app_id`, `site_id`, `site_domain`, `app_domain`, `C14`, and `C17`, training
+hours are divided into contiguous blocks. A row can use category labels only
+from earlier blocks.
+
+Each category produces two fields:
+
+- `*_target_logit_lift`: the smoothed category posterior log-odds minus the
+  preceding global-prior log-odds;
+- `*_target_evidence_log1p`: `log1p` of the preceding category count.
+
+The first block has zero lift and zero evidence. An unseen scoring category also
+has zero lift and zero evidence. This makes “no history” semantically identical
+across training, validation, and production instead of inventing a `0.5`
+click-rate feature. Probabilities are clipped only for finite log-odds.
+
+## Coverage diagnostics
+
+Vocabulary-encoded fields reserve ID zero for values absent from the fitted
+vocabulary or below `minimum_frequency`. Every manifest records the row count,
+unknown count, and exact OOV rate for every vocabulary field and split.
+
+Hashed fields have no OOV state and therefore do not appear in the OOV map.
+Their bucket counts and embedding kinds remain part of the feature contract and
+model-size estimate.

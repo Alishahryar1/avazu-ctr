@@ -1,26 +1,58 @@
-schema_version: 3
+schema_version: 4
 name: senet-dcnv2-staged-tuning
 
 data:
   train_path: data/raw/train.gz
   test_path: data/raw/test.gz
   artifact_root: artifacts
-  shard_rows: 1000000
+  shard_rows: 250000
   vocabulary_limit: 1000000
   minimum_frequency: 2
-  target_encoding:
-    enabled: true
-    columns: [site_id, app_id]
-    blocks: 5
-    smoothing: 20.0
-    neutral_prior: 0.5
+  features:
+    mode: competition_transductive
+    crosses:
+      - {name: user_proxy, columns: [device_ip, device_model]}
+      - {name: device_id_x_app_id, columns: [device_id, app_id]}
+      - {name: device_ip_x_C14, columns: [device_ip, C14]}
+      - {name: user_proxy_x_app_id, columns: [user_proxy, app_id]}
+      - {name: user_proxy_x_site_id, columns: [user_proxy, site_id]}
+      - {name: site_id_x_C14, columns: [site_id, C14]}
+      - {name: app_id_x_C14, columns: [app_id, C14]}
+    frequency_columns: [device_ip, device_id, user_proxy, app_id, site_id, C14, C17, C21]
+    distinct_counts:
+      - {name: device_ip_distinct_apps_log1p, group_by: device_ip, value: app_id}
+      - {name: device_ip_distinct_sites_log1p, group_by: device_ip, value: site_id}
+      - {name: user_proxy_distinct_apps_log1p, group_by: user_proxy, value: app_id}
+      - {name: user_proxy_distinct_sites_log1p, group_by: user_proxy, value: site_id}
+    history:
+      - {key: user_proxy, within_hour: true}
+      - {key: device_ip, within_hour: false}
+    target_encoding:
+      columns: [app_id, site_id, site_domain, app_domain, C14, C17]
+      blocks: 10
+      smoothing: 20.0
+      probability_clip: 0.00001
 
 model:
   kind: multihead
   default_embedding: {kind: standard, dim: 16}
   feature_embeddings:
+    site_id: {kind: hash, dim: 16, buckets: 100000, hashes: 2}
+    app_id: {kind: hash, dim: 16, buckets: 100000, hashes: 2}
     device_id: {kind: hash, dim: 24, buckets: 100000, hashes: 2}
     device_ip: {kind: hash, dim: 24, buckets: 200000, hashes: 2}
+    C14: {kind: hash, dim: 16, buckets: 50000, hashes: 2}
+    C17: {kind: hash, dim: 16, buckets: 20000, hashes: 2}
+    C21: {kind: hash, dim: 16, buckets: 10000, hashes: 2}
+    day_of_month: {kind: hash, dim: 16, buckets: 64, hashes: 1}
+    hour_of_week: {kind: hash, dim: 16, buckets: 256, hashes: 1}
+    user_proxy: {kind: hash, dim: 16, buckets: 200000, hashes: 2}
+    device_id_x_app_id: {kind: hash, dim: 16, buckets: 200000, hashes: 2}
+    device_ip_x_C14: {kind: hash, dim: 16, buckets: 300000, hashes: 2}
+    user_proxy_x_app_id: {kind: hash, dim: 16, buckets: 200000, hashes: 2}
+    user_proxy_x_site_id: {kind: hash, dim: 16, buckets: 200000, hashes: 2}
+    site_id_x_C14: {kind: hash, dim: 16, buckets: 150000, hashes: 2}
+    app_id_x_C14: {kind: hash, dim: 16, buckets: 150000, hashes: 2}
   backbone:
     senet: {enabled: true, reduction_ratio: 3, activation: gelu}
     dcn_layers: 4

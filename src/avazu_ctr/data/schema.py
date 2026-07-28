@@ -7,9 +7,14 @@ from pathlib import Path
 
 import polars as pl
 
-from avazu_ctr.config.schema import AVAZU_CATEGORICAL_COLUMNS
 from avazu_ctr.config.schema import (
-    ENGINEERED_CATEGORICAL_COLUMNS as ENGINEERED_CATEGORICAL_COLUMNS,
+    AVAZU_CATEGORICAL_COLUMNS,
+)
+from avazu_ctr.config.schema import (
+    TIME_CATEGORICAL_COLUMNS as TIME_CATEGORICAL_COLUMNS,
+)
+from avazu_ctr.config.schema import (
+    TIME_NUMERICAL_COLUMNS as TIME_NUMERICAL_COLUMNS,
 )
 
 RAW_CATEGORICAL_COLUMNS = AVAZU_CATEGORICAL_COLUMNS
@@ -43,6 +48,10 @@ def add_time_features(frame: pl.LazyFrame) -> pl.LazyFrame:
         (parsed.dt.epoch("s") // 3600).cast(pl.Int64).alias("_timestamp_hour"),
         parsed.dt.hour().cast(pl.Int64).alias("hour_of_day"),
         parsed.dt.weekday().cast(pl.Int64).alias("day_of_week"),
+        parsed.dt.day().cast(pl.Int64).alias("day_of_month"),
+        ((parsed.dt.weekday().cast(pl.Int64) - 1) * 24 + parsed.dt.hour().cast(pl.Int64)).alias(
+            "hour_of_week"
+        ),
         (pl.col("hour").cast(pl.Int64) % 100).cast(pl.Int16).alias("_raw_hour"),
     ).with_columns(
         (pl.col("_raw_hour") * (2.0 * math.pi / 24.0)).sin().cast(pl.Float32).alias("hour_sin"),

@@ -21,21 +21,24 @@ Missing hours and invalid window geometry fail preprocessing.
 
 ## Fitted state
 
-For evaluation, every vocabulary, count table, category threshold, target
-statistic, and prior is fitted from the active training window only. Validation
-and test covariates do not participate; evaluation preprocessing does not open
-the test source.
+In `inductive` mode, every vocabulary, frequency table, distinct-count table,
+target statistic, and prior is fitted from the active training window only.
+Validation and test covariates do not participate.
 
-For production, the same transforms are refitted from all labelled rows. Test
-rows use that fitted state and never influence it.
+In explicit `competition_transductive` mode, label-free tables use all
+covariates available for the fixed scoring batch: train plus validation during
+evaluation and labelled train plus competition test during production.
+Evaluation preprocessing still never opens the competition test source.
 
-Target encoding uses temporal blocks. A training row can see category labels
-only from earlier blocks; the first block receives a neutral `0.5` prior.
-Validation and test rows use the complete preceding training state, smoothed by
-that training window's label rate.
+Target state always uses training labels only. Temporal target features expose a
+smoothed category log-odds lift and its evidence count. A training row can see
+category labels only from earlier blocks; the first block receives zero lift
+and zero evidence. Validation and test rows use the complete preceding training
+state, with unseen categories also represented as zero lift and zero evidence.
 
-Count features are named `training_impressions`, not clicks. They are training
-window frequency lookups and do not use labels.
+Frequency and distinct-count features are covariate statistics and do not use
+labels. Causal history features count prior impressions and time since the
+previous impression in event order; they never read clicks.
 
 ## Manifest
 
@@ -46,9 +49,10 @@ Each manifest declares one role:
   forbidden.
 
 Manifests record raw-source and shard checksums, population identities, split
-boundaries, ordered feature names, dtypes, cardinalities, embedding kinds,
-fitted-table checksums, feature-configuration and resolved-configuration hashes,
-and the package-lock hash.
+boundaries, ordered feature definitions, dtypes, cardinalities, embedding kinds,
+feature mode, fitted-table sources and label use, per-split OOV diagnostics,
+feature-configuration and resolved-configuration hashes, and the package-lock
+hash.
 
 Training and inference consume ordered manifest fields rather than rediscovering
 features from files.
