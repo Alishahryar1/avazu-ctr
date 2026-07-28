@@ -1,0 +1,211 @@
+schema_version: 5
+name: senet-dcnv2-multihead-full-features
+
+data:
+  train_path: data/raw/train.gz
+  test_path: data/raw/test.gz
+  artifact_root: artifacts
+  shard_rows: 250000
+  vocabulary_limit: 1000000
+  minimum_frequency: 2
+  features:
+    mode: competition_transductive
+    context:
+      enabled: true
+      app_site_sentinel: 85f751fd
+      unknown_device_id: a99f214a
+    crosses:
+      - {name: user_proxy, columns: [device_ip, device_model]}
+      - {name: device_id_x_app_id, columns: [device_id, app_id]}
+      - {name: device_ip_x_C14, columns: [device_ip, C14]}
+      - {name: user_proxy_x_app_id, columns: [user_proxy, app_id]}
+      - {name: user_proxy_x_site_id, columns: [user_proxy, site_id]}
+      - {name: site_id_x_C14, columns: [site_id, C14]}
+      - {name: app_id_x_C14, columns: [app_id, C14]}
+      - {name: user_id_x_publisher_id, columns: [user_id, publisher_id]}
+      - {name: publisher_id_x_C14, columns: [publisher_id, C14]}
+      - {name: hour_of_week_x_publisher_id, columns: [hour_of_week, publisher_id]}
+      - {name: device_model_x_C14, columns: [device_model, C14]}
+    frequency_columns:
+      - device_ip
+      - device_id
+      - user_proxy
+      - app_id
+      - site_id
+      - C14
+      - C17
+      - C21
+      - user_id
+      - publisher_id
+      - user_id_x_publisher_id
+      - publisher_id_x_C14
+    distinct_counts:
+      - {name: device_ip_distinct_apps_log1p, group_by: device_ip, value: app_id}
+      - {name: device_ip_distinct_sites_log1p, group_by: device_ip, value: site_id}
+      - {name: user_proxy_distinct_apps_log1p, group_by: user_proxy, value: app_id}
+      - {name: user_proxy_distinct_sites_log1p, group_by: user_proxy, value: site_id}
+      - {name: user_id_distinct_publishers_log1p, group_by: user_id, value: publisher_id}
+      - {name: user_id_distinct_ads_log1p, group_by: user_id, value: C14}
+      - {name: device_ip_distinct_ads_log1p, group_by: device_ip, value: C14}
+      - {name: publisher_id_distinct_users_log1p, group_by: publisher_id, value: user_id}
+    history:
+      - {key: user_proxy, within_hour: true}
+      - {key: device_ip}
+      - {key: user_id, within_hour: true, clicks: true, click_pattern_bits: 4}
+    target_encoding:
+      columns:
+        - app_id
+        - site_id
+        - site_domain
+        - app_domain
+        - C14
+        - C17
+        - C21
+        - device_model
+        - publisher_id
+        - publisher_domain
+        - publisher_category
+      blocks: 10
+      smoothing: 20.0
+      probability_clip: 0.00001
+    buckets:
+      - name: device_ip_frequency_bin
+        source: device_ip_frequency_log1p
+        boundaries: [1, 2, 5, 10, 50, 100, 500, 1000]
+        source_scale: log1p
+      - name: device_id_frequency_bin
+        source: device_id_frequency_log1p
+        boundaries: [1, 2, 5, 10, 50, 100, 500, 1000]
+        source_scale: log1p
+      - name: user_id_frequency_bin
+        source: user_id_frequency_log1p
+        boundaries: [1, 2, 5, 10, 50, 100, 500, 1000]
+        source_scale: log1p
+      - name: publisher_id_frequency_bin
+        source: publisher_id_frequency_log1p
+        boundaries: [1, 2, 5, 10, 50, 100, 500, 1000]
+        source_scale: log1p
+      - name: C14_frequency_bin
+        source: C14_frequency_log1p
+        boundaries: [1, 2, 5, 10, 50, 100, 500, 1000]
+        source_scale: log1p
+      - name: user_id_prior_impressions_bin
+        source: user_id_prior_impressions_log1p
+        boundaries: [1, 2, 3, 10, 50, 100]
+        source_scale: log1p
+      - name: user_id_prior_clicks_bin
+        source: user_id_prior_clicks_log1p
+        boundaries: [1, 2, 5, 20]
+        source_scale: log1p
+      - name: user_id_distinct_publishers_bin
+        source: user_id_distinct_publishers_log1p
+        boundaries: [1, 2, 5, 10, 50]
+        source_scale: log1p
+      - name: publisher_id_target_lift_bin
+        source: publisher_id_target_logit_lift
+        boundaries: [-1.5, -0.5, -0.1, 0.1, 0.5, 1.5]
+      - name: C14_target_lift_bin
+        source: C14_target_logit_lift
+        boundaries: [-1.5, -0.5, -0.1, 0.1, 0.5, 1.5]
+
+model:
+  kind: dcn
+  default_embedding:
+    kind: standard
+    dim: 16
+  feature_embeddings:
+    site_id: {kind: hash, dim: 16, buckets: 100000, hashes: 2}
+    app_id: {kind: hash, dim: 16, buckets: 100000, hashes: 2}
+    device_id: {kind: hash, dim: 24, buckets: 100000, hashes: 2}
+    device_ip: {kind: hash, dim: 24, buckets: 200000, hashes: 2}
+    C14: {kind: hash, dim: 16, buckets: 50000, hashes: 2}
+    C17: {kind: hash, dim: 16, buckets: 20000, hashes: 2}
+    C21: {kind: hash, dim: 16, buckets: 10000, hashes: 2}
+    day_of_month: {kind: hash, dim: 16, buckets: 64, hashes: 1}
+    hour_of_week: {kind: hash, dim: 16, buckets: 256, hashes: 1}
+    user_proxy: {kind: hash, dim: 16, buckets: 200000, hashes: 2}
+    user_id: {kind: hash, dim: 16, buckets: 150000, hashes: 2}
+    device_id_x_app_id: {kind: hash, dim: 16, buckets: 200000, hashes: 2}
+    device_ip_x_C14: {kind: hash, dim: 16, buckets: 300000, hashes: 2}
+    user_proxy_x_app_id: {kind: hash, dim: 16, buckets: 200000, hashes: 2}
+    user_proxy_x_site_id: {kind: hash, dim: 16, buckets: 200000, hashes: 2}
+    site_id_x_C14: {kind: hash, dim: 16, buckets: 150000, hashes: 2}
+    app_id_x_C14: {kind: hash, dim: 16, buckets: 150000, hashes: 2}
+    user_id_x_publisher_id: {kind: hash, dim: 16, buckets: 100000, hashes: 2}
+    publisher_id_x_C14: {kind: hash, dim: 16, buckets: 75000, hashes: 2}
+    hour_of_week_x_publisher_id: {kind: hash, dim: 16, buckets: 50000, hashes: 2}
+    device_model_x_C14: {kind: hash, dim: 16, buckets: 75000, hashes: 2}
+    device_ip_frequency_bin: {kind: hash, dim: 8, buckets: 64, hashes: 1}
+    device_id_frequency_bin: {kind: hash, dim: 8, buckets: 64, hashes: 1}
+    user_id_frequency_bin: {kind: hash, dim: 8, buckets: 64, hashes: 1}
+    publisher_id_frequency_bin: {kind: hash, dim: 8, buckets: 64, hashes: 1}
+    C14_frequency_bin: {kind: hash, dim: 8, buckets: 64, hashes: 1}
+    user_id_prior_impressions_bin: {kind: hash, dim: 8, buckets: 64, hashes: 1}
+    user_id_prior_clicks_bin: {kind: hash, dim: 8, buckets: 64, hashes: 1}
+    user_id_distinct_publishers_bin: {kind: hash, dim: 8, buckets: 64, hashes: 1}
+    publisher_id_target_lift_bin: {kind: hash, dim: 8, buckets: 64, hashes: 1}
+    C14_target_lift_bin: {kind: hash, dim: 8, buckets: 64, hashes: 1}
+    user_id_recent_click_pattern: {kind: hash, dim: 8, buckets: 64, hashes: 1}
+  dcn:
+    backbone:
+      senet:
+        enabled: true
+        reduction_ratio: 3
+        activation: gelu
+      dcn_layers: 4
+      dcn_rank: 32
+      mlp_hidden: [256, 128]
+      activation: gelu
+      dropout: 0.1
+      layer_norm: true
+    heads:
+      - {hidden: [128], dropout: 0.25}
+      - {hidden: [64], dropout: 0.2}
+      - {hidden: [32], dropout: 0.15}
+    aggregation: gated
+    feature_bagging: 0.8
+
+objective:
+  aggregate_weight: 1.0
+  auxiliary_weight: 0.25
+  diversity_weight: 0.05
+  child_weight: 0.0
+
+training:
+  seed: 42
+  epochs: 1
+  batch_size: 4096
+  num_workers: 0
+  device: auto
+  amp: true
+  amp_dtype: float16
+  compile_model: false
+  deterministic_algorithms: false
+  gradient_clip: 5.0
+  early_stopping_patience: 0
+  log_every_steps: 50
+  optimizer:
+    dense:
+      kind: adamw
+      learning_rate: 0.001
+      weight_decay: 0.00001
+      scheduler:
+        kind: cosine
+        warmup_ratio: 0.05
+        minimum_lr_ratio: 0.01
+
+tracking:
+  database: artifacts/full-features/experiments.sqlite3
+  tensorboard_dir: artifacts/full-features/tensorboard
+  selection_dir: artifacts/full-features/selection
+  tensorboard: true
+
+deployment:
+  champion_dir: artifacts/full-features/champion
+  max_weight_bytes: 536870912
+
+promotion:
+  bootstrap_samples: 2000
+  bootstrap_block_rows: 100000
+  confidence: 0.95
+  fold_guard: 0.0001

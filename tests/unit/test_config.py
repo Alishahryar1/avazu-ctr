@@ -19,6 +19,7 @@ from avazu_ctr.tuning.study import _sample_config, tuning_stages
     [
         "configs/baseline.yaml",
         "configs/champion.yaml",
+        "configs/full_features.yaml",
         "configs/ngpt.yaml",
         "configs/stec.yaml",
         "configs/tuning.yaml",
@@ -105,6 +106,42 @@ def test_shipped_feature_plan_is_complete_and_crosses_are_bounded() -> None:
     assert len({*features.categorical_columns, *features.numerical_columns}) == 63
     for cross in features.crosses:
         assert config.model.feature_embeddings[cross.name].kind.value == "hash"
+
+
+def test_full_feature_candidate_adds_every_planned_information_family() -> None:
+    config = load_experiment("configs/full_features.yaml")
+    features = config.data.features
+    assert len(features.categorical_columns) == 53
+    assert len(features.numerical_columns) == 57
+    assert len({*features.categorical_columns, *features.numerical_columns}) == 110
+    assert features.context.enabled
+    assert any(feature.clicks for feature in features.history)
+    assert features.buckets
+    assert {
+        "publisher_id",
+        "user_id",
+        "user_id_recent_click_pattern",
+        "publisher_id_target_lift_bin",
+    }.issubset(features.categorical_columns)
+    assert {
+        "user_id_prior_ctr_logit_lift",
+        "publisher_id_target_logit_lift",
+        "publisher_id_distinct_users_log1p",
+    }.issubset(features.numerical_columns)
+
+
+def test_post_transform_categories_require_bounded_hash_embeddings() -> None:
+    raw = load_experiment("configs/full_features.yaml").model_dump(mode="json")
+    raw["model"]["feature_embeddings"]["user_id_prior_clicks_bin"]["kind"] = "standard"
+    with pytest.raises(ValidationError, match="post-transform categorical"):
+        ExperimentConfig.model_validate(raw)
+
+
+def test_buckets_must_reference_compiled_numerical_features() -> None:
+    raw = load_experiment("configs/full_features.yaml").model_dump(mode="json")
+    raw["data"]["features"]["buckets"][0]["source"] = "future_numerical_feature"
+    with pytest.raises(ValidationError, match="unavailable numerical feature"):
+        ExperimentConfig.model_validate(raw)
 
 
 def test_crosses_must_follow_dependency_order() -> None:

@@ -38,7 +38,9 @@ class FeatureLane(StrEnum):
 class FeatureFamily(StrEnum):
     RAW = "raw"
     TIME = "time"
+    CONTEXT = "context"
     CROSS = "cross"
+    BUCKET = "bucket"
     FREQUENCY = "frequency"
     DISTINCT_COUNT = "distinct_count"
     HISTORY = "history"

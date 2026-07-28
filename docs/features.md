@@ -5,10 +5,9 @@ contract. The compiled definitions, fitted-table provenance, categorical
 coverage, and resolved configuration are stored in every dataset manifest.
 Training and inference consume that contract; neither rediscovers columns.
 
-## Shipped feature set
+## Selected and expanded feature sets
 
-The shipped configurations expose 63 fields without duplicating numerical
-signals into hand-selected categorical bins:
+The selected champion exposes 63 fields:
 
 | Family | Categorical | Numerical |
 | --- | ---: | ---: |
@@ -20,6 +19,25 @@ signals into hand-selected categorical bins:
 | Causal impression history | 0 | 5 |
 | Temporal target evidence | 0 | 12 |
 | **Total** | **32** | **31** |
+
+`configs/full_features.yaml` keeps every selected-champion field and adds the
+remaining information families as one feature-only experiment:
+
+| Family | Categorical | Numerical |
+| --- | ---: | ---: |
+| Raw Avazu fields | 21 | 0 |
+| Calendar and cyclic time | 4 | 2 |
+| Unified inventory and identity context | 6 | 0 |
+| User, publisher, ad, and temporal crosses | 11 | 0 |
+| Bounded numerical buckets | 10 | 0 |
+| Covariate frequency | 0 | 12 |
+| Covariate distinct counts | 0 | 8 |
+| Causal impression and completed-hour click history | 1 | 13 |
+| Hierarchical temporal target evidence | 0 | 22 |
+| **Total** | **53** | **57** |
+
+The model architecture and one-epoch optimization recipe are unchanged. All
+new families can be removed through configuration for subsequent ablations.
 
 Crosses are built in declared order, so a recipe may consume an earlier derived
 field such as `user_proxy`. Every cross must use a bounded hash embedding.
@@ -77,6 +95,13 @@ Cross inputs are joined with a non-data separator before stable full-width
 hashing. Model-side hash coefficients are serialized buffers, so preprocessing,
 training, and deployed inference use the same deterministic mapping.
 
+The expanded recipe also creates one inventory namespace over app and site
+traffic (`publisher_id`, `publisher_domain`, and `publisher_category`) and one
+identity namespace. A non-placeholder `device_id` is authoritative; otherwise
+`device_ip × device_model` is used as the proxy identity. Explicit
+`inventory_type` and `identity_kind` fields preserve which branch supplied each
+value.
+
 ## Covariate aggregates
 
 Frequency features are `log1p` counts looked up from the configured covariate
@@ -108,6 +133,13 @@ All are `log1p` transformed. They are intentionally named *impressions*: no
 click label is read. A zero prior count distinguishes the first observation
 from a repeated impression occurring in the same hour.
 
+The expanded recipe additionally tracks completed-hour click state for the
+unified identity. It emits prior clicks and non-clicks, smoothed CTR logit lift,
+hours and impressions since the last click, and a four-hour click pattern.
+Labels from the current hour remain buffered until the next hour begins, even
+when an hour spans multiple input batches. Validation and prediction labels are
+never queued, so scoring rows see labelled training history only.
+
 ## Temporal target evidence
 
 For `app_id`, `site_id`, `site_domain`, `app_domain`, `C14`, and `C17`, training
@@ -124,6 +156,20 @@ The first block has zero lift and zero evidence. An unseen scoring category also
 has zero lift and zero evidence. This makes “no history” semantically identical
 across training, validation, and production instead of inventing a `0.5`
 click-rate feature. Probabilities are clipped only for finite log-odds.
+
+The expanded target recipe includes the unified publisher hierarchy, `C21`,
+and `device_model`. A missing child statistic has zero lift and evidence while
+its domain/category and related ad-taxonomy fields remain available as natural
+backoff evidence.
+
+## Bounded numerical buckets
+
+Configured numerical features may be projected into additional categorical
+buckets without replacing their continuous values. Boundary values are part of
+the feature contract, and sources stored as `log1p` can declare boundaries in
+their original count scale. Bucket outputs use small bounded hash tables, so
+they require neither learned preprocessing vocabularies nor unbounded
+checkpoint growth.
 
 ## Coverage diagnostics
 

@@ -37,8 +37,9 @@ and zero evidence. Validation and test rows use the complete preceding training
 state, with unseen categories also represented as zero lift and zero evidence.
 
 Frequency and distinct-count features are covariate statistics and do not use
-labels. Causal history features count prior impressions and time since the
-previous impression in event order; they never read clicks.
+labels. Causal impression history counts prior events in event order. Configured
+click-history features consume only completed training hours: the current hour
+is buffered, and validation or prediction labels are never read.
 
 ## Manifest
 
