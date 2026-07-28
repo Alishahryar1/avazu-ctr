@@ -6,7 +6,12 @@ from pathlib import Path
 import pytest
 
 from avazu_ctr.config import load_experiment
-from avazu_ctr.config.schema import EmbeddingConfig, EmbeddingKind, ExperimentConfig
+from avazu_ctr.config.schema import (
+    EmbeddingConfig,
+    EmbeddingKind,
+    ExperimentConfig,
+    FeatureMode,
+)
 from avazu_ctr.data.preprocessing import (
     preprocess_evaluation,
     preprocess_production,
@@ -23,6 +28,19 @@ def small_config(
     name: str = "test",
 ) -> ExperimentConfig:
     config = load_experiment("configs/champion.yaml")
+    source_features = config.data.features
+    features = source_features.model_copy(
+        update={
+            "mode": FeatureMode.INDUCTIVE,
+            "crosses": source_features.crosses[:1],
+            "frequency_columns": ("device_ip",),
+            "distinct_counts": source_features.distinct_counts[:1],
+            "history": source_features.history[:1],
+            "target_encoding": source_features.target_encoding.model_copy(
+                update={"columns": ("site_id", "app_id"), "blocks": 2}
+            ),
+        }
+    )
     data = config.data.model_copy(
         update={
             "train_path": train_path,
@@ -30,12 +48,20 @@ def small_config(
             "artifact_root": root,
             "shard_rows": 128,
             "minimum_frequency": 1,
+            "features": features,
         }
     )
-    default = EmbeddingConfig(kind=EmbeddingKind.STANDARD, dim=8)
+    default = EmbeddingConfig(
+        kind=EmbeddingKind.HASH,
+        dim=8,
+        buckets=127,
+        hashes=1,
+    )
+    active_categorical = set(features.categorical_columns)
     embeddings = {
         feature: value.model_copy(update={"buckets": 127, "dim": 8})
         for feature, value in config.model.feature_embeddings.items()
+        if feature in active_categorical
     }
     backbone = config.model.backbone.model_copy(
         update={

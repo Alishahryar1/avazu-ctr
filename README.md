@@ -3,8 +3,8 @@
 A PyTorch pipeline for temporal click-through-rate modelling on the Avazu
 dataset.
 
-The repository covers schema validation, leakage-safe feature fitting, sharded
-preprocessing, candidate training, staged tuning, experiment tracking,
+The repository covers schema validation, provenance-tracked feature fitting,
+sharded preprocessing, candidate training, staged tuning, experiment tracking,
 TensorBoard, full-data production refitting, and deterministic submission
 generation.
 
@@ -133,15 +133,26 @@ atomically becomes the active selection after acceptance.
 `configs/champion.yaml` is the SENet + DCNv2 multihead candidate.
 `configs/tuning.yaml` defines the staged search.
 
+The shipped configurations compile 32 categorical and 31 numerical fields from
+raw context, time, bounded crosses, covariate aggregates, causal impression
+history, and temporal target evidence. They explicitly use
+`competition_transductive` covariate statistics to mirror the fixed Kaggle
+scoring batch; target statistics remain training-label-only. Use `inductive`
+mode for an unseen online stream. See [feature system](docs/features.md).
+
 ## Correctness contracts
 
 - Temporal windows are chosen before fitting any data-dependent transform.
 - Evaluation datasets contain train/validation only; test data is forbidden.
 - Production datasets contain all labelled rows plus test; validation is
   forbidden.
-- Validation/test covariates cannot affect evaluation vocabularies, counts,
-  numerical statistics, priors, or target encodings.
-- Training target rates use labels only from earlier temporal blocks.
+- Inductive transforms fit only training covariates; competition transduction
+  is explicit, label-free, recorded per table, and never opens test during
+  evaluation.
+- Training target evidence uses labels only from earlier temporal blocks.
+- The first target block and unseen categories have zero lift and zero evidence.
+- Impression history is causal, deterministically ordered, and label-free.
+- Manifests record feature definitions, fitted sources, label use, and OOV rates.
 - Categorical values stay `int64`; numerical values stay `float32`.
 - Models return the exact aggregate logit deployed by inference.
 - The aggregate logit receives direct BCE supervision.

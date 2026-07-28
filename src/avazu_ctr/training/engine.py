@@ -232,7 +232,7 @@ def save_resume(
     temporary = path.with_suffix(".tmp")
     torch.save(
         {
-            "schema_version": 3,
+            "schema_version": 4,
             "config_sha256": config_sha256,
             "manifest_sha256": manifest_sha256,
             "epoch": epoch,
@@ -264,7 +264,7 @@ def load_resume(
     expected_manifest_sha256: str,
 ) -> tuple[int, float, int, dict[str, torch.Tensor] | None, int]:
     checkpoint: dict[str, Any] = torch.load(path, map_location="cpu", weights_only=True)
-    if checkpoint.get("schema_version") != 3:
+    if checkpoint.get("schema_version") != 4:
         raise ValueError("unsupported resume checkpoint schema")
     if checkpoint.get("config_sha256") != expected_config_sha256:
         raise ValueError("resume checkpoint configuration differs from the active run")

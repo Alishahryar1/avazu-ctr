@@ -31,6 +31,11 @@ class EmbeddingKind(StrEnum):
     HASH = "hash"
 
 
+class FeatureMode(StrEnum):
+    INDUCTIVE = "inductive"
+    COMPETITION_TRANSDUCTIVE = "competition_transductive"
+
+
 class SchedulerKind(StrEnum):
     NONE = "none"
     COSINE = "cosine"
@@ -65,7 +70,14 @@ AVAZU_CATEGORICAL_COLUMNS = (
     "C20",
     "C21",
 )
-ENGINEERED_CATEGORICAL_COLUMNS = ("hour_of_day", "day_of_week")
+TIME_CATEGORICAL_COLUMNS = (
+    "hour_of_day",
+    "day_of_week",
+    "day_of_month",
+    "hour_of_week",
+)
+TIME_NUMERICAL_COLUMNS = ("hour_sin", "hour_cos")
+FeatureName = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]*$")]
 
 
 class EmbeddingConfig(StrictModel):
@@ -143,25 +155,206 @@ class TemporalSplitConfig(StrictModel):
     minimum_train_hours: Annotated[int, Field(gt=0)] = 24
 
 
+class CrossFeatureConfig(StrictModel):
+    name: FeatureName
+    columns: Annotated[tuple[FeatureName, ...], Field(min_length=2)]
+
+
+class DistinctCountFeatureConfig(StrictModel):
+    name: FeatureName
+    group_by: FeatureName
+    value: FeatureName
+
+
+class HistoryFeatureConfig(StrictModel):
+    key: FeatureName
+    within_hour: bool = False
+
+
 class TargetEncodingConfig(StrictModel):
-    enabled: bool = True
-    columns: tuple[str, ...] = ("site_id", "app_id")
-    blocks: Annotated[int, Field(ge=2)] = 5
+    columns: tuple[FeatureName, ...] = (
+        "app_id",
+        "site_id",
+        "site_domain",
+        "app_domain",
+        "C14",
+        "C17",
+    )
+    blocks: Annotated[int, Field(ge=2)] = 10
     smoothing: Annotated[float, Field(gt=0.0)] = 20.0
-    neutral_prior: Annotated[float, Field(gt=0.0, lt=1.0)] = 0.5
+    probability_clip: Annotated[float, Field(gt=0.0, lt=0.5)] = 1e-5
+
+
+class FeatureSetConfig(StrictModel):
+    mode: FeatureMode = FeatureMode.INDUCTIVE
+    raw_categorical_columns: tuple[FeatureName, ...] = AVAZU_CATEGORICAL_COLUMNS
+    crosses: tuple[CrossFeatureConfig, ...] = (
+        CrossFeatureConfig(
+            name="user_proxy",
+            columns=("device_ip", "device_model"),
+        ),
+        CrossFeatureConfig(
+            name="device_id_x_app_id",
+            columns=("device_id", "app_id"),
+        ),
+        CrossFeatureConfig(
+            name="device_ip_x_C14",
+            columns=("device_ip", "C14"),
+        ),
+        CrossFeatureConfig(
+            name="user_proxy_x_app_id",
+            columns=("user_proxy", "app_id"),
+        ),
+        CrossFeatureConfig(
+            name="user_proxy_x_site_id",
+            columns=("user_proxy", "site_id"),
+        ),
+        CrossFeatureConfig(
+            name="site_id_x_C14",
+            columns=("site_id", "C14"),
+        ),
+        CrossFeatureConfig(
+            name="app_id_x_C14",
+            columns=("app_id", "C14"),
+        ),
+    )
+    frequency_columns: tuple[FeatureName, ...] = (
+        "device_ip",
+        "device_id",
+        "user_proxy",
+        "app_id",
+        "site_id",
+        "C14",
+        "C17",
+        "C21",
+    )
+    distinct_counts: tuple[DistinctCountFeatureConfig, ...] = (
+        DistinctCountFeatureConfig(
+            name="device_ip_distinct_apps_log1p",
+            group_by="device_ip",
+            value="app_id",
+        ),
+        DistinctCountFeatureConfig(
+            name="device_ip_distinct_sites_log1p",
+            group_by="device_ip",
+            value="site_id",
+        ),
+        DistinctCountFeatureConfig(
+            name="user_proxy_distinct_apps_log1p",
+            group_by="user_proxy",
+            value="app_id",
+        ),
+        DistinctCountFeatureConfig(
+            name="user_proxy_distinct_sites_log1p",
+            group_by="user_proxy",
+            value="site_id",
+        ),
+    )
+    history: tuple[HistoryFeatureConfig, ...] = (
+        HistoryFeatureConfig(key="user_proxy", within_hour=True),
+        HistoryFeatureConfig(key="device_ip"),
+    )
+    target_encoding: TargetEncodingConfig = TargetEncodingConfig()
+
+    @property
+    def categorical_columns(self) -> tuple[str, ...]:
+        return (
+            *self.raw_categorical_columns,
+            *TIME_CATEGORICAL_COLUMNS,
+            *(cross.name for cross in self.crosses),
+        )
+
+    @property
+    def numerical_columns(self) -> tuple[str, ...]:
+        history: list[str] = []
+        for feature in self.history:
+            history.extend(
+                (
+                    f"{feature.key}_prior_impressions_log1p",
+                    f"{feature.key}_hours_since_previous_impression_log1p",
+                )
+            )
+            if feature.within_hour:
+                history.append(f"{feature.key}_prior_hour_impressions_log1p")
+        target: list[str] = []
+        for feature in self.target_encoding.columns:
+            target.extend(
+                (
+                    f"{feature}_target_logit_lift",
+                    f"{feature}_target_evidence_log1p",
+                )
+            )
+        return (
+            *TIME_NUMERICAL_COLUMNS,
+            *(f"{feature}_frequency_log1p" for feature in self.frequency_columns),
+            *(feature.name for feature in self.distinct_counts),
+            *history,
+            *target,
+        )
+
+    @model_validator(mode="after")
+    def validate_feature_plan(self) -> Self:
+        raw = self.raw_categorical_columns
+        if len(set(raw)) != len(raw):
+            raise ValueError("features.raw_categorical_columns contains duplicates")
+        unknown_raw = set(raw).difference(AVAZU_CATEGORICAL_COLUMNS)
+        if unknown_raw:
+            raise ValueError(f"unknown Avazu categorical columns: {sorted(unknown_raw)}")
+
+        available = set(raw).union(TIME_CATEGORICAL_COLUMNS)
+        for cross in self.crosses:
+            if cross.name in available:
+                raise ValueError(f"feature name {cross.name!r} is duplicated")
+            if len(set(cross.columns)) != len(cross.columns):
+                raise ValueError(f"cross {cross.name!r} repeats an input column")
+            unknown = set(cross.columns).difference(available)
+            if unknown:
+                raise ValueError(
+                    f"cross {cross.name!r} references unavailable columns: {sorted(unknown)}"
+                )
+            available.add(cross.name)
+
+        for field_name, features in (
+            ("features.frequency_columns", self.frequency_columns),
+            ("features.history", tuple(feature.key for feature in self.history)),
+            ("features.target_encoding.columns", self.target_encoding.columns),
+        ):
+            if len(set(features)) != len(features):
+                raise ValueError(f"{field_name} contains duplicates")
+            unknown = set(features).difference(available)
+            if unknown:
+                raise ValueError(f"{field_name} references unavailable columns: {sorted(unknown)}")
+
+        for feature in self.distinct_counts:
+            if feature.group_by == feature.value:
+                raise ValueError(f"distinct count {feature.name!r} requires two different columns")
+            unknown = {feature.group_by, feature.value}.difference(available)
+            if unknown:
+                raise ValueError(
+                    f"distinct count {feature.name!r} references unavailable columns: "
+                    f"{sorted(unknown)}"
+                )
+
+        numerical = self.numerical_columns
+        if len(set(numerical)) != len(numerical):
+            raise ValueError("engineered numerical feature names must be unique")
+        collisions = set(numerical).intersection(available)
+        if collisions:
+            raise ValueError(
+                f"feature names span both categorical and numerical lanes: {collisions}"
+            )
+        return self
 
 
 class DataConfig(StrictModel):
     train_path: Path = Path("data/raw/train.gz")
     test_path: Path = Path("data/raw/test.gz")
     artifact_root: Path = Path("artifacts")
-    shard_rows: Annotated[int, Field(gt=0)] = 1_000_000
+    shard_rows: Annotated[int, Field(gt=0)] = 250_000
     vocabulary_limit: Annotated[int, Field(gt=1)] = 1_000_000
     minimum_frequency: Annotated[int, Field(ge=1)] = 2
-    categorical_columns: tuple[str, ...] = AVAZU_CATEGORICAL_COLUMNS
-    count_columns: tuple[str, ...] = ("device_ip", "device_id", "app_id", "site_id")
     split: TemporalSplitConfig = TemporalSplitConfig()
-    target_encoding: TargetEncodingConfig = TargetEncodingConfig()
+    features: FeatureSetConfig = FeatureSetConfig()
 
 
 class SchedulerConfig(StrictModel):
@@ -232,7 +425,7 @@ class PromotionConfig(StrictModel):
 
 
 class ExperimentConfig(StrictModel):
-    schema_version: Literal[3]
+    schema_version: Literal[4]
     name: str
     data: DataConfig = DataConfig()
     model: ModelConfig
@@ -247,23 +440,8 @@ class ExperimentConfig(StrictModel):
     def validate_feature_configuration(self) -> Self:
         if self.tracking.selection_dir.resolve() == self.deployment.champion_dir.resolve():
             raise ValueError("selection and champion directories must differ")
-        allowed_raw = set(AVAZU_CATEGORICAL_COLUMNS)
-        categorical = set(self.data.categorical_columns)
-        if len(categorical) != len(self.data.categorical_columns):
-            raise ValueError("data.categorical_columns contains duplicates")
-        unknown_categorical = categorical.difference(allowed_raw)
-        if unknown_categorical:
-            raise ValueError(f"unknown Avazu categorical columns: {sorted(unknown_categorical)}")
-        for name, features in (
-            ("data.count_columns", self.data.count_columns),
-            ("data.target_encoding.columns", self.data.target_encoding.columns),
-        ):
-            if len(set(features)) != len(features):
-                raise ValueError(f"{name} contains duplicates")
-            unknown = set(features).difference(allowed_raw)
-            if unknown:
-                raise ValueError(f"{name} contains unknown Avazu columns: {sorted(unknown)}")
-        model_features = categorical.union(ENGINEERED_CATEGORICAL_COLUMNS)
+        model_features = set(self.data.features.categorical_columns)
+        cross_features = {feature.name for feature in self.data.features.crosses}
         model_configs = [self.model]
         while model_configs:
             model_config = model_configs.pop()
@@ -272,6 +450,19 @@ class ExperimentConfig(StrictModel):
                 raise ValueError(
                     f"model.feature_embeddings contains inactive features: "
                     f"{sorted(unknown_embeddings)}"
+                )
+            non_hashed_crosses = {
+                feature
+                for feature in cross_features
+                if model_config.feature_embeddings.get(
+                    feature,
+                    model_config.default_embedding,
+                ).kind
+                is not EmbeddingKind.HASH
+            }
+            if non_hashed_crosses:
+                raise ValueError(
+                    f"cross features require bounded hash embeddings: {sorted(non_hashed_crosses)}"
                 )
             for feature in model_features:
                 root_kind = self.model.feature_embeddings.get(

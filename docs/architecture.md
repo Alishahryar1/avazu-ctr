@@ -17,8 +17,8 @@ tracking → inference → exploration
 ## Boundaries
 
 - `config` owns immutable, strict Pydantic schemas and YAML loading.
-- `data` owns raw schema validation, temporal windows, fitted transformations,
-  typed Parquet shards, and manifests.
+- `data` owns raw schema validation, temporal windows, typed feature recipes,
+  fitted transformations, typed Parquet shards, and manifests.
 - `models` only map `FeatureBatch` to `ModelOutput`.
 - `objectives` own all supervision, including aggregate, auxiliary, diversity,
   and recursive ensemble terms.
@@ -61,9 +61,13 @@ all-data step count.
 
 ## Artifact contract
 
-A processed dataset is valid only with its schema-v3 role-specific manifest and
+A processed dataset is valid only with its schema-v4 role-specific manifest and
 checksums. Evaluation manifests require validation and forbid test. Production
 manifests require test and forbid validation.
+
+The manifest embeds the ordered feature definitions, inductive or explicit
+competition-transductive mode, fitted-table label and split provenance, and OOV
+diagnostics. A label-dependent table can only declare the training split.
 
 An inference model is valid only as a production `safetensors` file plus
 `bundle.json` and its fitted all-data preprocessor state. The bundle records the

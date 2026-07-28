@@ -3,9 +3,13 @@
 Python is fixed to 3.12 and `uv.lock` fixes the complete dependency graph.
 CPU and CUDA 13.0 PyTorch installs are explicit, mutually exclusive extras.
 
-Splits, preprocessing, hashing, masks, initialization, data order, workers, and
-Optuna samplers are seeded. Hash coefficients and feature masks are checkpoint
-buffers.
+Splits, feature recipes, preprocessing, hashing, causal event order, masks,
+initialization, data order, workers, and Optuna samplers are seeded. Hash
+coefficients and feature masks are checkpoint buffers.
+
+Dataset manifests distinguish inductive and competition-transductive covariate
+state and checksum every fitted table with its declared source splits. Runs
+therefore cannot silently compare or deploy a different information set.
 
 Production CUDA permits seeded nondeterministic kernels when they improve
 throughput. Tests enable `torch.use_deterministic_algorithms(True)`. Exact

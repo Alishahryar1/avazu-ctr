@@ -3,6 +3,9 @@
 The repository links papers instead of checking PDF binaries into Git.
 
 - Avazu dataset: [Click-Through Rate Prediction](https://www.kaggle.com/c/avazu-ctr-prediction)
+- Winning Avazu implementation: [ycjuan/kaggle-avazu](https://github.com/ycjuan/kaggle-avazu)
+- Avazu-winning field-aware baseline: [Field-aware Factorization Machines for CTR Prediction](https://www.csie.ntu.edu.tw/~cjlin/papers/ffm.pdf)
+- Avazu top-five feature engineering: [Click-Through Rate Prediction: Top-5 Solution for the Avazu Contest](https://www.efimov-ml.com/pdfs/ClickThroughRate2015.pdf)
 - DCNv2: [DCN V2: Improved Deep & Cross Network and Practical Lessons for Web-scale Learning to Rank](https://arxiv.org/abs/2008.13535)
 - SENet feature reweighting: [FiBiNET: Combining Feature Importance and Bilinear Feature Interaction for Click-Through Rate Prediction](https://arxiv.org/abs/1905.09433)
 - Low-rank FiBiNET: [FiBiNet++: Reducing Model Size by Low Rank Feature Interaction Layer](https://arxiv.org/abs/2209.05016)

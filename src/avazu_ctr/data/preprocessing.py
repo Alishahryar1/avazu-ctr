@@ -5,45 +5,41 @@ from __future__ import annotations
 import json
 import shutil
 import uuid
-from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
 import polars as pl
 
 from avazu_ctr.config.loader import resolved_config
-from avazu_ctr.config.schema import EmbeddingKind, ExperimentConfig
+from avazu_ctr.config.schema import EmbeddingKind, ExperimentConfig, FeatureMode
+from avazu_ctr.data.features import (
+    FittedFeatureState,
+    FittedFeatureTransformer,
+    HistoryState,
+    derive_categorical_features,
+    feature_definitions,
+    fit_feature_state,
+    scan_with_causal_history,
+)
 from avazu_ctr.data.manifest import (
     DatasetManifest,
     DatasetPurpose,
-    FittedTableManifest,
+    DatasetSplit,
     HourRange,
+    OovStatistic,
     RawSource,
     ShardManifest,
+    SplitDiagnostics,
     load_manifest,
     population_sha256,
     sha256_file,
     sha256_json,
     write_manifest,
 )
-from avazu_ctr.data.schema import ENGINEERED_CATEGORICAL_COLUMNS, scan_raw
+from avazu_ctr.data.schema import scan_raw
 from avazu_ctr.data.split import TemporalWindow, build_temporal_windows
 
-NUMERICAL_BASE = ("hour_sin", "hour_cos")
-CANONICAL_SCHEMA_VERSION = 3
-
-
-@dataclass(slots=True)
-class FittedState:
-    categorical_columns: tuple[str, ...]
-    numerical_columns: tuple[str, ...]
-    cardinalities: dict[str, int]
-    embedding_kinds: dict[str, str]
-    vocabularies: dict[str, Path]
-    counts: dict[str, Path]
-    target_encodings: dict[str, Path]
-    global_prior: float
-    tables: list[FittedTableManifest]
+CANONICAL_SCHEMA_VERSION = 4
 
 
 @lru_cache(maxsize=8)
@@ -127,7 +123,7 @@ def temporal_windows(config: ExperimentConfig) -> tuple[TemporalWindow, ...]:
 def feature_config_sha256(config: ExperimentConfig) -> str:
     """Hash only configuration fields that change processed feature values."""
 
-    categorical = (*config.data.categorical_columns, *ENGINEERED_CATEGORICAL_COLUMNS)
+    categorical = config.data.features.categorical_columns
     embedding_kinds = {
         feature: config.model.feature_embeddings.get(
             feature,
@@ -137,310 +133,25 @@ def feature_config_sha256(config: ExperimentConfig) -> str:
     }
     return sha256_json(
         {
-            "schema_version": 3,
-            "categorical_columns": config.data.categorical_columns,
-            "count_columns": config.data.count_columns,
+            "schema_version": 4,
+            "features": config.data.features.model_dump(mode="json"),
+            "compiled_features": [
+                feature.model_dump(mode="json") for feature in feature_definitions(config)
+            ],
             "minimum_frequency": config.data.minimum_frequency,
             "vocabulary_limit": config.data.vocabulary_limit,
-            "target_encoding": config.data.target_encoding.model_dump(mode="json"),
             "embedding_kinds": embedding_kinds,
             "hash_seed": config.training.seed,
         }
     )
 
 
-def _write_table(frame: pl.DataFrame, path: Path, feature: str, kind: str) -> FittedTableManifest:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.write_parquet(path, compression="zstd", statistics=True)
-    return FittedTableManifest(
-        feature=feature,
-        kind=kind,
-        path=path.name,
-        rows=frame.height,
-        sha256=sha256_file(path),
-    )
-
-
-def _fit_state(
-    train: pl.LazyFrame,
-    config: ExperimentConfig,
-    state_dir: Path,
-) -> FittedState:
-    categorical = (*config.data.categorical_columns, *ENGINEERED_CATEGORICAL_COLUMNS)
-    cardinalities: dict[str, int] = {}
-    kinds: dict[str, str] = {}
-    vocabularies: dict[str, Path] = {}
-    count_tables: dict[str, Path] = {}
-    target_tables: dict[str, Path] = {}
-    tables: list[FittedTableManifest] = []
-
-    for feature in categorical:
-        embedding = config.model.feature_embeddings.get(feature, config.model.default_embedding)
-        kinds[feature] = embedding.kind.value
-        if embedding.kind is EmbeddingKind.HASH:
-            cardinalities[feature] = embedding.buckets
-            continue
-        counts = (
-            train.group_by(feature)
-            .len(name="_count")
-            .filter(pl.col("_count") >= config.data.minimum_frequency)
-            .sort(feature)
-            .collect(engine="streaming")
-            .with_row_index(f"{feature}__id", offset=1)
-            .select(feature, pl.col(f"{feature}__id").cast(pl.Int64))
-        )
-        if counts.height > config.data.vocabulary_limit:
-            raise ValueError(
-                f"{feature} has {counts.height} retained values; configure a hash embedding "
-                f"or raise data.vocabulary_limit"
-            )
-        vocab_path = state_dir / f"vocabulary_{feature}.parquet"
-        tables.append(_write_table(counts, vocab_path, feature, "vocabulary"))
-        vocabularies[feature] = vocab_path
-        cardinalities[feature] = counts.height + 1
-
-    for feature in config.data.count_columns:
-        counts = (
-            train.group_by(feature)
-            .len(name=f"{feature}__training_impressions")
-            .sort(feature)
-            .collect(engine="streaming")
-        )
-        table_path = state_dir / f"counts_{feature}.parquet"
-        tables.append(_write_table(counts, table_path, feature, "training_impression_count"))
-        count_tables[feature] = table_path
-
-    label_summary = train.select(
-        pl.col("click").sum().alias("positive"),
-        pl.len().alias("count"),
-    ).collect(engine="streaming")
-    positives = int(label_summary["positive"][0])
-    label_count = int(label_summary["count"][0])
-    if label_count == 0:
-        raise ValueError("training window is empty")
-    global_prior = positives / label_count
-
-    if config.data.target_encoding.enabled:
-        for feature in config.data.target_encoding.columns:
-            stats = (
-                train.group_by(feature)
-                .agg(
-                    pl.col("click").sum().cast(pl.Int64).alias("_positive"),
-                    pl.len().cast(pl.Int64).alias("_count"),
-                )
-                .sort(feature)
-                .collect(engine="streaming")
-            )
-            table_path = state_dir / f"target_encoding_{feature}.parquet"
-            tables.append(_write_table(stats, table_path, feature, "target_encoding"))
-            target_tables[feature] = table_path
-
-    numerical = [
-        *NUMERICAL_BASE,
-        *(f"{name}__training_impressions_log1p" for name in config.data.count_columns),
-    ]
-    if config.data.target_encoding.enabled:
-        numerical.extend(
-            f"{name}__temporal_target_rate" for name in config.data.target_encoding.columns
-        )
-    return FittedState(
-        categorical_columns=tuple(categorical),
-        numerical_columns=tuple(numerical),
-        cardinalities=cardinalities,
-        embedding_kinds=kinds,
-        vocabularies=vocabularies,
-        counts=count_tables,
-        target_encodings=target_tables,
-        global_prior=global_prior,
-        tables=tables,
-    )
-
-
-def _apply_categories(
-    frame: pl.LazyFrame,
-    state: FittedState,
-    config: ExperimentConfig,
-) -> pl.LazyFrame:
-    transformed = frame
-    for feature in state.categorical_columns:
-        embedding = config.model.feature_embeddings.get(feature, config.model.default_embedding)
-        if embedding.kind is EmbeddingKind.HASH:
-            transformed = transformed.with_columns(
-                pl.col(feature)
-                .cast(pl.String)
-                .hash(
-                    seed=config.training.seed,
-                    seed_1=config.training.seed + 1,
-                    seed_2=config.training.seed + 2,
-                    seed_3=config.training.seed + 3,
-                )
-                .reinterpret(signed=True)
-                .alias(feature)
-            )
-            continue
-        id_column = f"{feature}__id"
-        transformed = (
-            transformed.join(
-                pl.scan_parquet(state.vocabularies[feature]),
-                on=feature,
-                how="left",
-                maintain_order="left",
-            )
-            .drop(feature)
-            .rename({id_column: feature})
-            .with_columns(pl.col(feature).fill_null(0).cast(pl.Int64))
-        )
-    return transformed
-
-
-def _apply_counts(frame: pl.LazyFrame, state: FittedState) -> pl.LazyFrame:
-    transformed = frame
-    for feature, path in state.counts.items():
-        count_column = f"{feature}__training_impressions"
-        transformed = transformed.join(
-            pl.scan_parquet(path),
-            on=feature,
-            how="left",
-            maintain_order="left",
-        ).with_columns(
-            pl.col(count_column)
-            .fill_null(0)
-            .cast(pl.Float32)
-            .log1p()
-            .alias(f"{count_column}_log1p")
-        )
-    return transformed
-
-
-def _training_target_encodings(
-    train: pl.LazyFrame,
-    state: FittedState,
-    config: ExperimentConfig,
-    training_range: HourRange,
-) -> pl.LazyFrame:
-    target = config.data.target_encoding
-    if not target.enabled:
-        return train
-    width = max(
-        1,
-        (training_range.end - training_range.start + target.blocks - 1) // target.blocks,
-    )
-    transformed = train.with_columns(
-        ((pl.col("_timestamp_hour") - training_range.start) // width)
-        .clip(0, target.blocks - 1)
-        .alias("_te_block")
-    )
-    global_blocks = (
-        transformed.group_by("_te_block")
-        .agg(pl.col("click").sum().alias("_block_positive"), pl.len().alias("_block_count"))
-        .sort("_te_block")
-        .with_columns(
-            (pl.col("_block_positive").cum_sum() - pl.col("_block_positive")).alias(
-                "_prior_positive"
-            ),
-            (pl.col("_block_count").cum_sum() - pl.col("_block_count")).alias("_prior_count"),
-        )
-        .with_columns(
-            pl.when(pl.col("_prior_count") > 0)
-            .then(pl.col("_prior_positive") / pl.col("_prior_count"))
-            .otherwise(target.neutral_prior)
-            .alias("_block_prior")
-        )
-        .select("_te_block", "_block_prior")
-    )
-    transformed = transformed.join(
-        global_blocks,
-        on="_te_block",
-        how="left",
-        maintain_order="left",
-    )
-
-    for feature in target.columns:
-        stats = (
-            transformed.group_by(feature, "_te_block")
-            .agg(pl.col("click").sum().alias("_positive"), pl.len().alias("_count"))
-            .sort(feature, "_te_block")
-            .with_columns(
-                (pl.col("_positive").cum_sum().over(feature) - pl.col("_positive")).alias(
-                    "_previous_positive"
-                ),
-                (pl.col("_count").cum_sum().over(feature) - pl.col("_count")).alias(
-                    "_previous_count"
-                ),
-            )
-            .select(feature, "_te_block", "_previous_positive", "_previous_count")
-        )
-        output = f"{feature}__temporal_target_rate"
-        transformed = (
-            transformed.join(
-                stats,
-                on=[feature, "_te_block"],
-                how="left",
-                maintain_order="left",
-            )
-            .with_columns(
-                (
-                    (
-                        pl.col("_previous_positive").fill_null(0)
-                        + target.smoothing * pl.col("_block_prior")
-                    )
-                    / (pl.col("_previous_count").fill_null(0) + target.smoothing)
-                )
-                .cast(pl.Float32)
-                .alias(output)
-            )
-            .drop("_previous_positive", "_previous_count")
-        )
-    return transformed.drop("_te_block", "_block_prior")
-
-
-def _validation_target_encodings(
-    frame: pl.LazyFrame,
-    state: FittedState,
-    config: ExperimentConfig,
-) -> pl.LazyFrame:
-    target = config.data.target_encoding
-    transformed = frame
-    if not target.enabled:
-        return transformed
-    for feature, path in state.target_encodings.items():
-        output = f"{feature}__temporal_target_rate"
-        transformed = (
-            transformed.join(
-                pl.scan_parquet(path),
-                on=feature,
-                how="left",
-                maintain_order="left",
-            )
-            .with_columns(
-                (
-                    (pl.col("_positive").fill_null(0) + target.smoothing * state.global_prior)
-                    / (pl.col("_count").fill_null(0) + target.smoothing)
-                )
-                .cast(pl.Float32)
-                .alias(output)
-            )
-            .drop("_positive", "_count")
-        )
-    return transformed
-
-
-def _finalize(
-    frame: pl.LazyFrame,
-    state: FittedState,
-    config: ExperimentConfig,
+def _select_model_columns(
+    transformed: pl.LazyFrame,
+    state: FittedFeatureState,
     *,
     labelled: bool,
-    training: bool,
-    training_range: HourRange,
 ) -> pl.LazyFrame:
-    transformed = _apply_counts(frame, state)
-    transformed = (
-        _training_target_encodings(transformed, state, config, training_range)
-        if training
-        else _validation_target_encodings(transformed, state, config)
-    )
-    transformed = _apply_categories(transformed, state, config)
     selected: list[pl.Expr | str] = [
         pl.col("_row_index").cast(pl.Int64),
         pl.col("id").cast(pl.String),
@@ -456,15 +167,39 @@ def _finalize(
     return transformed.select(selected)
 
 
-def _write_shards(
+def _write_feature_shards(
     frame: pl.LazyFrame,
     output_dir: Path,
     shard_rows: int,
+    *,
+    state: FittedFeatureState,
+    transformer: FittedFeatureTransformer,
+    history: HistoryState,
+    config: ExperimentConfig,
+    labelled: bool,
+    training: bool,
 ) -> tuple[ShardManifest, ...]:
     output_dir.mkdir(parents=True, exist_ok=True)
     shards: list[ShardManifest] = []
+    transformed = _select_model_columns(
+        transformer.transform(
+            scan_with_causal_history(
+                frame,
+                config,
+                history,
+                chunk_size=shard_rows,
+            ),
+            training=training,
+        ),
+        state,
+        labelled=labelled,
+    )
     for index, batch in enumerate(
-        frame.collect_batches(chunk_size=shard_rows, maintain_order=True, engine="streaming")
+        transformed.collect_batches(
+            chunk_size=shard_rows,
+            maintain_order=True,
+            engine="streaming",
+        )
     ):
         if batch.is_empty():
             continue
@@ -477,9 +212,65 @@ def _write_shards(
                 sha256=sha256_file(path),
             )
         )
+        del batch
     if not shards:
         raise ValueError(f"no rows were written to {output_dir}")
     return tuple(shards)
+
+
+def _covariate_sources(
+    mode: FeatureMode,
+    scoring_split: DatasetSplit,
+) -> tuple[DatasetSplit, ...]:
+    return (
+        (DatasetSplit.TRAINING,)
+        if mode is FeatureMode.INDUCTIVE
+        else (DatasetSplit.TRAINING, scoring_split)
+    )
+
+
+def _covariate_reference(
+    train: pl.LazyFrame,
+    scoring: pl.LazyFrame,
+    config: ExperimentConfig,
+) -> pl.LazyFrame:
+    columns = config.data.features.categorical_columns
+    if config.data.features.mode is FeatureMode.INDUCTIVE:
+        return train.select(columns)
+    return pl.concat(
+        (train.select(columns), scoring.select(columns)),
+        how="vertical",
+    )
+
+
+def _split_diagnostics(
+    shards: tuple[ShardManifest, ...],
+    state: FittedFeatureState,
+) -> SplitDiagnostics:
+    rows = sum(shard.rows for shard in shards)
+    vocabulary_features = tuple(
+        feature
+        for feature, kind in state.embedding_kinds.items()
+        if kind == EmbeddingKind.STANDARD.value
+    )
+    if not vocabulary_features:
+        return SplitDiagnostics(rows=rows, categorical_oov={})
+    summary = (
+        pl.scan_parquet([Path(shard.path) for shard in shards])
+        .select(*((pl.col(feature) == 0).sum().alias(feature) for feature in vocabulary_features))
+        .collect(engine="streaming")
+    )
+    return SplitDiagnostics(
+        rows=rows,
+        categorical_oov={
+            feature: OovStatistic(
+                rows=rows,
+                unknown_rows=int(summary[feature][0]),
+                rate=int(summary[feature][0]) / rows,
+            )
+            for feature in vocabulary_features
+        },
+    )
 
 
 def _relative_shards(shards: tuple[ShardManifest, ...], root: Path) -> tuple[ShardManifest, ...]:
@@ -525,21 +316,24 @@ def _publish_dataset(staging: Path, root: Path) -> Path:
 
 
 def _write_preprocessor(
-    state: FittedState,
+    state: FittedFeatureState,
     path: Path,
     *,
     purpose: DatasetPurpose,
+    feature_mode: FeatureMode,
 ) -> None:
     path.write_text(
         json.dumps(
             {
-                "schema_version": 3,
+                "schema_version": 4,
                 "purpose": purpose.value,
+                "feature_mode": feature_mode.value,
                 "global_prior": state.global_prior,
                 "categorical_columns": state.categorical_columns,
                 "numerical_columns": state.numerical_columns,
                 "cardinalities": state.cardinalities,
                 "embedding_kinds": state.embedding_kinds,
+                "features": [feature.model_dump(mode="json") for feature in state.definitions],
             },
             indent=2,
             sort_keys=True,
@@ -559,7 +353,7 @@ def preprocess_evaluation(
     window_name: str = "final_holdout",
     overwrite: bool = False,
 ) -> Path:
-    """Fit one train/validation window without touching prediction data."""
+    """Fit one train/validation window without touching competition test data."""
 
     raw, raw_sha256 = _canonical_scan(config, config.data.train_path, labelled=True)
     _validate_labels(raw)
@@ -574,36 +368,54 @@ def preprocess_evaluation(
     staging = _staging_root(root, config.data.artifact_root, overwrite=overwrite)
     try:
         state_dir = staging / "state"
-        train = _within(raw, training_range.start, training_range.end)
-        validation = _within(raw, validation_range.start, validation_range.end)
-        state = _fit_state(train, config, state_dir)
-        train_shards = _write_shards(
-            _finalize(
-                train,
-                state,
-                config,
-                labelled=True,
-                training=True,
-                training_range=training_range,
-            ),
+        train = derive_categorical_features(
+            _within(raw, training_range.start, training_range.end),
+            config,
+        )
+        validation = derive_categorical_features(
+            _within(raw, validation_range.start, validation_range.end),
+            config,
+        )
+        covariate_sources = _covariate_sources(
+            config.data.features.mode,
+            DatasetSplit.VALIDATION,
+        )
+        state = fit_feature_state(
+            train,
+            _covariate_reference(train, validation, config),
+            config,
+            state_dir,
+            covariate_sources=covariate_sources,
+            training_range=training_range,
+        )
+        transformer = FittedFeatureTransformer(state, config, training_range)
+        history = HistoryState.for_expected_rows(state.training_rows)
+        train_shards = _write_feature_shards(
+            train,
             staging / "train",
             config.data.shard_rows,
+            state=state,
+            transformer=transformer,
+            history=history,
+            config=config,
+            labelled=True,
+            training=True,
         )
-        validation_shards = _write_shards(
-            _finalize(
-                validation,
-                state,
-                config,
-                labelled=True,
-                training=False,
-                training_range=training_range,
-            ),
+        validation_shards = _write_feature_shards(
+            validation,
             staging / "validation",
             config.data.shard_rows,
+            state=state,
+            transformer=transformer,
+            history=history,
+            config=config,
+            labelled=True,
+            training=False,
         )
         manifest = DatasetManifest(
             name=window.name,
             purpose=DatasetPurpose.EVALUATION,
+            feature_mode=config.data.features.mode,
             labelled_source=RawSource(path=str(config.data.train_path), sha256=raw_sha256),
             training_range=training_range,
             validation_range=validation_range,
@@ -621,6 +433,11 @@ def preprocess_evaluation(
             numerical_columns=state.numerical_columns,
             cardinalities=state.cardinalities,
             embedding_kinds=state.embedding_kinds,
+            features=state.definitions,
+            diagnostics={
+                DatasetSplit.TRAINING: _split_diagnostics(train_shards, state),
+                DatasetSplit.VALIDATION: _split_diagnostics(validation_shards, state),
+            },
             train_shards=_relative_shards(train_shards, staging),
             validation_shards=_relative_shards(validation_shards, staging),
             fitted_tables=tuple(
@@ -635,6 +452,7 @@ def preprocess_evaluation(
             state,
             state_dir / "preprocessor.json",
             purpose=DatasetPurpose.EVALUATION,
+            feature_mode=config.data.features.mode,
         )
         return _publish_dataset(staging, root)
     except Exception:
@@ -648,7 +466,7 @@ def preprocess_production(
     *,
     overwrite: bool = False,
 ) -> Path:
-    """Fit the deployable feature state on every labelled row."""
+    """Fit deployable features on labels and the explicitly declared covariate scope."""
 
     raw, raw_sha256 = _canonical_scan(config, config.data.train_path, labelled=True)
     _validate_labels(raw)
@@ -661,35 +479,51 @@ def preprocess_production(
     staging = _staging_root(root, config.data.artifact_root, overwrite=overwrite)
     try:
         state_dir = staging / "state"
-        train = _within(raw, training_range.start, training_range.end)
-        state = _fit_state(train, config, state_dir)
-        train_shards = _write_shards(
-            _finalize(
-                train,
-                state,
-                config,
-                labelled=True,
-                training=True,
-                training_range=training_range,
-            ),
+        train = derive_categorical_features(
+            _within(raw, training_range.start, training_range.end),
+            config,
+        )
+        test = derive_categorical_features(test, config)
+        covariate_sources = _covariate_sources(
+            config.data.features.mode,
+            DatasetSplit.PREDICTION,
+        )
+        state = fit_feature_state(
+            train,
+            _covariate_reference(train, test, config),
+            config,
+            state_dir,
+            covariate_sources=covariate_sources,
+            training_range=training_range,
+        )
+        transformer = FittedFeatureTransformer(state, config, training_range)
+        history = HistoryState.for_expected_rows(state.training_rows)
+        train_shards = _write_feature_shards(
+            train,
             staging / "train",
             config.data.shard_rows,
+            state=state,
+            transformer=transformer,
+            history=history,
+            config=config,
+            labelled=True,
+            training=True,
         )
-        test_shards = _write_shards(
-            _finalize(
-                test,
-                state,
-                config,
-                labelled=False,
-                training=False,
-                training_range=training_range,
-            ),
+        test_shards = _write_feature_shards(
+            test,
             staging / "test",
             config.data.shard_rows,
+            state=state,
+            transformer=transformer,
+            history=history,
+            config=config,
+            labelled=False,
+            training=False,
         )
         manifest = DatasetManifest(
             name="production",
             purpose=DatasetPurpose.PRODUCTION,
+            feature_mode=config.data.features.mode,
             labelled_source=RawSource(path=str(config.data.train_path), sha256=raw_sha256),
             prediction_source=RawSource(path=str(config.data.test_path), sha256=test_sha256),
             training_range=training_range,
@@ -707,6 +541,11 @@ def preprocess_production(
             numerical_columns=state.numerical_columns,
             cardinalities=state.cardinalities,
             embedding_kinds=state.embedding_kinds,
+            features=state.definitions,
+            diagnostics={
+                DatasetSplit.TRAINING: _split_diagnostics(train_shards, state),
+                DatasetSplit.PREDICTION: _split_diagnostics(test_shards, state),
+            },
             train_shards=_relative_shards(train_shards, staging),
             test_shards=_relative_shards(test_shards, staging),
             fitted_tables=tuple(
@@ -721,6 +560,7 @@ def preprocess_production(
             state,
             state_dir / "preprocessor.json",
             purpose=DatasetPurpose.PRODUCTION,
+            feature_mode=config.data.features.mode,
         )
         return _publish_dataset(staging, root)
     except Exception:

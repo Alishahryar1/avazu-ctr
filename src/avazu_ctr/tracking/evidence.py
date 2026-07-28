@@ -31,7 +31,7 @@ class FoldEvidence(StrictModel):
 
 
 class ConfirmationEvidence(StrictModel):
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
     config: ExperimentConfig
     config_sha256: Sha256
     folds: tuple[FoldEvidence, ...] = Field(min_length=1)
@@ -96,7 +96,7 @@ class HoldoutEvidence(StrictModel):
 
 
 class SelectionEvidence(StrictModel):
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
     selection_id: str
     confirmation: ConfirmationEvidence
     holdout: HoldoutEvidence

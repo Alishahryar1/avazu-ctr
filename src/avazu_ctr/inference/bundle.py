@@ -42,7 +42,7 @@ class RefitPlan(StrictModel):
 
 
 class BundleMetadata(StrictModel):
-    schema_version: Literal[3] = 3
+    schema_version: Literal[4] = 4
     role: Literal["production"] = "production"
     refit_run_id: Annotated[str, Field(min_length=1)]
     selection_id: Annotated[str, Field(min_length=1)]
@@ -164,14 +164,17 @@ def load_bundle(path: str | Path, *, device: str | torch.device = "cpu") -> Load
         != {
             "schema_version",
             "purpose",
+            "feature_mode",
             "global_prior",
             "categorical_columns",
             "numerical_columns",
             "cardinalities",
             "embedding_kinds",
+            "features",
         }
-        or preprocessor.get("schema_version") != 3
+        or preprocessor.get("schema_version") != 4
         or preprocessor.get("purpose") != "production"
+        or preprocessor.get("feature_mode") != manifest.feature_mode.value
         or not isinstance(preprocessor.get("global_prior"), int | float)
         or isinstance(preprocessor.get("global_prior"), bool)
         or not 0.0 <= preprocessor["global_prior"] <= 1.0
@@ -179,6 +182,8 @@ def load_bundle(path: str | Path, *, device: str | torch.device = "cpu") -> Load
         or tuple(preprocessor.get("numerical_columns", ())) != manifest.numerical_columns
         or preprocessor.get("cardinalities") != manifest.cardinalities
         or preprocessor.get("embedding_kinds") != manifest.embedding_kinds
+        or preprocessor.get("features")
+        != [feature.model_dump(mode="json") for feature in manifest.features]
     ):
         raise ValueError("bundle has an invalid production preprocessor")
     for table in manifest.fitted_tables:

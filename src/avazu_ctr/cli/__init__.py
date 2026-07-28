@@ -66,7 +66,7 @@ def preprocess_command(
     all_windows: Annotated[bool, typer.Option("--all-windows")] = False,
     overwrite: Annotated[bool, typer.Option("--overwrite")] = False,
 ) -> None:
-    """Build leakage-safe evaluation folds without reading test data."""
+    """Build provenance-tracked evaluation folds without reading competition test data."""
 
     config = load_experiment(config_path)
     names = [item.name for item in temporal_windows(config)] if all_windows else [window]

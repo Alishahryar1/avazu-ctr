@@ -48,7 +48,19 @@ def write_synthetic_avazu(
     test = (
         train.tail(rows_per_hour * 2)
         .drop("click")
-        .with_columns(pl.Series("id", [f"test-{index:020d}" for index in range(rows_per_hour * 2)]))
+        .with_columns(
+            pl.Series("id", [f"test-{index:020d}" for index in range(rows_per_hour * 2)]),
+            pl.Series(
+                "hour",
+                [
+                    str(value.astype("datetime64[h]")).replace("-", "").replace("T", "")[2:]
+                    for value in (
+                        start
+                        + (hours + np.repeat(np.arange(2), rows_per_hour)).astype("timedelta64[h]")
+                    )
+                ],
+            ),
+        )
     )
     test_path = directory / "test.csv"
     test.write_csv(test_path)
