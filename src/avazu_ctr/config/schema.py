@@ -14,10 +14,9 @@ class StrictModel(BaseModel):
 
 
 class ModelKind(StrEnum):
-    GATED_DCN = "gated_dcn"
-    MULTIHEAD = "multihead"
-    NORMALIZED_MULTIHEAD = "normalized_multihead"
+    DCN = "dcn"
     STEC = "stec"
+    NGPT = "ngpt"
     ENSEMBLE = "ensemble"
 
 
@@ -108,35 +107,93 @@ class HeadConfig(StrictModel):
     dropout: Annotated[float, Field(ge=0.0, lt=1.0)] = 0.1
 
 
+class DCNModelConfig(StrictModel):
+    backbone: BackboneConfig = BackboneConfig()
+    heads: Annotated[tuple[HeadConfig, ...], Field(min_length=1)] = (
+        HeadConfig(),
+        HeadConfig(),
+        HeadConfig(),
+    )
+    aggregation: Aggregation = Aggregation.GATED
+    feature_bagging: Annotated[float, Field(gt=0.0, le=1.0)] = 0.8
+
+    @model_validator(mode="after")
+    def validate_heads(self) -> Self:
+        if len(self.heads) == 1:
+            if self.aggregation != Aggregation.MEAN:
+                raise ValueError("a one-head DCN requires mean aggregation")
+            if self.feature_bagging != 1.0:
+                raise ValueError("a one-head DCN requires feature_bagging=1")
+        return self
+
+
+class STECModelConfig(StrictModel):
+    dimension: Annotated[int, Field(gt=0)] = 16
+    layers: Annotated[int, Field(ge=1, le=12)] = 2
+    heads: Annotated[int, Field(ge=1, le=16)] = 4
+    ffn_multiplier: Annotated[int, Field(ge=1, le=16)] = 4
+    dropout: Annotated[float, Field(ge=0.0, lt=1.0)] = 0.1
+    batch_norm_momentum: Annotated[float | None, Field(gt=0.0, le=1.0)] = None
+    batch_norm_epsilon: Annotated[float, Field(gt=0.0)] = 1e-5
+    prediction_hidden: tuple[Annotated[int, Field(gt=0)], ...] = (256, 128)
+    prediction_dropout: Annotated[float, Field(ge=0.0, lt=1.0)] = 0.1
+
+    @model_validator(mode="after")
+    def validate_attention_shape(self) -> Self:
+        if self.dimension % self.heads:
+            raise ValueError("STEC dimension must be divisible by its attention heads")
+        return self
+
+
+class NGPTModelConfig(StrictModel):
+    dimension: Annotated[int, Field(gt=0)] = 32
+    layers: Annotated[int, Field(ge=1, le=24)] = 2
+    heads: Annotated[int, Field(ge=1, le=16)] = 4
+    mlp_multiplier: Annotated[int, Field(ge=1, le=16)] = 4
+    alpha_init: Annotated[float, Field(gt=0.0, le=1.0)] = 0.05
+    dropout: Annotated[float, Field(ge=0.0, lt=1.0)] = 0.0
+
+    @model_validator(mode="after")
+    def validate_attention_shape(self) -> Self:
+        if self.dimension % self.heads:
+            raise ValueError("nGPT dimension must be divisible by its attention heads")
+        return self
+
+
+class EnsembleModelConfig(StrictModel):
+    aggregation: Aggregation = Aggregation.MEAN
+
+
 class ModelConfig(StrictModel):
     kind: ModelKind
     default_embedding: EmbeddingConfig = EmbeddingConfig()
     feature_embeddings: dict[str, EmbeddingConfig] = Field(default_factory=dict)
-    backbone: BackboneConfig = BackboneConfig()
-    heads: tuple[HeadConfig, ...] = (HeadConfig(), HeadConfig(), HeadConfig())
-    aggregation: Aggregation = Aggregation.GATED
-    feature_bagging: Annotated[float, Field(gt=0.0, le=1.0)] = 0.8
-    stec_layers: Annotated[int, Field(ge=1, le=12)] = 2
-    stec_heads: Annotated[int, Field(ge=1, le=16)] = 4
+    dcn: DCNModelConfig | None = None
+    stec: STECModelConfig | None = None
+    ngpt: NGPTModelConfig | None = None
+    ensemble: EnsembleModelConfig | None = None
     children: tuple[ModelConfig, ...] = ()
 
     @model_validator(mode="after")
     def validate_shape(self) -> Self:
-        if (
-            self.kind in {ModelKind.MULTIHEAD, ModelKind.NORMALIZED_MULTIHEAD}
-            and len(self.heads) < 2
-        ):
-            raise ValueError("multihead models require at least two heads")
-        if self.kind is ModelKind.STEC:
-            if not self.heads:
-                raise ValueError("STEC requires one prediction-head configuration")
-            dim = self.default_embedding.dim
-            if dim % self.stec_heads:
-                raise ValueError("STEC embedding dimension must be divisible by stec_heads")
-        if self.kind is ModelKind.ENSEMBLE and not self.children:
-            raise ValueError("ensemble requires at least one child model")
-        if self.kind is not ModelKind.ENSEMBLE and self.children:
+        configured = {
+            ModelKind.DCN: self.dcn is not None,
+            ModelKind.STEC: self.stec is not None,
+            ModelKind.NGPT: self.ngpt is not None,
+            ModelKind.ENSEMBLE: self.ensemble is not None,
+        }
+        if self.kind == ModelKind.ENSEMBLE:
+            if not self.children:
+                raise ValueError("ensemble requires at least one child model")
+        elif self.children:
             raise ValueError("only ensemble models may define children")
+        if not configured[self.kind]:
+            raise ValueError(f"{self.kind.value} requires its matching architecture payload")
+        inactive = [
+            kind.value for kind, active in configured.items() if active and kind != self.kind
+        ]
+        if inactive:
+            raise ValueError(f"{self.kind.value} cannot define inactive payloads: {inactive}")
         return self
 
 
@@ -425,7 +482,7 @@ class PromotionConfig(StrictModel):
 
 
 class ExperimentConfig(StrictModel):
-    schema_version: Literal[4]
+    schema_version: Literal[5]
     name: str
     data: DataConfig = DataConfig()
     model: ModelConfig
@@ -443,8 +500,10 @@ class ExperimentConfig(StrictModel):
         model_features = set(self.data.features.categorical_columns)
         cross_features = {feature.name for feature in self.data.features.crosses}
         model_configs = [self.model]
+        contains_ngpt = False
         while model_configs:
             model_config = model_configs.pop()
+            contains_ngpt |= model_config.kind == ModelKind.NGPT
             unknown_embeddings = set(model_config.feature_embeddings).difference(model_features)
             if unknown_embeddings:
                 raise ValueError(
@@ -473,9 +532,19 @@ class ExperimentConfig(StrictModel):
                     feature,
                     model_config.default_embedding,
                 ).kind
-                if nested_kind is not root_kind:
+                if nested_kind != root_kind:
                     raise ValueError(
                         f"ensemble children must encode {feature!r} as {root_kind.value!r}"
                     )
             model_configs.extend(model_config.children)
+        if contains_ngpt:
+            optimizer = self.training.optimizer
+            if optimizer.embeddings is not None:
+                raise ValueError("nGPT requires one optimizer for coherent hyperspherical updates")
+            if optimizer.dense.kind != OptimizerKind.ADAMW:
+                raise ValueError("nGPT requires Adam")
+            if optimizer.dense.weight_decay != 0.0:
+                raise ValueError("nGPT requires zero weight decay")
+            if optimizer.dense.scheduler.warmup_ratio != 0.0:
+                raise ValueError("nGPT requires zero learning-rate warmup")
         return self

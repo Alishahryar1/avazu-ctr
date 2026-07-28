@@ -63,7 +63,10 @@ def small_config(
         for feature, value in config.model.feature_embeddings.items()
         if feature in active_categorical
     }
-    backbone = config.model.backbone.model_copy(
+    architecture = config.model.dcn
+    if architecture is None:
+        raise AssertionError("the shipped champion must be a DCN")
+    backbone = architecture.backbone.model_copy(
         update={
             "dcn_layers": 1,
             "dcn_rank": 4,
@@ -72,14 +75,19 @@ def small_config(
         }
     )
     heads = tuple(
-        head.model_copy(update={"hidden": (8,), "dropout": 0.0}) for head in config.model.heads
+        head.model_copy(update={"hidden": (8,), "dropout": 0.0}) for head in architecture.heads
+    )
+    architecture = architecture.model_copy(
+        update={
+            "backbone": backbone,
+            "heads": heads,
+        }
     )
     model = config.model.model_copy(
         update={
             "default_embedding": default,
             "feature_embeddings": embeddings,
-            "backbone": backbone,
-            "heads": heads,
+            "dcn": architecture,
         }
     )
     training = config.training.model_copy(

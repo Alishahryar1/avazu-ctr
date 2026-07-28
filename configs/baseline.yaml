@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 name: dcnv2-baseline
 
 data:
@@ -34,7 +34,7 @@ data:
       probability_clip: 0.00001
 
 model:
-  kind: gated_dcn
+  kind: dcn
   default_embedding:
     kind: standard
     dim: 16
@@ -55,14 +55,19 @@ model:
     user_proxy_x_site_id: {kind: hash, dim: 16, buckets: 200000, hashes: 2}
     site_id_x_C14: {kind: hash, dim: 16, buckets: 150000, hashes: 2}
     app_id_x_C14: {kind: hash, dim: 16, buckets: 150000, hashes: 2}
-  backbone:
-    senet: {enabled: false}
-    dcn_layers: 4
-    dcn_rank: 32
-    mlp_hidden: [256, 128]
-    activation: gelu
-    dropout: 0.1
-    layer_norm: true
+  dcn:
+    backbone:
+      senet: {enabled: false}
+      dcn_layers: 4
+      dcn_rank: 32
+      mlp_hidden: [256, 128]
+      activation: gelu
+      dropout: 0.1
+      layer_norm: true
+    heads:
+      - {hidden: [], dropout: 0.0}
+    aggregation: mean
+    feature_bagging: 1.0
 
 objective:
   aggregate_weight: 1.0

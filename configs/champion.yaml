@@ -1,4 +1,4 @@
-schema_version: 4
+schema_version: 5
 name: senet-dcnv2-multihead
 
 data:
@@ -34,7 +34,7 @@ data:
       probability_clip: 0.00001
 
 model:
-  kind: multihead
+  kind: dcn
   default_embedding:
     kind: standard
     dim: 16
@@ -55,23 +55,24 @@ model:
     user_proxy_x_site_id: {kind: hash, dim: 16, buckets: 200000, hashes: 2}
     site_id_x_C14: {kind: hash, dim: 16, buckets: 150000, hashes: 2}
     app_id_x_C14: {kind: hash, dim: 16, buckets: 150000, hashes: 2}
-  backbone:
-    senet:
-      enabled: true
-      reduction_ratio: 3
+  dcn:
+    backbone:
+      senet:
+        enabled: true
+        reduction_ratio: 3
+        activation: gelu
+      dcn_layers: 4
+      dcn_rank: 32
+      mlp_hidden: [256, 128]
       activation: gelu
-    dcn_layers: 4
-    dcn_rank: 32
-    mlp_hidden: [256, 128]
-    activation: gelu
-    dropout: 0.1
-    layer_norm: true
-  heads:
-    - {hidden: [128], dropout: 0.25}
-    - {hidden: [64], dropout: 0.2}
-    - {hidden: [32], dropout: 0.15}
-  aggregation: gated
-  feature_bagging: 0.8
+      dropout: 0.1
+      layer_norm: true
+    heads:
+      - {hidden: [128], dropout: 0.25}
+      - {hidden: [64], dropout: 0.2}
+      - {hidden: [32], dropout: 0.15}
+    aggregation: gated
+    feature_bagging: 0.8
 
 objective:
   aggregate_weight: 1.0

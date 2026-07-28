@@ -1,4 +1,4 @@
-"""CTR architecture implementations sharing one deployed-logit contract."""
+"""DCN and ensemble architectures sharing the deployed-logit contract."""
 
 from __future__ import annotations
 
@@ -6,22 +6,16 @@ from typing import cast
 
 import torch
 from torch import nn
-from torch.nn import functional
 
 from avazu_ctr.config.schema import Aggregation, ModelConfig
 from avazu_ctr.contracts import FeatureBatch, ModelOutput
 from avazu_ctr.models.base import CTRModel
-from avazu_ctr.models.layers import (
-    Backbone,
-    FeatureEncoder,
-    LogitGate,
-    NormalizedLinear,
-    PredictionHead,
-    StableHashEmbedding,
-)
+from avazu_ctr.models.layers import Backbone, FeatureEncoder, LogitGate, PredictionHead
 
 
-class GatedDCNModel(CTRModel):
+class DCNModel(CTRModel):
+    """One or more prediction heads over a shared SENet/DCNv2 backbone."""
+
     def __init__(
         self,
         categorical_columns: tuple[str, ...],
@@ -32,6 +26,9 @@ class GatedDCNModel(CTRModel):
         seed: int,
     ) -> None:
         super().__init__()
+        if config.dcn is None:
+            raise ValueError("DCN model requires dcn configuration")
+        architecture = config.dcn
         self.encoder = FeatureEncoder(
             categorical_columns,
             numerical_columns,
@@ -39,63 +36,37 @@ class GatedDCNModel(CTRModel):
             config,
             seed=seed,
         )
-        self.backbone = Backbone(self.encoder.fields, self.encoder.dimension, config.backbone)
-        self.output = nn.Linear(self.backbone.output_dimension, 1)
-
-    def forward(self, batch: FeatureBatch) -> ModelOutput:
-        shared = self.backbone(self.encoder(batch))
-        return ModelOutput(aggregate_logits=self.output(shared))
-
-
-class MultiHeadModel(CTRModel):
-    def __init__(
-        self,
-        categorical_columns: tuple[str, ...],
-        numerical_columns: tuple[str, ...],
-        cardinalities: dict[str, int],
-        config: ModelConfig,
-        *,
-        seed: int,
-        normalized: bool = False,
-    ) -> None:
-        super().__init__()
-        self.encoder = FeatureEncoder(
-            categorical_columns,
-            numerical_columns,
-            cardinalities,
-            config,
-            seed=seed,
-            normalized=normalized,
+        self.backbone = Backbone(
+            self.encoder.fields,
+            self.encoder.dimension,
+            architecture.backbone,
         )
-        self.backbone = Backbone(self.encoder.fields, self.encoder.dimension, config.backbone)
-        head_type: type[nn.Linear] = NormalizedLinear if normalized else nn.Linear
-        self.heads = nn.ModuleList()
-        for head_config in config.heads:
-            if normalized and not head_config.hidden:
-                self.heads.append(head_type(self.backbone.output_dimension, 1))
-            else:
-                self.heads.append(
-                    PredictionHead(
-                        self.backbone.output_dimension,
-                        head_config.hidden,
-                        head_config.dropout,
-                    )
+        self.heads = nn.ModuleList(
+            [
+                PredictionHead(
+                    self.backbone.output_dimension,
+                    head.hidden,
+                    head.dropout,
                 )
-        self.aggregation = config.aggregation
-        self.gate = LogitGate(len(self.heads)) if config.aggregation is Aggregation.GATED else None
-        self.normalized = normalized
+                for head in architecture.heads
+            ]
+        )
+        self.aggregation = architecture.aggregation
+        self.gate = (
+            LogitGate(len(self.heads))
+            if len(self.heads) > 1 and architecture.aggregation is Aggregation.GATED
+            else None
+        )
         self.feature_masks: torch.Tensor
         self.register_buffer(
             "feature_masks",
             self._make_masks(
                 len(self.heads),
                 self.encoder.fields,
-                config.feature_bagging,
+                architecture.feature_bagging,
                 seed,
             ),
         )
-        if normalized:
-            self.post_step()
 
     @staticmethod
     def _make_masks(heads: int, fields: int, ratio: float, seed: int) -> torch.Tensor:
@@ -111,15 +82,14 @@ class MultiHeadModel(CTRModel):
         logits = []
         for index, head in enumerate(self.heads):
             masked = embeddings * self.feature_masks[index].view(1, -1, 1)
-            shared = self.backbone(masked)
-            if self.normalized:
-                shared = functional.normalize(shared, dim=1)
-            logits.append(head(shared))
+            logits.append(head(self.backbone(masked)))
         auxiliary = torch.stack(logits, dim=1)
         diagnostics: dict[str, torch.Tensor] = {}
         if self.gate is not None:
             aggregate, weights = self.gate(auxiliary.squeeze(-1))
             diagnostics["aggregation_weights"] = weights
+        elif len(self.heads) == 1:
+            aggregate = auxiliary[:, 0]
         else:
             aggregate = auxiliary.mean(dim=1)
         return ModelOutput(
@@ -127,96 +97,6 @@ class MultiHeadModel(CTRModel):
             auxiliary_logits=auxiliary,
             diagnostics=diagnostics,
         )
-
-    @torch.no_grad()
-    def post_step(self) -> None:
-        if not self.normalized:
-            return
-        for module in self.modules():
-            if isinstance(module, NormalizedLinear):
-                module.normalize_()
-            elif isinstance(module, nn.Linear):
-                module.weight.copy_(functional.normalize(module.weight, dim=1))
-            elif isinstance(module, nn.Embedding):
-                module.weight.copy_(functional.normalize(module.weight, dim=1))
-                if module.padding_idx is not None:
-                    module.weight[module.padding_idx].zero_()
-            elif isinstance(module, StableHashEmbedding):
-                for child_module in module.tables:
-                    table = cast(nn.Embedding, child_module)
-                    table.weight.copy_(functional.normalize(table.weight, dim=1))
-        self.encoder.numerical.weight.copy_(
-            functional.normalize(self.encoder.numerical.weight, dim=1)
-        )
-
-
-class STECModel(CTRModel):
-    """See-through transformer with direct interaction-level supervision path."""
-
-    def __init__(
-        self,
-        categorical_columns: tuple[str, ...],
-        numerical_columns: tuple[str, ...],
-        cardinalities: dict[str, int],
-        config: ModelConfig,
-        *,
-        seed: int,
-    ) -> None:
-        super().__init__()
-        self.encoder = FeatureEncoder(
-            categorical_columns,
-            numerical_columns,
-            cardinalities,
-            config,
-            seed=seed,
-        )
-        dimension = self.encoder.dimension
-        if dimension % config.stec_heads:
-            raise ValueError("STEC embedding dimension must be divisible by attention heads")
-        self.layers = nn.ModuleList(
-            [
-                nn.TransformerEncoderLayer(
-                    d_model=dimension,
-                    nhead=config.stec_heads,
-                    dim_feedforward=max(dimension * 4, 32),
-                    dropout=config.backbone.dropout,
-                    activation=config.backbone.activation,
-                    batch_first=True,
-                    norm_first=True,
-                )
-                for _ in range(config.stec_layers)
-            ]
-        )
-        interactions = self.encoder.fields * self.encoder.fields
-        self.level_projections = nn.ModuleList(
-            [nn.Linear(interactions, dimension) for _ in range(config.stec_layers + 1)]
-        )
-        self.head = PredictionHead(
-            dimension * (config.stec_layers + 1),
-            config.heads[0].hidden,
-            config.heads[0].dropout,
-        )
-
-    @staticmethod
-    def _interactions(values: torch.Tensor) -> torch.Tensor:
-        scaled = values / math_sqrt(values.shape[-1])
-        return torch.bmm(scaled, scaled.transpose(1, 2)).flatten(start_dim=1)
-
-    def forward(self, batch: FeatureBatch) -> ModelOutput:
-        values = self.encoder(batch)
-        levels = [self.level_projections[0](self._interactions(values))]
-        for index, layer in enumerate(self.layers, start=1):
-            values = layer(values)
-            levels.append(self.level_projections[index](self._interactions(values)))
-        fused = torch.cat(levels, dim=1)
-        return ModelOutput(
-            aggregate_logits=self.head(fused),
-            diagnostics={"interaction_levels": torch.stack(levels, dim=1)},
-        )
-
-
-def math_sqrt(value: int) -> float:
-    return float(value) ** 0.5
 
 
 class EnsembleModel(CTRModel):
