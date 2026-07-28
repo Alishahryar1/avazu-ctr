@@ -72,15 +72,26 @@ objective:
 
 training:
   seed: 42
-  epochs: 10
+  epochs: 1
   batch_size: 4096
+  num_workers: 0
   device: auto
   amp: true
+  amp_dtype: float16
+  compile_model: false
+  deterministic_algorithms: false
+  gradient_clip: 5.0
+  early_stopping_patience: 0
+  log_every_steps: 50
   optimizer:
     dense:
       kind: adamw
       learning_rate: 0.001
       weight_decay: 0.00001
+      scheduler:
+        kind: cosine
+        warmup_ratio: 0.05
+        minimum_lr_ratio: 0.01
 
 tracking:
   database: artifacts/experiments.sqlite3
