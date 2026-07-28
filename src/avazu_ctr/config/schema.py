@@ -133,6 +133,8 @@ class STECModelConfig(StrictModel):
     heads: Annotated[int, Field(ge=1, le=16)] = 4
     ffn_multiplier: Annotated[int, Field(ge=1, le=16)] = 4
     dropout: Annotated[float, Field(ge=0.0, lt=1.0)] = 0.1
+    batch_norm_momentum: Annotated[float | None, Field(gt=0.0, le=1.0)] = None
+    batch_norm_epsilon: Annotated[float, Field(gt=0.0)] = 1e-5
     prediction_hidden: tuple[Annotated[int, Field(gt=0)], ...] = (256, 128)
     prediction_dropout: Annotated[float, Field(ge=0.0, lt=1.0)] = 0.1
 

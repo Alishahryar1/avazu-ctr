@@ -51,13 +51,17 @@ positive residual-correlation penalties cannot replace aggregate supervision.
   averaging it into scaled dot-product attention. Every STEC layer exposes that
   grouped bilinear tensor, a final standalone bilinear layer exposes the last
   hidden state, and the resulting `N + 1` tensors are batch-normalized,
-  concatenated, and supervised through the deployed logit.
+  concatenated, and supervised through the deployed logit. BatchNorm keeps
+  cumulative training-batch estimates so deployed predictions are independent
+  of inference batch partitioning and are not dominated by the last shard tail.
 - `ngpt` treats the ordered field embeddings plus a learned classification token
   as a non-causal sequence. It uses normalized query/key attention, learned
   scaling vectors, SwiGLU, and hyperspherical LERP updates without LayerNorm or
-  RMSNorm. All embedding and matrix vectors are normalized in-place at
-  initialization and after every successful optimizer step. Its optimizer
-  contract requires Adam, zero weight decay, and zero warmup.
+  RMSNorm. Its deployed sigmoid logit is the difference between two scaled,
+  normalized class-prototype logits. All embedding and matrix vectors are
+  normalized in-place at initialization and after every successful optimizer
+  step. Its optimizer contract requires Adam, zero weight decay, and zero
+  warmup.
 
 STEC and nGPT attention heads partition an embedding space; they are unrelated
 to the independently supervised prediction heads in `dcn`.

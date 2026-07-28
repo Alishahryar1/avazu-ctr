@@ -208,6 +208,33 @@ def test_stec_collects_one_interaction_per_layer_plus_the_final_state(
     assert all(
         normalization.num_features == interaction_width for normalization in model.interaction_norms
     )
+    assert all(normalization.momentum is None for normalization in model.interaction_norms)
+    assert model.encoder.numerical.bias is None
+
+
+def test_stec_inference_is_independent_of_batch_partitioning(
+    processed_project: tuple[ExperimentConfig, Path],
+) -> None:
+    config, manifest_path = processed_project
+    manifest = load_manifest(manifest_path)
+    model = create_model(_model_config(config, ModelKind.STEC), manifest, seed=42)
+    batch = _batch(manifest_path)
+    model.train()
+    model(batch)
+    model.eval()
+
+    midpoint = batch.batch_size // 2
+    partitions = (
+        FeatureBatch(batch.categorical[:midpoint], batch.numerical[:midpoint]),
+        FeatureBatch(batch.categorical[midpoint:], batch.numerical[midpoint:]),
+    )
+    with torch.inference_mode():
+        whole = model(batch).aggregate_logits
+        partitioned = torch.cat(
+            [model(partition).aggregate_logits for partition in partitions],
+            dim=0,
+        )
+    assert torch.allclose(whole, partitioned, atol=1e-5)
 
 
 def test_ngpt_has_no_affine_normalization_layers_and_keeps_hidden_states_unit_norm(
@@ -253,10 +280,10 @@ def test_ngpt_post_step_normalizes_every_embedding_dimension(
                 _assert_unit_rows(cast(nn.Embedding, table).weight)
         else:
             embedding = cast(nn.Embedding, module)
-            _assert_unit_rows(embedding.weight, skip_first=embedding.padding_idx == 0)
-            if embedding.padding_idx == 0:
-                assert torch.count_nonzero(embedding.weight[0]) == 0
+            assert embedding.padding_idx is None
+            _assert_unit_rows(embedding.weight)
     _assert_unit_rows(model.encoder.numerical.weight)
+    assert model.encoder.numerical.bias is not None
     _assert_unit_rows(model.encoder.numerical.bias)
     assert torch.linalg.vector_norm(model.cls_token).item() == pytest.approx(1.0)
 
@@ -278,6 +305,7 @@ def test_ngpt_post_step_normalizes_every_embedding_dimension(
                 atol=1e-5,
             )
     _assert_unit_rows(model.output.weight)
+    assert model.logit_scale.shape == (2,)
 
 
 def test_normalized_numerical_projection_preserves_magnitude_information() -> None:

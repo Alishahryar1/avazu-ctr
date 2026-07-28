@@ -50,6 +50,13 @@ def test_stec_dimension_mismatch_fails_before_model_construction() -> None:
         ExperimentConfig.model_validate(raw)
 
 
+def test_stec_rejects_frozen_batch_norm_statistics() -> None:
+    raw = load_experiment("configs/stec.yaml").model_dump(mode="json")
+    raw["model"]["stec"]["batch_norm_momentum"] = 0.0
+    with pytest.raises(ValidationError, match="greater than 0"):
+        ExperimentConfig.model_validate(raw)
+
+
 def test_architecture_payloads_are_explicit_and_exclusive() -> None:
     raw = load_experiment("configs/champion.yaml").model_dump(mode="json")
     raw["model"]["kind"] = ModelKind.STEC

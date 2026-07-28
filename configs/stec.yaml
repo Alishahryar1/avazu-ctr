@@ -61,6 +61,8 @@ model:
     heads: 4
     ffn_multiplier: 4
     dropout: 0.1
+    batch_norm_momentum: null
+    batch_norm_epsilon: 0.00001
     prediction_hidden: []
     prediction_dropout: 0.0
 

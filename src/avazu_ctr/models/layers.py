@@ -92,16 +92,26 @@ class StableHashEmbedding(nn.Module):
 class NumericalProjection(nn.Module):
     """Projects each scalar into a vector before optional normalization."""
 
-    def __init__(self, count: int, dimension: int, *, normalized: bool) -> None:
+    def __init__(
+        self,
+        count: int,
+        dimension: int,
+        *,
+        normalized: bool,
+        bias: bool = True,
+    ) -> None:
         super().__init__()
         self.weight = nn.Parameter(torch.empty(count, dimension))
-        self.bias = nn.Parameter(torch.empty(count, dimension))
+        self.bias = nn.Parameter(torch.empty(count, dimension)) if bias else None
         self.normalized = normalized
         nn.init.normal_(self.weight, std=1.0 / math.sqrt(dimension))
-        nn.init.normal_(self.bias, std=1.0 / math.sqrt(dimension))
+        if self.bias is not None:
+            nn.init.normal_(self.bias, std=1.0 / math.sqrt(dimension))
 
     def forward(self, values: torch.Tensor) -> torch.Tensor:
-        projected = values.unsqueeze(-1) * self.weight.unsqueeze(0) + self.bias.unsqueeze(0)
+        projected = values.unsqueeze(-1) * self.weight.unsqueeze(0)
+        if self.bias is not None:
+            projected = projected + self.bias.unsqueeze(0)
         if self.normalized:
             projected = functional.normalize(projected, dim=-1)
         return projected
@@ -117,6 +127,7 @@ class FeatureEncoder(nn.Module):
         *,
         seed: int,
         normalized: bool = False,
+        numerical_bias: bool = True,
     ) -> None:
         super().__init__()
         self.categorical_columns = categorical_columns
@@ -137,12 +148,15 @@ class FeatureEncoder(nn.Module):
                 cardinality = cardinalities.get(feature)
                 if cardinality is None:
                     raise ValueError(f"manifest has no cardinality for {feature}")
-                module = nn.Embedding(cardinality, embedding.dim, padding_idx=0)
+                module = nn.Embedding(cardinality, embedding.dim)
             self.embeddings[feature] = module
             if embedding.dim != self.dimension:
                 self.projections[feature] = nn.Linear(embedding.dim, self.dimension, bias=False)
         self.numerical = NumericalProjection(
-            len(numerical_columns), self.dimension, normalized=normalized
+            len(numerical_columns),
+            self.dimension,
+            normalized=normalized,
+            bias=numerical_bias,
         )
         self.normalized = normalized
 

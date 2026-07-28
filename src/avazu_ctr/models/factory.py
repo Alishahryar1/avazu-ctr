@@ -76,7 +76,8 @@ def _encoder_bytes(config: ModelConfig, manifest: DatasetManifest) -> tuple[int,
             total += manifest.cardinalities[feature] * embedding.dim * 4
         if embedding.dim != dimension:
             total += embedding.dim * dimension * 4
-    total += len(manifest.numerical_columns) * dimension * 2 * 4
+    numerical_vectors = 1 if config.kind is ModelKind.STEC else 2
+    total += len(manifest.numerical_columns) * dimension * numerical_vectors * 4
     return total, fields, dimension
 
 
@@ -199,7 +200,7 @@ def _ngpt_bytes(
     per_block += 3 * dimension + 2 * hidden
     values += architecture.layers * per_block
     values += dimension
-    values += dimension + 1
+    values += 2 * dimension + 2
     return encoder_bytes + values * 4
 
 

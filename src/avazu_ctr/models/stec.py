@@ -125,6 +125,7 @@ class STECModel(CTRModel):
             cardinalities,
             config,
             seed=seed,
+            numerical_bias=False,
         )
         self.input_projection: nn.Module = (
             nn.Identity()
@@ -140,7 +141,14 @@ class STECModel(CTRModel):
         )
         interaction_width = self.encoder.fields * self.encoder.fields * architecture.dimension
         self.interaction_norms = nn.ModuleList(
-            [nn.BatchNorm1d(interaction_width) for _ in range(architecture.layers + 1)]
+            [
+                nn.BatchNorm1d(
+                    interaction_width,
+                    eps=architecture.batch_norm_epsilon,
+                    momentum=architecture.batch_norm_momentum,
+                )
+                for _ in range(architecture.layers + 1)
+            ]
         )
         self.prediction = PredictionHead(
             interaction_width * (architecture.layers + 1),

@@ -166,8 +166,8 @@ class NGPTModel(CTRModel):
             torch.randn((1, 1, architecture.dimension), generator=generator)
         )
         self.blocks = nn.ModuleList([NGPTBlock(architecture) for _ in range(architecture.layers)])
-        self.output = nn.Linear(architecture.dimension, 1, bias=False)
-        self.logit_scale = nn.Parameter(torch.full((1,), self.base_scale))
+        self.output = nn.Linear(architecture.dimension, 2, bias=False)
+        self.logit_scale = nn.Parameter(torch.full((2,), self.base_scale))
         self._initialize_matrices()
         self.post_step()
 
@@ -183,7 +183,8 @@ class NGPTModel(CTRModel):
         hidden = torch.cat((cls, encoded), dim=1)
         for block in self.blocks:
             hidden = block(hidden)
-        logits = self.output(hidden[:, 0]) * (self.logit_scale / self.base_scale)
+        class_logits = self.output(hidden[:, 0]) * (self.logit_scale / self.base_scale)
+        logits = class_logits[:, 1:2] - class_logits[:, 0:1]
         return ModelOutput(aggregate_logits=logits)
 
     @torch.no_grad()
@@ -195,12 +196,11 @@ class NGPTModel(CTRModel):
                     normalize_parameter_(embedding.weight, dim=1)
             elif isinstance(module, nn.Embedding):
                 normalize_parameter_(module.weight, dim=1)
-                if module.padding_idx is not None:
-                    module.weight[module.padding_idx].zero_()
         for projection in self.encoder.projections.values():
             normalize_parameter_(cast(nn.Linear, projection).weight, dim=1)
         normalize_parameter_(self.encoder.numerical.weight, dim=1)
-        normalize_parameter_(self.encoder.numerical.bias, dim=1)
+        if self.encoder.numerical.bias is not None:
+            normalize_parameter_(self.encoder.numerical.bias, dim=1)
         if isinstance(self.input_projection, nn.Linear):
             normalize_parameter_(self.input_projection.weight, dim=1)
         normalize_parameter_(self.cls_token, dim=-1)

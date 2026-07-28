@@ -128,8 +128,9 @@ click-rate feature. Probabilities are clipped only for finite log-odds.
 ## Coverage diagnostics
 
 Vocabulary-encoded fields reserve ID zero for values absent from the fitted
-vocabulary or below `minimum_frequency`. Every manifest records the row count,
-unknown count, and exact OOV rate for every vocabulary field and split.
+vocabulary or below `minimum_frequency`. ID zero has a learned OOV embedding; it
+is not a padding token. Every manifest records the row count, unknown count, and
+exact OOV rate for every vocabulary field and split.
 
 Hashed fields have no OOV state and therefore do not appear in the OOV map.
 Their bucket counts and embedding kinds remain part of the feature contract and
