@@ -81,7 +81,7 @@ objective:
 
 training:
   seed: 42
-  epochs: 10
+  epochs: 1
   batch_size: 4096
   num_workers: 0
   device: auto
@@ -90,7 +90,7 @@ training:
   compile_model: false
   deterministic_algorithms: false
   gradient_clip: 5.0
-  early_stopping_patience: 3
+  early_stopping_patience: 0
   log_every_steps: 50
   optimizer:
     dense:

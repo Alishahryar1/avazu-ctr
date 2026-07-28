@@ -10,11 +10,15 @@ generation.
 
 ## Best recorded result
 
-The project's SENet + DCNv2 multihead model achieved a Kaggle private logloss of
-**0.38484** and a public logloss of **0.38671**.
+The selected one-epoch SENet + DCNv2 multihead model achieved a Kaggle private
+logloss of **0.38476** and a public logloss of **0.38689** in submission
+`55049425`.
 
-`configs/champion.yaml` defines that model family for reproducible training and
-evaluation.
+This was a late submission after the competition deadline, so it is comparable
+to the final leaderboard but is not officially ranked. `configs/champion.yaml`
+defines the reproducible recipe, and
+[`benchmarks/champion.json`](benchmarks/champion.json) records the complete
+selection and submission evidence.
 
 ## Requirements
 
