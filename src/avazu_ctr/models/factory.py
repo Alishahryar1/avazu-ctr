@@ -4,15 +4,12 @@ from __future__ import annotations
 
 from torch import nn
 
-from avazu_ctr.config.schema import Aggregation, ModelConfig, ModelKind
+from avazu_ctr.config.schema import Aggregation, BackboneConfig, ModelConfig, ModelKind
 from avazu_ctr.data.manifest import DatasetManifest
-from avazu_ctr.models.architectures import (
-    EnsembleModel,
-    GatedDCNModel,
-    MultiHeadModel,
-    STECModel,
-)
+from avazu_ctr.models.architectures import DCNModel, EnsembleModel
 from avazu_ctr.models.base import CTRModel
+from avazu_ctr.models.ngpt import NGPTModel
+from avazu_ctr.models.stec import STECModel
 
 
 def create_model(
@@ -27,20 +24,20 @@ def create_model(
         manifest.cardinalities,
         config,
     )
-    if config.kind is ModelKind.GATED_DCN:
-        return GatedDCNModel(*common, seed=seed)
-    if config.kind is ModelKind.MULTIHEAD:
-        return MultiHeadModel(*common, seed=seed)
-    if config.kind is ModelKind.NORMALIZED_MULTIHEAD:
-        return MultiHeadModel(*common, seed=seed, normalized=True)
+    if config.kind is ModelKind.DCN:
+        return DCNModel(*common, seed=seed)
     if config.kind is ModelKind.STEC:
         return STECModel(*common, seed=seed)
+    if config.kind is ModelKind.NGPT:
+        return NGPTModel(*common, seed=seed)
     if config.kind is ModelKind.ENSEMBLE:
+        if config.ensemble is None:
+            raise ValueError("ensemble model requires ensemble configuration")
         children = [
             create_model(child, manifest, seed=seed + index + 1)
             for index, child in enumerate(config.children)
         ]
-        return EnsembleModel(children, config.aggregation)
+        return EnsembleModel(children, config.ensemble.aggregation)
     raise ValueError(f"unsupported model kind: {config.kind}")
 
 
@@ -61,8 +58,8 @@ def enforce_weight_budget(model: nn.Module, maximum_bytes: int) -> None:
         )
 
 
-def _linear_values(input_dimension: int, output_dimension: int) -> int:
-    return input_dimension * output_dimension + output_dimension
+def _linear_values(input_dimension: int, output_dimension: int, *, bias: bool = True) -> int:
+    return input_dimension * output_dimension + (output_dimension if bias else 0)
 
 
 def _encoder_bytes(config: ModelConfig, manifest: DatasetManifest) -> tuple[int, int, int]:
@@ -99,8 +96,11 @@ def _mlp_values(
     return values, current
 
 
-def _backbone_values(config: ModelConfig, fields: int, dimension: int) -> tuple[int, int]:
-    backbone = config.backbone
+def _backbone_values(
+    backbone: BackboneConfig,
+    fields: int,
+    dimension: int,
+) -> tuple[int, int]:
     flattened = fields * dimension
     values = 0
     if backbone.senet.enabled:
@@ -124,6 +124,85 @@ def _head_values(input_dimension: int, hidden: tuple[int, ...]) -> int:
     return values + _linear_values(output, 1)
 
 
+def _dcn_bytes(
+    config: ModelConfig,
+    *,
+    encoder_bytes: int,
+    fields: int,
+    dimension: int,
+) -> int:
+    if config.dcn is None:
+        raise ValueError("DCN model requires dcn configuration")
+    architecture = config.dcn
+    backbone_values, output_dimension = _backbone_values(
+        architecture.backbone,
+        fields,
+        dimension,
+    )
+    head_values = sum(_head_values(output_dimension, head.hidden) for head in architecture.heads)
+    gate_values = 0
+    if len(architecture.heads) > 1 and architecture.aggregation is Aggregation.GATED:
+        heads = len(architecture.heads)
+        hidden = max(4, heads * 2)
+        gate_values = _linear_values(heads, hidden) + _linear_values(hidden, heads)
+    mask_bytes = len(architecture.heads) * fields * 4
+    return encoder_bytes + (backbone_values + head_values + gate_values) * 4 + mask_bytes
+
+
+def _stec_bytes(
+    config: ModelConfig,
+    *,
+    encoder_bytes: int,
+    fields: int,
+    encoder_dimension: int,
+) -> int:
+    if config.stec is None:
+        raise ValueError("STEC model requires stec configuration")
+    architecture = config.stec
+    dimension = architecture.dimension
+    values = 0
+    if dimension != encoder_dimension:
+        values += _linear_values(encoder_dimension, dimension, bias=False)
+    hidden = dimension * architecture.ffn_multiplier
+    per_layer = (
+        4 * _linear_values(dimension, dimension, bias=False)
+        + _linear_values(dimension, hidden)
+        + _linear_values(hidden, dimension)
+        + 4 * dimension
+    )
+    values += architecture.layers * per_layer
+    values += _linear_values(dimension, dimension, bias=False)
+    interaction_width = fields * fields * dimension
+    batch_norm_state_bytes = (architecture.layers + 1) * (interaction_width * 4 * 4 + 8)
+    prediction_values = _head_values(
+        interaction_width * (architecture.layers + 1),
+        architecture.prediction_hidden,
+    )
+    return encoder_bytes + (values + prediction_values) * 4 + batch_norm_state_bytes
+
+
+def _ngpt_bytes(
+    config: ModelConfig,
+    *,
+    encoder_bytes: int,
+    encoder_dimension: int,
+) -> int:
+    if config.ngpt is None:
+        raise ValueError("nGPT model requires ngpt configuration")
+    architecture = config.ngpt
+    dimension = architecture.dimension
+    values = 0
+    if dimension != encoder_dimension:
+        values += _linear_values(encoder_dimension, dimension, bias=False)
+    hidden = dimension * architecture.mlp_multiplier
+    per_block = 4 * dimension * dimension + 3 * dimension * hidden
+    per_block += 3 * dimension + 2 * hidden
+    values += architecture.layers * per_block
+    values += dimension
+    values += dimension + 1
+    return encoder_bytes + values * 4
+
+
 def estimate_model_weight_bytes(
     config: ModelConfig,
     manifest: DatasetManifest,
@@ -132,40 +211,34 @@ def estimate_model_weight_bytes(
 
     if config.kind is ModelKind.ENSEMBLE:
         total = sum(estimate_model_weight_bytes(child, manifest) for child in config.children)
-        if config.aggregation is Aggregation.GATED:
+        if config.ensemble is not None and config.ensemble.aggregation is Aggregation.GATED:
             heads = len(config.children)
             hidden = max(4, heads * 2)
             total += (_linear_values(heads, hidden) + _linear_values(hidden, heads)) * 4
         return total
 
-    encoder_bytes, fields, dimension = _encoder_bytes(config, manifest)
+    encoder_bytes, fields, encoder_dimension = _encoder_bytes(config, manifest)
+    if config.kind is ModelKind.DCN:
+        return _dcn_bytes(
+            config,
+            encoder_bytes=encoder_bytes,
+            fields=fields,
+            dimension=encoder_dimension,
+        )
     if config.kind is ModelKind.STEC:
-        feedforward = max(dimension * 4, 32)
-        layer_values = (
-            4 * dimension * dimension + 2 * dimension * feedforward + 9 * dimension + feedforward
+        return _stec_bytes(
+            config,
+            encoder_bytes=encoder_bytes,
+            fields=fields,
+            encoder_dimension=encoder_dimension,
         )
-        interaction_values = (config.stec_layers + 1) * (fields * fields * dimension + dimension)
-        head_values = _head_values(
-            dimension * (config.stec_layers + 1),
-            config.heads[0].hidden,
+    if config.kind is ModelKind.NGPT:
+        return _ngpt_bytes(
+            config,
+            encoder_bytes=encoder_bytes,
+            encoder_dimension=encoder_dimension,
         )
-        return (
-            encoder_bytes
-            + (config.stec_layers * layer_values + interaction_values + head_values) * 4
-        )
-
-    backbone_values, output_dimension = _backbone_values(config, fields, dimension)
-    if config.kind is ModelKind.GATED_DCN:
-        return encoder_bytes + (backbone_values + _linear_values(output_dimension, 1)) * 4
-
-    head_values = sum(_head_values(output_dimension, head.hidden) for head in config.heads)
-    gate_values = 0
-    if config.aggregation is Aggregation.GATED:
-        heads = len(config.heads)
-        hidden = max(4, heads * 2)
-        gate_values = _linear_values(heads, hidden) + _linear_values(hidden, heads)
-    mask_bytes = len(config.heads) * fields * 4
-    return encoder_bytes + (backbone_values + head_values + gate_values) * 4 + mask_bytes
+    raise ValueError(f"unsupported model kind: {config.kind}")
 
 
 def validate_weight_budget(

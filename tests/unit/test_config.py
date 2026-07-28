@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 from pathlib import Path
 
+import optuna
 import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
@@ -10,15 +11,22 @@ from typer.testing import CliRunner
 from avazu_ctr.cli import app
 from avazu_ctr.config import load_experiment
 from avazu_ctr.config.schema import ExperimentConfig, FeatureMode, ModelKind
+from avazu_ctr.tuning.study import _sample_config, tuning_stages
 
 
 @pytest.mark.parametrize(
     "path",
-    ["configs/baseline.yaml", "configs/champion.yaml", "configs/tuning.yaml"],
+    [
+        "configs/baseline.yaml",
+        "configs/champion.yaml",
+        "configs/ngpt.yaml",
+        "configs/stec.yaml",
+        "configs/tuning.yaml",
+    ],
 )
 def test_shipped_configs_are_strict_and_current(path: str) -> None:
     config = load_experiment(path)
-    assert config.schema_version == 4
+    assert config.schema_version == 5
     assert config.data.features.mode is FeatureMode.COMPETITION_TRANSDUCTIVE
 
 
@@ -36,10 +44,38 @@ def test_unknown_fields_and_schema_versions_are_rejected() -> None:
 def test_stec_dimension_mismatch_fails_before_model_construction() -> None:
     raw = load_experiment("configs/champion.yaml").model_dump(mode="json")
     raw["model"]["kind"] = ModelKind.STEC
-    raw["model"]["default_embedding"]["dim"] = 10
-    raw["model"]["stec_heads"] = 4
+    raw["model"]["dcn"] = None
+    raw["model"]["stec"] = {"dimension": 10, "heads": 4}
     with pytest.raises(ValidationError, match="divisible"):
         ExperimentConfig.model_validate(raw)
+
+
+def test_architecture_payloads_are_explicit_and_exclusive() -> None:
+    raw = load_experiment("configs/champion.yaml").model_dump(mode="json")
+    raw["model"]["kind"] = ModelKind.STEC
+    raw["model"]["stec"] = {"dimension": 16, "heads": 4}
+    with pytest.raises(ValidationError, match="inactive payloads"):
+        ExperimentConfig.model_validate(raw)
+
+
+def test_ngpt_enforces_its_optimizer_recipe() -> None:
+    raw = load_experiment("configs/ngpt.yaml").model_dump(mode="json")
+    raw["training"]["optimizer"]["dense"]["weight_decay"] = 1e-5
+    with pytest.raises(ValidationError, match="zero weight decay"):
+        ExperimentConfig.model_validate(raw)
+
+
+@pytest.mark.parametrize(
+    "path", ["configs/champion.yaml", "configs/stec.yaml", "configs/ngpt.yaml"]
+)
+def test_tuning_stages_preserve_valid_architecture_configs(path: str) -> None:
+    config = load_experiment(path)
+    for index, stage in enumerate(tuning_stages(config)):
+        study = optuna.create_study(
+            sampler=optuna.samplers.RandomSampler(seed=index),
+        )
+        sampled = _sample_config(config, stage, study.ask())
+        ExperimentConfig.model_validate(sampled.model_dump())
 
 
 def test_unknown_embedding_feature_fails_during_config_validation() -> None:
@@ -97,6 +133,8 @@ def test_ensemble_children_must_share_the_dataset_encoding_kind() -> None:
     child = deepcopy(raw["model"])
     child["default_embedding"]["kind"] = "hash"
     raw["model"]["kind"] = "ensemble"
+    raw["model"]["dcn"] = None
+    raw["model"]["ensemble"] = {"aggregation": "mean"}
     raw["model"]["children"] = [child]
     with pytest.raises(ValidationError, match="ensemble children"):
         ExperimentConfig.model_validate(raw)

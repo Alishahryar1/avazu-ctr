@@ -42,6 +42,26 @@ ensemble structure is explicit through auxiliary and child outputs.
 The primary objective is BCE on `aggregate_logits`. Auxiliary head BCE and
 positive residual-correlation penalties cannot replace aggregate supervision.
 
+### Model families
+
+- `dcn` uses a shared field encoder and SENet/DCNv2 backbone. One or more
+  prediction heads operate on that backbone; gated or mean aggregation applies
+  only when more than one prediction head is configured.
+- `stec` computes the full per-dimension query/key Hadamard interaction before
+  averaging it into scaled dot-product attention. Every STEC layer exposes that
+  grouped bilinear tensor, a final standalone bilinear layer exposes the last
+  hidden state, and the resulting `N + 1` tensors are batch-normalized,
+  concatenated, and supervised through the deployed logit.
+- `ngpt` treats the ordered field embeddings plus a learned classification token
+  as a non-causal sequence. It uses normalized query/key attention, learned
+  scaling vectors, SwiGLU, and hyperspherical LERP updates without LayerNorm or
+  RMSNorm. All embedding and matrix vectors are normalized in-place at
+  initialization and after every successful optimizer step. Its optimizer
+  contract requires Adam, zero weight decay, and zero warmup.
+
+STEC and nGPT attention heads partition an embedding space; they are unrelated
+to the independently supervised prediction heads in `dcn`.
+
 ## Selection and deployment
 
 Selection and deployment are separate state transitions:

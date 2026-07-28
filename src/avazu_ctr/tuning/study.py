@@ -10,13 +10,31 @@ from pathlib import Path
 import optuna
 
 from avazu_ctr.config.loader import resolved_config
-from avazu_ctr.config.schema import Aggregation, ExperimentConfig
+from avazu_ctr.config.schema import Aggregation, ExperimentConfig, ModelKind
 from avazu_ctr.data.manifest import DatasetPurpose, load_manifest, sha256_file, sha256_json
 from avazu_ctr.tracking.evidence import ConfirmationEvidence, FoldEvidence
 from avazu_ctr.tracking.store import RunStore
 from avazu_ctr.training import CandidateTrainer
 
-STAGES = ("optimizer", "capacity", "multihead", "regularization")
+MODEL_STAGES: dict[ModelKind, tuple[str, ...]] = {
+    ModelKind.DCN: ("optimizer", "capacity", "multihead", "regularization"),
+    ModelKind.STEC: ("optimizer", "capacity", "regularization"),
+    ModelKind.NGPT: ("optimizer", "capacity", "regularization"),
+}
+
+
+def tuning_stages(config: ExperimentConfig) -> tuple[str, ...]:
+    try:
+        stages = MODEL_STAGES[config.model.kind]
+    except KeyError as error:
+        raise ValueError("staged tuning does not support ensemble models") from error
+    if (
+        config.model.kind == ModelKind.DCN
+        and config.model.dcn is not None
+        and len(config.model.dcn.heads) == 1
+    ):
+        return tuple(stage for stage in stages if stage != "multihead")
+    return stages
 
 
 def _sample_config(
@@ -24,19 +42,24 @@ def _sample_config(
     stage: str,
     trial: optuna.Trial,
 ) -> ExperimentConfig:
+    if stage not in tuning_stages(base):
+        raise ValueError(f"{stage!r} is not a tuning stage for {base.model.kind.value}")
     if stage == "optimizer":
+        ngpt = base.model.kind == ModelKind.NGPT
         dense = base.training.optimizer.dense.model_copy(
             update={
                 "learning_rate": trial.suggest_float("learning_rate", 1e-4, 3e-3, log=True),
-                "weight_decay": trial.suggest_float("weight_decay", 1e-7, 1e-3, log=True),
+                "weight_decay": (
+                    0.0 if ngpt else trial.suggest_float("weight_decay", 1e-7, 1e-3, log=True)
+                ),
             }
         )
         scheduler = dense.scheduler.model_copy(
             update={
-                "warmup_ratio": trial.suggest_float("warmup_ratio", 0.0, 0.15),
+                "warmup_ratio": (0.0 if ngpt else trial.suggest_float("warmup_ratio", 0.0, 0.15)),
                 "minimum_lr_ratio": trial.suggest_float(
                     "minimum_lr_ratio",
-                    0.001,
+                    1e-5,
                     0.1,
                     log=True,
                 ),
@@ -48,22 +71,83 @@ def _sample_config(
         return base.model_copy(update={"training": training})
 
     if stage == "capacity":
-        backbone = base.model.backbone.model_copy(
-            update={
-                "dcn_layers": trial.suggest_int("dcn_layers", 2, 8),
-                "dcn_rank": trial.suggest_categorical("dcn_rank", [16, 32, 64]),
-                "mlp_hidden": {
-                    "small": (128, 64),
-                    "medium": (256, 128),
-                    "large": (512, 256),
-                }[trial.suggest_categorical("mlp_hidden", ["small", "medium", "large"])],
-            }
-        )
-        model = base.model.model_copy(update={"backbone": backbone})
+        if base.model.kind == ModelKind.DCN:
+            if base.model.dcn is None:
+                raise ValueError("DCN tuning requires dcn configuration")
+            backbone = base.model.dcn.backbone.model_copy(
+                update={
+                    "dcn_layers": trial.suggest_int("dcn_layers", 2, 8),
+                    "dcn_rank": trial.suggest_categorical("dcn_rank", [16, 32, 64]),
+                    "mlp_hidden": {
+                        "small": (128, 64),
+                        "medium": (256, 128),
+                        "large": (512, 256),
+                    }[
+                        trial.suggest_categorical(
+                            "mlp_hidden",
+                            ["small", "medium", "large"],
+                        )
+                    ],
+                }
+            )
+            architecture = base.model.dcn.model_copy(update={"backbone": backbone})
+            model = base.model.model_copy(update={"dcn": architecture})
+        elif base.model.kind == ModelKind.STEC:
+            if base.model.stec is None:
+                raise ValueError("STEC tuning requires stec configuration")
+            attention_shape = trial.suggest_categorical(
+                "attention_shape",
+                ["8x2", "16x2", "16x4", "32x4"],
+            )
+            dimension, heads = {
+                "8x2": (8, 2),
+                "16x2": (16, 2),
+                "16x4": (16, 4),
+                "32x4": (32, 4),
+            }[attention_shape]
+            architecture = base.model.stec.model_copy(
+                update={
+                    "dimension": dimension,
+                    "heads": heads,
+                    "layers": trial.suggest_int("layers", 1, 4),
+                    "ffn_multiplier": trial.suggest_categorical(
+                        "ffn_multiplier",
+                        [2, 4, 6],
+                    ),
+                }
+            )
+            model = base.model.model_copy(update={"stec": architecture})
+        else:
+            if base.model.ngpt is None:
+                raise ValueError("nGPT tuning requires ngpt configuration")
+            attention_shape = trial.suggest_categorical(
+                "attention_shape",
+                ["16x2", "32x4", "64x4", "64x8"],
+            )
+            dimension, heads = {
+                "16x2": (16, 2),
+                "32x4": (32, 4),
+                "64x4": (64, 4),
+                "64x8": (64, 8),
+            }[attention_shape]
+            architecture = base.model.ngpt.model_copy(
+                update={
+                    "dimension": dimension,
+                    "heads": heads,
+                    "layers": trial.suggest_int("layers", 1, 6),
+                    "mlp_multiplier": trial.suggest_categorical(
+                        "mlp_multiplier",
+                        [2, 4, 6],
+                    ),
+                }
+            )
+            model = base.model.model_copy(update={"ngpt": architecture})
         return base.model_copy(update={"model": model})
 
     if stage == "multihead":
-        model = base.model.model_copy(
+        if base.model.dcn is None:
+            raise ValueError("multihead tuning requires dcn configuration")
+        architecture = base.model.dcn.model_copy(
             update={
                 "aggregation": Aggregation(
                     trial.suggest_categorical("aggregation", ["mean", "gated"])
@@ -71,6 +155,7 @@ def _sample_config(
                 "feature_bagging": trial.suggest_float("feature_bagging", 0.6, 1.0),
             }
         )
+        model = base.model.model_copy(update={"dcn": architecture})
         objective = base.objective.model_copy(
             update={
                 "auxiliary_weight": trial.suggest_float(
@@ -89,14 +174,50 @@ def _sample_config(
         )
         return base.model_copy(update={"model": model, "objective": objective})
 
-    backbone = base.model.backbone.model_copy(
-        update={"dropout": trial.suggest_float("backbone_dropout", 0.0, 0.4)}
-    )
-    heads = tuple(
-        head.model_copy(update={"dropout": trial.suggest_float(f"head_{index}_dropout", 0.0, 0.5)})
-        for index, head in enumerate(base.model.heads)
-    )
-    model = base.model.model_copy(update={"backbone": backbone, "heads": heads})
+    if base.model.kind == ModelKind.DCN:
+        if base.model.dcn is None:
+            raise ValueError("DCN tuning requires dcn configuration")
+        backbone = base.model.dcn.backbone.model_copy(
+            update={"dropout": trial.suggest_float("backbone_dropout", 0.0, 0.4)}
+        )
+        heads = tuple(
+            head.model_copy(
+                update={
+                    "dropout": trial.suggest_float(
+                        f"head_{index}_dropout",
+                        0.0,
+                        0.5,
+                    )
+                }
+            )
+            for index, head in enumerate(base.model.dcn.heads)
+        )
+        architecture = base.model.dcn.model_copy(update={"backbone": backbone, "heads": heads})
+        model = base.model.model_copy(update={"dcn": architecture})
+    elif base.model.kind == ModelKind.STEC:
+        if base.model.stec is None:
+            raise ValueError("STEC tuning requires stec configuration")
+        architecture = base.model.stec.model_copy(
+            update={
+                "dropout": trial.suggest_float("dropout", 0.0, 0.3),
+                "prediction_dropout": trial.suggest_float(
+                    "prediction_dropout",
+                    0.0,
+                    0.3,
+                ),
+            }
+        )
+        model = base.model.model_copy(update={"stec": architecture})
+    else:
+        if base.model.ngpt is None:
+            raise ValueError("nGPT tuning requires ngpt configuration")
+        architecture = base.model.ngpt.model_copy(
+            update={
+                "dropout": trial.suggest_float("dropout", 0.0, 0.2),
+                "alpha_init": trial.suggest_float("alpha_init", 0.02, 0.2, log=True),
+            }
+        )
+        model = base.model.model_copy(update={"ngpt": architecture})
     return base.model_copy(update={"model": model})
 
 
@@ -158,6 +279,7 @@ class StagedTuner:
         if not config.tuning.enabled:
             raise ValueError("tuning.enabled must be true for a staged search")
         self.config = config
+        self.stages = tuning_stages(config)
         self.screening_manifest = Path(screening_manifest)
         self.manifest = load_manifest(self.screening_manifest, verify_shards=True)
         if self.manifest.purpose is not DatasetPurpose.EVALUATION:
@@ -174,7 +296,7 @@ class StagedTuner:
             kind="tuning",
             plan={
                 "mode": "staged_tuning",
-                "stages": list(STAGES),
+                "stages": list(self.stages),
                 "trials_per_stage": self.config.tuning.trials_per_stage,
                 "screening_manifest_sha256": sha256_file(self.screening_manifest),
             },
@@ -183,7 +305,7 @@ class StagedTuner:
         current = self.config
         final_study: optuna.Study | None = None
         try:
-            for stage_index, stage in enumerate(STAGES):
+            for stage_index, stage in enumerate(self.stages):
                 study = optuna.create_study(
                     study_name=f"{self.config.tuning.study_name}-{stage}",
                     storage=self.storage,
@@ -232,7 +354,7 @@ class StagedTuner:
                 parent_run_id,
                 status="completed",
                 summary={
-                    "stages_completed": len(STAGES),
+                    "stages_completed": len(self.stages),
                     "best_screening_logloss": (
                         final_study.best_value if final_study is not None else None
                     ),

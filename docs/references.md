@@ -12,6 +12,15 @@ The repository links papers instead of checking PDF binaries into Git.
 - Normalized representations: [nGPT: Normalized Transformer with Representation Learning on the Hypersphere](https://arxiv.org/abs/2410.01131)
 - STEC: [See-Through Transformer-based Encoder for CTR Prediction](https://arxiv.org/abs/2308.15033)
 
-The implementations are adapted to the repository's common typed-input and
-aggregate-supervision contracts; they are not claims of line-for-line reference
-reproduction.
+The STEC implementation preserves the paper's defining pre-pooling Hadamard
+interaction, multi-head attention path, stacked Add-and-Norm/FFN blocks,
+`N + 1` interaction levels, per-level batch normalization, and concatenated
+prediction path.
+
+The nGPT implementation preserves hyperspherical hidden-state updates, matrix
+and embedding reprojection after optimizer steps, normalized and rescaled
+query/key attention, SwiGLU scaling, normalized output weights, learned logit
+scaling, and the no-weight-decay/no-warmup optimizer recipe. CTR adaptation
+replaces causal language tokens and RoPE with non-causal, namespace-specific
+field tokens and a learned classification token; the normalized Transformer
+mechanics are unchanged.

@@ -312,12 +312,3 @@ class LogitGate(nn.Module):
     def forward(self, logits: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         weights = torch.softmax(self.network(logits), dim=1)
         return (weights * logits).sum(dim=1, keepdim=True), weights
-
-
-class NormalizedLinear(nn.Linear):
-    def forward(self, input: torch.Tensor) -> torch.Tensor:
-        return functional.linear(input, functional.normalize(self.weight, dim=1), self.bias)
-
-    @torch.no_grad()
-    def normalize_(self) -> None:
-        self.weight.copy_(functional.normalize(self.weight, dim=1))

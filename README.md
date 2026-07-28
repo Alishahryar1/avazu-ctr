@@ -135,6 +135,8 @@ atomically becomes the active selection after acceptance.
 
 `configs/baseline.yaml` is the clean DCNv2 benchmark.
 `configs/champion.yaml` is the SENet + DCNv2 multihead candidate.
+`configs/stec.yaml` is the paper-faithful STEC candidate.
+`configs/ngpt.yaml` is the paper-faithful nGPT candidate adapted to field tokens.
 `configs/tuning.yaml` defines the staged search.
 
 The shipped configurations compile 32 categorical and 31 numerical fields from
@@ -160,6 +162,10 @@ mode for an unseen online stream. See [feature system](docs/features.md).
 - Categorical values stay `int64`; numerical values stay `float32`.
 - Models return the exact aggregate logit deployed by inference.
 - The aggregate logit receives direct BCE supervision.
+- STEC exposes the unpooled bilinear interaction that its attention calculation
+  averages, and fuses one interaction per encoder level plus the final state.
+- nGPT reprojects every matrix and embedding vector to the unit hypersphere
+  after each successful optimizer step.
 - Hash coefficients and masks are serialized model state.
 - Every architecture is tested for complete expected gradient coverage.
 - Final-holdout weights can never become an inference bundle.
