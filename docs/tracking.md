@@ -24,7 +24,7 @@ TensorBoard event files live under `artifacts/tensorboard/<run-id>`. The run ID
 matches SQLite exactly.
 
 ```powershell
-uv run --extra cu130 avazu-ctr tensorboard configs/champion.yaml
+uv run --extra cu132 avazu-ctr tensorboard configs/champion.yaml
 ```
 
 Only scalar histories are mirrored. SQLite remains authoritative.

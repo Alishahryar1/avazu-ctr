@@ -1,7 +1,7 @@
 # Reproducibility
 
 Python is fixed to 3.12 and `uv.lock` fixes the complete dependency graph.
-CPU and CUDA 13.0 PyTorch installs are explicit, mutually exclusive extras.
+CPU and CUDA 13.2 PyTorch installs are explicit, mutually exclusive extras.
 
 Splits, feature recipes, preprocessing, hashing, causal event order, masks,
 initialization, data order, workers, and Optuna samplers are seeded. Hash

@@ -17,7 +17,7 @@ def compile_cuda_graph[GraphT: nn.Module](graph: GraphT, device: torch.device) -
     if not has_triton():
         raise RuntimeError(
             "CUDA graph compilation requires a working Triton installation; "
-            "install the cu130 project extra"
+            "install the cu132 project extra"
         )
     return cast(
         GraphT,

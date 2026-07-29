@@ -23,7 +23,7 @@ separate from the immutable selection and submission evidence.
 ## Requirements
 
 - [`uv`](https://docs.astral.sh/uv/)
-- An NVIDIA driver compatible with the CUDA 13.0 PyTorch build for GPU training
+- An NVIDIA driver compatible with the CUDA 13.2 PyTorch build for GPU training
 
 uv automatically downloads and manages the Python 3.12 runtime requested by
 `.python-version`; a system Python installation is not required.
@@ -35,13 +35,13 @@ Install one—and only one—PyTorch backend:
 uv sync --extra cpu --group dev
 
 # Windows/Linux NVIDIA training, including the platform Triton compiler
-uv sync --extra cu130 --group dev
+uv sync --extra cu132 --group dev
 ```
 
 Verify that a CUDA environment really resolved a GPU build:
 
 ```powershell
-uv run --extra cu130 python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name())"
+uv run --extra cu132 python -c "import torch; print(torch.__version__, torch.cuda.is_available(), torch.cuda.get_device_name())"
 ```
 
 All retained dependencies are resolved to current stable releases in
@@ -52,27 +52,27 @@ All retained dependencies are resolved to current stable releases in
 Install the locked official Kaggle CLI alongside the selected PyTorch backend:
 
 ```powershell
-uv sync --extra cu130 --group dev --group kaggle
-uv run --locked --extra cu130 --group kaggle kaggle --version
+uv sync --extra cu132 --group dev --group kaggle
+uv run --locked --extra cu132 --group kaggle kaggle --version
 ```
 
 Authenticate through Kaggle's browser-based OAuth flow. Credentials are stored
 outside the repository:
 
 ```powershell
-uv run --locked --extra cu130 --group kaggle kaggle auth login
+uv run --locked --extra cu132 --group kaggle kaggle auth login
 ```
 
 Download the competition data, inspect submission history, or submit a generated
 file:
 
 ```powershell
-uv run --locked --extra cu130 --group kaggle kaggle competitions download avazu-ctr-prediction -p data/raw
-uv run --locked --extra cu130 --group kaggle kaggle competitions submissions avazu-ctr-prediction
-uv run --locked --extra cu130 --group kaggle kaggle competitions submit avazu-ctr-prediction -f submission.csv -m "reproduction"
+uv run --locked --extra cu132 --group kaggle kaggle competitions download avazu-ctr-prediction -p data/raw
+uv run --locked --extra cu132 --group kaggle kaggle competitions submissions avazu-ctr-prediction
+uv run --locked --extra cu132 --group kaggle kaggle competitions submit avazu-ctr-prediction -f submission.csv -m "reproduction"
 ```
 
-Use `--extra cpu` instead of `--extra cu130` on CPU-only systems. Never commit
+Use `--extra cpu` instead of `--extra cu132` on CPU-only systems. Never commit
 Kaggle tokens or credential files; repository-local credential fallbacks are
 ignored by Git.
 
@@ -84,34 +84,34 @@ generated artifacts are ignored by Git.
 ```powershell
 # Build three walk-forward folds and the final holdout.
 # Evaluation preprocessing never reads test.gz.
-uv run --extra cu130 avazu-ctr preprocess configs/champion.yaml --all-windows
+uv run --extra cu132 avazu-ctr preprocess configs/champion.yaml --all-windows
 
 # Watch live curves
-uv run --extra cu130 avazu-ctr tensorboard configs/champion.yaml
+uv run --extra cu132 avazu-ctr tensorboard configs/champion.yaml
 
 # Confirm a fixed configuration on every walk-forward fold
-uv run --extra cu130 avazu-ctr confirm configs/champion.yaml `
+uv run --extra cu132 avazu-ctr confirm configs/champion.yaml `
   --fold-manifest artifacts/datasets/senet-dcnv2-multihead/walk_forward_0/manifest.json `
   --fold-manifest artifacts/datasets/senet-dcnv2-multihead/walk_forward_1/manifest.json `
   --fold-manifest artifacts/datasets/senet-dcnv2-multihead/walk_forward_2/manifest.json `
   --output artifacts/tuning/confirmation.json
 
 # Train once on the final-holdout protocol and retain evidence, not weights
-uv run --extra cu130 avazu-ctr candidate artifacts/tuning/confirmation.json `
+uv run --extra cu132 avazu-ctr candidate artifacts/tuning/confirmation.json `
   artifacts/datasets/senet-dcnv2-multihead/final_holdout/manifest.json `
   --output artifacts/selection-candidates/champion
 
 # Select the configuration through the paired statistical gate
-uv run --extra cu130 avazu-ctr promote configs/champion.yaml `
+uv run --extra cu132 avazu-ctr promote configs/champion.yaml `
   artifacts/selection-candidates/champion
 
 # Fit features on every labelled row, refit for best_epoch + 1, and deploy
-uv run --extra cu130 avazu-ctr prepare-production configs/champion.yaml
-uv run --extra cu130 avazu-ctr refit configs/champion.yaml `
+uv run --extra cu132 avazu-ctr prepare-production configs/champion.yaml
+uv run --extra cu132 avazu-ctr refit configs/champion.yaml `
   artifacts/datasets/senet-dcnv2-multihead/production/manifest.json
 
 # Produce the competition submission from the production-only bundle
-uv run --extra cu130 avazu-ctr predict artifacts/champion `
+uv run --extra cu132 avazu-ctr predict artifacts/champion `
   artifacts/datasets/senet-dcnv2-multihead/production/manifest.json `
   --device cuda --output submission.csv
 ```
@@ -123,8 +123,8 @@ memory and nonblocking device transfers. CPU prediction remains eager float32.
 Staged tuning produces the same typed confirmation artifact:
 
 ```powershell
-uv run --extra cu130 avazu-ctr preprocess configs/tuning.yaml --all-windows
-uv run --extra cu130 avazu-ctr tune configs/tuning.yaml artifacts/datasets/senet-dcnv2-staged-tuning/walk_forward_0/manifest.json `
+uv run --extra cu132 avazu-ctr preprocess configs/tuning.yaml --all-windows
+uv run --extra cu132 avazu-ctr tune configs/tuning.yaml artifacts/datasets/senet-dcnv2-staged-tuning/walk_forward_0/manifest.json `
   --confirm-manifest artifacts/datasets/senet-dcnv2-staged-tuning/walk_forward_0/manifest.json `
   --confirm-manifest artifacts/datasets/senet-dcnv2-staged-tuning/walk_forward_1/manifest.json `
   --confirm-manifest artifacts/datasets/senet-dcnv2-staged-tuning/walk_forward_2/manifest.json `
@@ -194,7 +194,7 @@ SQLite is authoritative for run lineage and metrics. TensorBoard mirrors scalar
 histories under the same run ID for live curves:
 
 ```powershell
-uv run --extra cu130 avazu-ctr tensorboard configs/champion.yaml --port 6006
+uv run --extra cu132 avazu-ctr tensorboard configs/champion.yaml --port 6006
 ```
 
 TensorBoard stores no weights, graphs, datasets, or embeddings. Tuning,
