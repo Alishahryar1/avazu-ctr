@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from enum import StrEnum
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -17,6 +17,21 @@ Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
 class StrictManifestModel(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
+
+
+def _validate_artifact_path(value: str) -> None:
+    posix = PurePosixPath(value)
+    windows = PureWindowsPath(value)
+    if (
+        not value
+        or value != posix.as_posix()
+        or "\\" in value
+        or posix.is_absolute()
+        or windows.is_absolute()
+        or ".." in posix.parts
+        or ".." in windows.parts
+    ):
+        raise ValueError("manifest artifact paths must be normalized relative POSIX paths")
 
 
 class DatasetPurpose(StrEnum):
@@ -49,8 +64,7 @@ class FeatureFamily(StrEnum):
 
 class FittedTableKind(StrEnum):
     VOCABULARY = "vocabulary"
-    COVARIATE_FREQUENCY = "covariate_frequency"
-    COVARIATE_DISTINCT_COUNT = "covariate_distinct_count"
+    COVARIATE_LOOKUP = "covariate_lookup"
     TARGET_ENCODING = "target_encoding"
     TEMPORAL_TARGET_ENCODING = "temporal_target_encoding"
 
@@ -76,15 +90,67 @@ class ShardManifest(StrictManifestModel):
     rows: int = Field(gt=0)
     sha256: Sha256
 
+    @model_validator(mode="after")
+    def validate_path(self) -> Self:
+        _validate_artifact_path(self.path)
+        return self
+
 
 class FittedTableManifest(StrictManifestModel):
-    feature: str
     kind: FittedTableKind
+    join_keys: tuple[str, ...] = Field(min_length=1)
+    outputs: tuple[str, ...] = Field(min_length=1)
     path: str
     rows: int = Field(ge=0)
     sha256: Sha256
     sources: tuple[DatasetSplit, ...] = Field(min_length=1)
     uses_labels: bool
+
+    @model_validator(mode="after")
+    def validate_shape(self) -> Self:
+        if len(set(self.join_keys)) != len(self.join_keys):
+            raise ValueError("fitted-table join keys must be unique")
+        if len(set(self.outputs)) != len(self.outputs):
+            raise ValueError("fitted-table outputs must be unique")
+        if set(self.join_keys).intersection(self.outputs):
+            raise ValueError("fitted-table join keys and outputs must be disjoint")
+        _validate_artifact_path(self.path)
+
+        primary = self.join_keys[0]
+        expected: tuple[str, ...] | None = None
+        if self.kind is FittedTableKind.VOCABULARY:
+            if len(self.join_keys) != 1:
+                raise ValueError("vocabulary tables require exactly one join key")
+            expected = (f"{primary}__id",)
+        elif self.kind is FittedTableKind.COVARIATE_LOOKUP:
+            if len(self.join_keys) != 1:
+                raise ValueError("covariate lookup tables require exactly one join key")
+            frequency_output = f"{primary}__frequency"
+            if any(
+                output != frequency_output and not output.endswith("__raw")
+                for output in self.outputs
+            ):
+                raise ValueError(
+                    "covariate lookup outputs must be the key frequency or raw aggregates"
+                )
+        elif self.kind is FittedTableKind.TARGET_ENCODING:
+            if len(self.join_keys) != 1:
+                raise ValueError("target-encoding tables require exactly one join key")
+            expected = ("_positive", "_count")
+        elif self.kind is FittedTableKind.TEMPORAL_TARGET_ENCODING:
+            if self.join_keys != (primary, "_te_block"):
+                raise ValueError(
+                    "temporal target-encoding tables require a feature and _te_block join key"
+                )
+            expected = (
+                "_previous_positive",
+                "_previous_count",
+                "_prior_count",
+                "_block_prior",
+            )
+        if expected is not None and self.outputs != expected:
+            raise ValueError(f"{self.kind.value} table outputs must be {expected}")
+        return self
 
 
 class CategoricalEncodingContract(StrictManifestModel):
@@ -128,7 +194,7 @@ class SplitDiagnostics(StrictManifestModel):
 
 
 class DatasetManifest(StrictManifestModel):
-    schema_version: Literal[5] = 5
+    schema_version: Literal[6] = 6
     name: str
     purpose: DatasetPurpose
     feature_mode: FeatureMode
@@ -192,8 +258,14 @@ class DatasetManifest(StrictManifestModel):
             raise ValueError("feature definitions contain duplicate names")
         if set(self.cardinalities) != set(self.categorical_columns):
             raise ValueError("cardinalities must cover exactly the categorical columns")
+        if any(cardinality <= 0 for cardinality in self.cardinalities.values()):
+            raise ValueError("categorical cardinalities must be positive")
         if set(self.embedding_kinds) != set(self.categorical_columns):
             raise ValueError("embedding kinds must cover exactly the categorical columns")
+        if not set(self.embedding_kinds.values()).issubset({"hash", "standard"}):
+            raise ValueError("embedding kinds must be hash or standard")
+        if set(self.categorical_columns).intersection(self.numerical_columns):
+            raise ValueError("categorical and numerical columns must be disjoint")
 
         scoring_split = (
             DatasetSplit.VALIDATION
@@ -231,15 +303,71 @@ class DatasetManifest(StrictManifestModel):
             FittedTableKind.TARGET_ENCODING,
             FittedTableKind.TEMPORAL_TARGET_ENCODING,
         }
-        for table in self.fitted_tables:
-            if len(set(table.sources)) != len(table.sources):
-                raise ValueError(f"fitted table {table.feature!r} repeats a source")
-            if not set(table.sources).issubset(expected_splits):
-                raise ValueError(f"fitted table {table.feature!r} has an invalid source")
-            if table.uses_labels != (table.kind in label_kinds):
-                raise ValueError(
-                    f"fitted table {table.feature!r} has inconsistent label provenance"
+        expected_contracts: dict[
+            tuple[FittedTableKind, tuple[str, ...]],
+            tuple[str, ...],
+        ] = {
+            (FittedTableKind.VOCABULARY, (feature,)): (f"{feature}__id",)
+            for feature, kind in self.embedding_kinds.items()
+            if kind == "standard"
+        }
+        covariate_outputs: dict[str, list[str]] = {}
+        target_features: dict[str, None] = {}
+        for feature in self.features:
+            if feature.family is FeatureFamily.FREQUENCY:
+                key = feature.inputs[0]
+                covariate_outputs.setdefault(key, []).append(f"{key}__frequency")
+            elif feature.family is FeatureFamily.DISTINCT_COUNT:
+                key = feature.inputs[0]
+                covariate_outputs.setdefault(key, []).append(f"{feature.name}__raw")
+            elif feature.family is FeatureFamily.TARGET:
+                target_features.setdefault(feature.inputs[0], None)
+        expected_contracts.update(
+            {
+                (FittedTableKind.COVARIATE_LOOKUP, (key,)): tuple(outputs)
+                for key, outputs in covariate_outputs.items()
+            }
+        )
+        for feature in target_features:
+            expected_contracts[(FittedTableKind.TARGET_ENCODING, (feature,))] = (
+                "_positive",
+                "_count",
+            )
+            expected_contracts[
+                (
+                    FittedTableKind.TEMPORAL_TARGET_ENCODING,
+                    (feature, "_te_block"),
                 )
+            ] = (
+                "_previous_positive",
+                "_previous_count",
+                "_prior_count",
+                "_block_prior",
+            )
+
+        table_paths: set[str] = set()
+        table_contracts: set[tuple[FittedTableKind, tuple[str, ...]]] = set()
+        actual_contracts: dict[
+            tuple[FittedTableKind, tuple[str, ...]],
+            tuple[str, ...],
+        ] = {}
+        for table in self.fitted_tables:
+            if table.path in table_paths:
+                raise ValueError(f"fitted-table path {table.path!r} is repeated")
+            table_paths.add(table.path)
+            table_contract = (table.kind, table.join_keys)
+            if table_contract in table_contracts:
+                raise ValueError(
+                    f"fitted-table contract {table.kind.value} {table.join_keys} is repeated"
+                )
+            table_contracts.add(table_contract)
+            actual_contracts[table_contract] = table.outputs
+            if len(set(table.sources)) != len(table.sources):
+                raise ValueError(f"fitted table {table.path!r} repeats a source")
+            if not set(table.sources).issubset(expected_splits):
+                raise ValueError(f"fitted table {table.path!r} has an invalid source")
+            if table.uses_labels != (table.kind in label_kinds):
+                raise ValueError(f"fitted table {table.path!r} has inconsistent label provenance")
             expected_sources = (
                 self.categorical_encoding.vocabulary_sources
                 if table.kind is FittedTableKind.VOCABULARY
@@ -249,9 +377,13 @@ class DatasetManifest(StrictManifestModel):
             )
             if table.sources != expected_sources:
                 raise ValueError(
-                    f"fitted table {table.feature!r} has sources {table.sources}, "
+                    f"fitted table {table.path!r} has sources {table.sources}, "
                     f"expected {expected_sources}"
                 )
+        if actual_contracts != expected_contracts:
+            raise ValueError(
+                "fitted tables do not exactly match the declared feature and embedding contract"
+            )
         return self
 
     @property
@@ -279,8 +411,9 @@ class DatasetManifest(StrictManifestModel):
                 "features": [feature.model_dump(mode="json") for feature in self.features],
                 "fitted_tables": [
                     {
-                        "feature": table.feature,
                         "kind": table.kind,
+                        "join_keys": table.join_keys,
+                        "outputs": table.outputs,
                         "sha256": table.sha256,
                         "sources": table.sources,
                         "uses_labels": table.uses_labels,

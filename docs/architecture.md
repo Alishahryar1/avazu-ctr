@@ -36,6 +36,9 @@ does not contain feature or model logic.
 ## Model contract
 
 `FeatureBatch` has separate `int64` categorical and `float32` numerical lanes.
+Labels and row IDs are optional; training omits row IDs, while evaluation and
+inference request them explicitly. The batch owns its tensor pinning contract,
+so a CUDA `DataLoader` can transfer every tensor lane asynchronously.
 `ModelOutput.aggregate_logits` is always the deployed prediction. Multihead and
 ensemble structure is explicit through auxiliary and child outputs.
 
@@ -85,7 +88,7 @@ all-data step count.
 
 ## Artifact contract
 
-A processed dataset is valid only with its schema-v5 role-specific manifest and
+A processed dataset is valid only with its schema-v6 role-specific manifest and
 checksums. Evaluation manifests require validation and forbid test. Production
 manifests require test and forbid validation.
 
@@ -93,6 +96,15 @@ The manifest embeds the ordered feature definitions, inductive or explicit
 competition-transductive mode, fitted-table label and split provenance, and OOV
 diagnostics. Vocabularies and label-dependent tables can only declare the
 training split; unknown vocabulary IDs have a fixed zero embedding.
+
+Fitted covariate state is key-centric: every join key has one sorted Parquet
+lookup containing all frequency and distinct-count outputs for that key.
+Compatible lazy fitting queries execute in bounded groups, and Polars writes
+the transformed population directly into deterministic, row-bounded Parquet
+parts. The runtime loader reads only model lanes, labels, and explicitly
+requested IDs, then coalesces rows across shard boundaries. Consequently a
+single-process epoch has exactly `ceil(rows / batch_size)` batches; each
+additional data worker contributes at most one independent tail batch.
 
 An inference model is valid only as a production `safetensors` file plus
 `bundle.json` and its fitted all-data preprocessor state. The bundle records the

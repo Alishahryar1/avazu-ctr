@@ -42,7 +42,7 @@ class RefitPlan(StrictModel):
 
 
 class BundleMetadata(StrictModel):
-    schema_version: Literal[5] = 5
+    schema_version: Literal[6] = 6
     role: Literal["production"] = "production"
     refit_run_id: Annotated[str, Field(min_length=1)]
     selection_id: Annotated[str, Field(min_length=1)]
@@ -173,7 +173,7 @@ def load_bundle(path: str | Path, *, device: str | torch.device = "cpu") -> Load
             "embedding_kinds",
             "features",
         }
-        or preprocessor.get("schema_version") != 5
+        or preprocessor.get("schema_version") != 6
         or preprocessor.get("purpose") != "production"
         or preprocessor.get("feature_mode") != manifest.feature_mode.value
         or preprocessor.get("categorical_encoding")
@@ -192,7 +192,7 @@ def load_bundle(path: str | Path, *, device: str | torch.device = "cpu") -> Load
     for table in manifest.fitted_tables:
         table_path = root / "preprocessor" / Path(table.path).name
         if not table_path.exists() or sha256_file(table_path) != table.sha256:
-            raise ValueError(f"preprocessor checksum mismatch for {table.feature}")
+            raise ValueError(f"preprocessor checksum mismatch for {table.path}")
 
     model = create_model(config.model, manifest, seed=config.training.seed)
     state = load_file(weights_path, device=str(device))

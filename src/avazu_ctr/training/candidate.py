@@ -73,7 +73,11 @@ class CandidateTrainer:
             kind = "trial"
         elif kind not in {"candidate", "confirmation"}:
             raise ValueError(f"invalid evaluation run kind: {kind}")
-        epoch_steps = steps_per_epoch(self.manifest, self.config.training.batch_size)
+        epoch_steps = steps_per_epoch(
+            self.manifest,
+            self.config.training.batch_size,
+            self.config.training.num_workers,
+        )
         manifest_sha256 = sha256_file(self.manifest_path)
         run_id = self.store.start_run(
             self.config,
@@ -155,6 +159,7 @@ class CandidateTrainer:
             "validation",
             shuffle=False,
             pin_memory=loop.device.type == "cuda",
+            include_row_ids=True,
             num_workers=0,
         )
         best_loss = float("inf")

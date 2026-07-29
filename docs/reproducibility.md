@@ -14,6 +14,11 @@ Categorical vocabularies are always training-only, and the reserved unknown ID
 has a fixed zero embedding, so scoring-only values cannot create untrained
 parameters.
 
+Processed shard names and row limits are deterministic. Data workers receive
+fixed strided shard partitions before epoch-local shuffling, and each worker
+coalesces its partition across file boundaries. Recorded step budgets therefore
+match the batches the iterable dataset actually emits.
+
 Production CUDA permits seeded nondeterministic kernels when they improve
 throughput. Tests enable `torch.use_deterministic_algorithms(True)`. Exact
 bitwise equivalence is therefore required for data and CPU state round trips,

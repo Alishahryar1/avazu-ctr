@@ -1,4 +1,4 @@
-"""Fit feature state from explicitly declared covariate and label populations."""
+"""Fit compact, key-centric feature state from declared data populations."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import polars as pl
+import pyarrow.parquet as pq
 
 from avazu_ctr.config.schema import EmbeddingKind, ExperimentConfig
 from avazu_ctr.data.features.plan import feature_definitions
@@ -18,6 +19,8 @@ from avazu_ctr.data.manifest import (
     sha256_file,
 )
 
+_MAX_MULTIPLEXED_SINKS = 4
+
 
 @dataclass(slots=True)
 class FittedFeatureState:
@@ -27,8 +30,7 @@ class FittedFeatureState:
     cardinalities: dict[str, int]
     embedding_kinds: dict[str, str]
     vocabularies: dict[str, Path]
-    frequencies: dict[str, Path]
-    distinct_counts: dict[str, Path]
+    covariate_lookups: dict[str, Path]
     target_encodings: dict[str, Path]
     temporal_target_encodings: dict[str, Path]
     global_prior: float
@@ -36,138 +38,141 @@ class FittedFeatureState:
     tables: list[FittedTableManifest]
 
 
-def _write_fitted_table(
-    frame: pl.LazyFrame,
-    path: Path,
-    *,
-    feature: str,
-    kind: FittedTableKind,
-    sources: tuple[DatasetSplit, ...],
-    uses_labels: bool,
-) -> FittedTableManifest:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    frame.sink_parquet(
-        path,
-        compression="zstd",
-        statistics=True,
-        maintain_order=True,
-        engine="streaming",
-    )
-    rows = int(
-        pl.scan_parquet(path).select(pl.len().alias("rows")).collect(engine="streaming")["rows"][0]
-    )
+@dataclass(frozen=True, slots=True)
+class _FittedSink:
+    frame: pl.LazyFrame
+    path: Path
+    kind: FittedTableKind
+    join_keys: tuple[str, ...]
+    outputs: tuple[str, ...]
+    sources: tuple[DatasetSplit, ...]
+    uses_labels: bool
+
+
+def _finalize_fitted_sink(sink: _FittedSink) -> FittedTableManifest:
+    metadata = pq.ParquetFile(sink.path).metadata
+    if metadata is None:
+        raise ValueError(f"fitted table {sink.path} has no Parquet metadata")
     return FittedTableManifest(
-        feature=feature,
-        kind=kind,
-        path=path.name,
-        rows=rows,
-        sha256=sha256_file(path),
-        sources=sources,
-        uses_labels=uses_labels,
+        kind=sink.kind,
+        join_keys=sink.join_keys,
+        outputs=sink.outputs,
+        path=sink.path.name,
+        rows=metadata.num_rows,
+        sha256=sha256_file(sink.path),
+        sources=sink.sources,
+        uses_labels=sink.uses_labels,
     )
 
 
-def fit_feature_state(
+def _write_fitted_tables(
+    sinks: list[_FittedSink],
+    *,
+    max_concurrent: int = _MAX_MULTIPLEXED_SINKS,
+) -> list[FittedTableManifest]:
+    """Write bounded groups of lazy sinks so compatible plans share source scans."""
+
+    if max_concurrent <= 0:
+        raise ValueError("max_concurrent must be positive")
+    manifests: list[FittedTableManifest] = []
+    for start in range(0, len(sinks), max_concurrent):
+        batch = sinks[start : start + max_concurrent]
+        plans: list[pl.LazyFrame] = []
+        for sink in batch:
+            sink.path.parent.mkdir(parents=True, exist_ok=True)
+            plan = sink.frame.sink_parquet(
+                sink.path,
+                compression="zstd",
+                statistics=True,
+                maintain_order=True,
+                lazy=True,
+            )
+            if plan is None:
+                raise RuntimeError("lazy fitted-table sink did not return a query plan")
+            plans.append(plan)
+        pl.collect_all(plans, engine="streaming")
+        manifests.extend(_finalize_fitted_sink(sink) for sink in batch)
+    return manifests
+
+
+def _vocabulary_sinks(
     train: pl.LazyFrame,
-    covariates: pl.LazyFrame,
     config: ExperimentConfig,
     state_dir: Path,
-    *,
-    covariate_sources: tuple[DatasetSplit, ...],
-    training_range: HourRange,
-) -> FittedFeatureState:
-    """Fit covariate state from the declared scope and label state from training only."""
-
-    features = config.data.features
-    categorical = features.categorical_columns
-    cardinalities: dict[str, int] = {}
+) -> tuple[list[_FittedSink], dict[str, str]]:
+    sinks: list[_FittedSink] = []
     kinds: dict[str, str] = {}
-    vocabularies: dict[str, Path] = {}
-    frequencies: dict[str, Path] = {}
-    distinct_counts: dict[str, Path] = {}
-    target_encodings: dict[str, Path] = {}
-    temporal_target_encodings: dict[str, Path] = {}
-    tables: list[FittedTableManifest] = []
-
-    for feature in categorical:
+    for feature in config.data.features.categorical_columns:
         embedding = config.model.feature_embeddings.get(feature, config.model.default_embedding)
         kinds[feature] = embedding.kind.value
         if embedding.kind is EmbeddingKind.HASH:
-            cardinalities[feature] = embedding.buckets
             continue
+        output = f"{feature}__id"
         vocabulary = (
             train.group_by(feature)
             .len(name="_frequency")
             .filter(pl.col("_frequency") >= config.data.minimum_frequency)
             .sort(feature)
-            .with_row_index(f"{feature}__id", offset=1)
-            .select(feature, pl.col(f"{feature}__id").cast(pl.Int64))
+            .with_row_index(output, offset=1)
+            .select(feature, pl.col(output).cast(pl.Int64))
         )
-        path = state_dir / f"vocabulary_{feature}.parquet"
-        table = _write_fitted_table(
-            vocabulary,
-            path,
-            feature=feature,
-            kind=FittedTableKind.VOCABULARY,
-            sources=(DatasetSplit.TRAINING,),
+        sinks.append(
+            _FittedSink(
+                frame=vocabulary,
+                path=state_dir / f"vocabulary_{feature}.parquet",
+                kind=FittedTableKind.VOCABULARY,
+                join_keys=(feature,),
+                outputs=(output,),
+                sources=(DatasetSplit.TRAINING,),
+                uses_labels=False,
+            )
+        )
+    return sinks, kinds
+
+
+def _covariate_sinks(
+    covariates: pl.LazyFrame,
+    config: ExperimentConfig,
+    state_dir: Path,
+    *,
+    sources: tuple[DatasetSplit, ...],
+) -> list[_FittedSink]:
+    aggregations: dict[str, list[pl.Expr]] = {}
+    outputs: dict[str, list[str]] = {}
+
+    for feature in config.data.features.frequency_columns:
+        output = f"{feature}__frequency"
+        aggregations.setdefault(feature, []).append(pl.len().alias(output))
+        outputs.setdefault(feature, []).append(output)
+    for feature in config.data.features.distinct_counts:
+        output = f"{feature.name}__raw"
+        aggregations.setdefault(feature.group_by, []).append(
+            pl.col(feature.value).n_unique().alias(output)
+        )
+        outputs.setdefault(feature.group_by, []).append(output)
+
+    return [
+        _FittedSink(
+            frame=covariates.group_by(key).agg(*expressions).sort(key),
+            path=state_dir / f"covariate_{key}.parquet",
+            kind=FittedTableKind.COVARIATE_LOOKUP,
+            join_keys=(key,),
+            outputs=tuple(outputs[key]),
+            sources=sources,
             uses_labels=False,
         )
-        if table.rows > config.data.vocabulary_limit:
-            raise ValueError(
-                f"{feature} has {table.rows} retained values; configure a hash embedding "
-                f"or raise data.vocabulary_limit"
-            )
-        tables.append(table)
-        vocabularies[feature] = path
-        cardinalities[feature] = table.rows + 1
+        for key, expressions in aggregations.items()
+    ]
 
-    for feature in features.frequency_columns:
-        output = f"{feature}__frequency"
-        counts = covariates.group_by(feature).len(name=output).sort(feature)
-        path = state_dir / f"frequency_{feature}.parquet"
-        tables.append(
-            _write_fitted_table(
-                counts,
-                path,
-                feature=feature,
-                kind=FittedTableKind.COVARIATE_FREQUENCY,
-                sources=covariate_sources,
-                uses_labels=False,
-            )
-        )
-        frequencies[feature] = path
 
-    for feature in features.distinct_counts:
-        raw_name = f"{feature.name}__raw"
-        counts = (
-            covariates.group_by(feature.group_by)
-            .agg(pl.col(feature.value).n_unique().alias(raw_name))
-            .sort(feature.group_by)
-        )
-        path = state_dir / f"distinct_{feature.name}.parquet"
-        tables.append(
-            _write_fitted_table(
-                counts,
-                path,
-                feature=feature.name,
-                kind=FittedTableKind.COVARIATE_DISTINCT_COUNT,
-                sources=covariate_sources,
-                uses_labels=False,
-            )
-        )
-        distinct_counts[feature.name] = path
-
-    label_summary = train.select(
-        pl.col("click").sum().alias("positive"),
-        pl.len().alias("count"),
-    ).collect(engine="streaming")
-    positives = int(label_summary["positive"][0])
-    label_count = int(label_summary["count"][0])
-    if label_count == 0:
-        raise ValueError("training window is empty")
-    global_prior = positives / label_count
-
-    target = features.target_encoding
+def _target_sinks(
+    train: pl.LazyFrame,
+    config: ExperimentConfig,
+    state_dir: Path,
+    *,
+    training_range: HourRange,
+) -> list[_FittedSink]:
+    target = config.data.features.target_encoding
     width = max(
         1,
         (training_range.end - training_range.start + target.blocks - 1) // target.blocks,
@@ -196,7 +201,8 @@ def fit_feature_state(
         .select("_te_block", "_prior_count", "_block_prior")
     )
 
-    for feature in features.target_encoding.columns:
+    sinks: list[_FittedSink] = []
+    for feature in target.columns:
         stats = (
             train.group_by(feature)
             .agg(
@@ -205,18 +211,17 @@ def fit_feature_state(
             )
             .sort(feature)
         )
-        path = state_dir / f"target_encoding_{feature}.parquet"
-        tables.append(
-            _write_fitted_table(
-                stats,
-                path,
-                feature=feature,
+        sinks.append(
+            _FittedSink(
+                frame=stats,
+                path=state_dir / f"target_encoding_{feature}.parquet",
                 kind=FittedTableKind.TARGET_ENCODING,
+                join_keys=(feature,),
+                outputs=("_positive", "_count"),
                 sources=(DatasetSplit.TRAINING,),
                 uses_labels=True,
             )
         )
-        target_encodings[feature] = path
         temporal_stats = (
             blocked.group_by(feature, "_te_block")
             .agg(pl.col("click").sum().alias("_positive"), pl.len().alias("_count"))
@@ -238,31 +243,104 @@ def fit_feature_state(
             )
             .sort(feature, "_te_block")
         )
-        temporal_path = state_dir / f"temporal_target_encoding_{feature}.parquet"
-        tables.append(
-            _write_fitted_table(
-                temporal_stats,
-                temporal_path,
-                feature=feature,
+        sinks.append(
+            _FittedSink(
+                frame=temporal_stats,
+                path=state_dir / f"temporal_target_encoding_{feature}.parquet",
                 kind=FittedTableKind.TEMPORAL_TARGET_ENCODING,
+                join_keys=(feature, "_te_block"),
+                outputs=(
+                    "_previous_positive",
+                    "_previous_count",
+                    "_prior_count",
+                    "_block_prior",
+                ),
                 sources=(DatasetSplit.TRAINING,),
                 uses_labels=True,
             )
         )
-        temporal_target_encodings[feature] = temporal_path
+    return sinks
+
+
+def fit_feature_state(
+    train: pl.LazyFrame,
+    covariates: pl.LazyFrame,
+    config: ExperimentConfig,
+    state_dir: Path,
+    *,
+    covariate_sources: tuple[DatasetSplit, ...],
+    training_range: HourRange,
+) -> FittedFeatureState:
+    """Fit compact lookup state from explicit covariate and label populations."""
+
+    features = config.data.features
+    vocabulary_sinks, kinds = _vocabulary_sinks(train, config, state_dir)
+    vocabulary_tables = _write_fitted_tables(vocabulary_sinks)
+    vocabularies = {sink.join_keys[0]: sink.path for sink in vocabulary_sinks}
+    cardinalities = {
+        feature: config.model.feature_embeddings.get(
+            feature, config.model.default_embedding
+        ).buckets
+        for feature in features.categorical_columns
+        if kinds[feature] == EmbeddingKind.HASH.value
+    }
+    for table in vocabulary_tables:
+        feature = table.join_keys[0]
+        if table.rows > config.data.vocabulary_limit:
+            raise ValueError(
+                f"{feature} has {table.rows} retained values; configure a hash embedding "
+                f"or raise data.vocabulary_limit"
+            )
+        cardinalities[feature] = table.rows + 1
+
+    covariate_sinks = _covariate_sinks(
+        covariates,
+        config,
+        state_dir,
+        sources=covariate_sources,
+    )
+    covariate_tables = _write_fitted_tables(covariate_sinks)
+    covariate_lookups = {sink.join_keys[0]: sink.path for sink in covariate_sinks}
+
+    label_summary = train.select(
+        pl.col("click").sum().alias("positive"),
+        pl.len().alias("count"),
+    ).collect(engine="streaming")
+    positives = int(label_summary["positive"][0])
+    label_count = int(label_summary["count"][0])
+    if label_count == 0:
+        raise ValueError("training window is empty")
+    global_prior = positives / label_count
+
+    target_sinks = _target_sinks(
+        train,
+        config,
+        state_dir,
+        training_range=training_range,
+    )
+    target_tables = _write_fitted_tables(target_sinks)
+    target_encodings = {
+        sink.join_keys[0]: sink.path
+        for sink in target_sinks
+        if sink.kind is FittedTableKind.TARGET_ENCODING
+    }
+    temporal_target_encodings = {
+        sink.join_keys[0]: sink.path
+        for sink in target_sinks
+        if sink.kind is FittedTableKind.TEMPORAL_TARGET_ENCODING
+    }
 
     return FittedFeatureState(
         training_rows=label_count,
-        categorical_columns=categorical,
+        categorical_columns=features.categorical_columns,
         numerical_columns=features.numerical_columns,
         cardinalities=cardinalities,
         embedding_kinds=kinds,
         vocabularies=vocabularies,
-        frequencies=frequencies,
-        distinct_counts=distinct_counts,
+        covariate_lookups=covariate_lookups,
         target_encodings=target_encodings,
         temporal_target_encodings=temporal_target_encodings,
         global_prior=global_prior,
         definitions=feature_definitions(config),
-        tables=tables,
+        tables=[*vocabulary_tables, *covariate_tables, *target_tables],
     )

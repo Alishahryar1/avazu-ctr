@@ -4,6 +4,7 @@ import json
 import math
 from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import polars as pl
@@ -34,6 +35,7 @@ from avazu_ctr.data.preprocessing import (
 )
 from avazu_ctr.data.split import build_temporal_windows
 from avazu_ctr.data.synthetic import write_synthetic_avazu
+from avazu_ctr.training.engine import steps_per_epoch
 
 
 def test_expanding_windows_leave_final_day_untouched() -> None:
@@ -63,7 +65,7 @@ def test_unsupported_manifest_schema_is_rejected(
     raw["schema_version"] = 1
     unsupported = tmp_path / "manifest.json"
     unsupported.write_text(json.dumps(raw), encoding="utf-8")
-    with pytest.raises(ValueError, match="Input should be 5"):
+    with pytest.raises(ValueError, match="Input should be 6"):
         load_manifest(unsupported)
 
 
@@ -77,12 +79,256 @@ def test_processed_batches_have_typed_lanes(
     assert batch.labels is not None
     assert batch.labels.dtype is torch.float32
     assert batch.categorical.shape[0] == 16
+    assert batch.row_ids is None
     manifest = load_manifest(manifest_path)
     assert manifest.purpose is DatasetPurpose.EVALUATION
     assert not manifest.test_shards
     device_id = manifest.categorical_columns.index("device_id")
     buckets = config.model.feature_embeddings["device_id"].buckets
     assert torch.any(batch.categorical[:, device_id].abs() >= buckets)
+
+
+def test_covariate_state_is_one_wide_lookup_per_join_key(
+    processed_project: tuple[ExperimentConfig, Path],
+) -> None:
+    config, manifest_path = processed_project
+    manifest = load_manifest(manifest_path)
+    lookups = [
+        table for table in manifest.fitted_tables if table.kind is FittedTableKind.COVARIATE_LOOKUP
+    ]
+
+    assert len(lookups) == 1
+    lookup = lookups[0]
+    assert lookup.join_keys == ("device_ip",)
+    assert lookup.outputs == (
+        "device_ip__frequency",
+        "device_ip_distinct_apps_log1p__raw",
+    )
+    table = pl.read_parquet(manifest_path.parent / lookup.path)
+    assert tuple(table.columns) == (*lookup.join_keys, *lookup.outputs)
+
+    source = derive_categorical_features(
+        scan_raw(config.data.train_path, labelled=True).filter(
+            (pl.col("_timestamp_hour") >= manifest.training_range.start)
+            & (pl.col("_timestamp_hour") < manifest.training_range.end)
+        ),
+        config,
+    ).collect()
+    expected = (
+        source.group_by("device_ip")
+        .agg(
+            pl.len().alias("device_ip__frequency"),
+            pl.col("app_id").n_unique().alias("device_ip_distinct_apps_log1p__raw"),
+        )
+        .sort("device_ip")
+    )
+    assert_frame_equal(table, expected)
+
+    expected_features = (
+        source.select("_row_index", "device_ip")
+        .join(expected, on="device_ip", how="left")
+        .select(
+            pl.col("_row_index").cast(pl.Int64),
+            pl.col("device_ip__frequency")
+            .cast(pl.Float64)
+            .log1p()
+            .cast(pl.Float32)
+            .alias("device_ip_frequency_log1p"),
+            pl.col("device_ip_distinct_apps_log1p__raw")
+            .cast(pl.Float64)
+            .log1p()
+            .cast(pl.Float32)
+            .alias("device_ip_distinct_apps_log1p"),
+        )
+        .sort("_row_index")
+    )
+    actual_features = pl.concat(
+        pl.read_parquet(
+            manifest_path.parent / shard.path,
+            columns=[
+                "_row_index",
+                "device_ip_frequency_log1p",
+                "device_ip_distinct_apps_log1p",
+            ],
+        )
+        for shard in manifest.train_shards
+    ).sort("_row_index")
+    assert_frame_equal(actual_features, expected_features)
+
+
+def test_fitted_queries_are_multiplexed_in_bounded_groups(
+    tmp_path: Path,
+    config_factory: Callable[..., ExperimentConfig],
+) -> None:
+    train, test = write_synthetic_avazu(tmp_path / "raw", hours=120, rows_per_hour=2)
+    config = config_factory(tmp_path / "artifacts", train, test)
+
+    with patch(
+        "avazu_ctr.data.features.fitting.pl.collect_all",
+        wraps=pl.collect_all,
+    ) as collect_all:
+        preprocess_evaluation(config)
+
+    widths = [len(call.args[0]) for call in collect_all.call_args_list]
+    assert widths
+    assert max(widths) <= 4
+    assert any(width > 1 for width in widths)
+
+
+def test_native_shards_are_bounded_contiguous_and_ordered(
+    processed_project: tuple[ExperimentConfig, Path],
+) -> None:
+    config, manifest_path = processed_project
+    manifest = load_manifest(manifest_path)
+    assert [Path(shard.path).name for shard in manifest.train_shards] == [
+        f"part-{index:05d}.parquet" for index in range(len(manifest.train_shards))
+    ]
+    assert all(shard.rows <= config.data.shard_rows for shard in manifest.train_shards)
+    rows = pl.concat(
+        pl.read_parquet(manifest_path.parent / shard.path, columns=["_row_index"])
+        for shard in manifest.train_shards
+    )
+    assert rows["_row_index"].is_sorted()
+
+
+def test_loader_projects_metadata_and_coalesces_across_shards(
+    processed_project: tuple[ExperimentConfig, Path],
+) -> None:
+    _, manifest_path = processed_project
+    manifest = load_manifest(manifest_path)
+    batch_size = 100
+    dataset = ParquetBatchDataset(
+        manifest_path,
+        "train",
+        batch_size,
+        include_row_ids=True,
+    )
+
+    with patch("avazu_ctr.data.dataset.pl.read_parquet", wraps=pl.read_parquet) as read:
+        batches = list(dataset)
+
+    assert [batch.batch_size for batch in batches] == [
+        *([batch_size] * (manifest.train_rows // batch_size)),
+        manifest.train_rows % batch_size,
+    ]
+    assert all(batch.row_ids is not None for batch in batches)
+    projected = read.call_args_list[0].kwargs["columns"]
+    assert "id" in projected
+    assert "_timestamp_hour" not in projected
+    expected_ids = [
+        row_id
+        for shard in manifest.train_shards
+        for row_id in pl.read_parquet(
+            manifest_path.parent / shard.path,
+            columns=["id"],
+        )["id"].to_list()
+    ]
+    assert [
+        row_id
+        for batch in batches
+        for row_id in (batch.row_ids if batch.row_ids is not None else [])
+    ] == expected_ids
+
+
+def test_step_budget_matches_coalesced_worker_partitions(
+    processed_project: tuple[ExperimentConfig, Path],
+) -> None:
+    _, manifest_path = processed_project
+    manifest = load_manifest(manifest_path)
+    batch_size = 100
+
+    assert steps_per_epoch(manifest, batch_size) == math.ceil(manifest.train_rows / batch_size)
+    expected_two_workers = sum(
+        math.ceil(sum(shard.rows for shard in manifest.train_shards[worker_id::2]) / batch_size)
+        for worker_id in range(2)
+    )
+    assert steps_per_epoch(manifest, batch_size, 2) == expected_two_workers
+    with pytest.raises(ValueError, match="num_workers"):
+        steps_per_epoch(manifest, batch_size, -1)
+
+
+def test_worker_partitions_emit_every_row_once_and_match_the_step_budget(
+    processed_project: tuple[ExperimentConfig, Path],
+) -> None:
+    _, manifest_path = processed_project
+    manifest = load_manifest(manifest_path)
+    batch_size = 100
+    batches = []
+    for worker_id in range(2):
+        dataset = ParquetBatchDataset(
+            manifest_path,
+            "train",
+            batch_size,
+            shuffle=True,
+            include_row_ids=True,
+        )
+        worker = SimpleNamespace(id=worker_id, num_workers=2)
+        with patch(
+            "avazu_ctr.data.dataset.torch.utils.data.get_worker_info",
+            return_value=worker,
+        ):
+            batches.extend(dataset)
+
+    assert len(batches) == steps_per_epoch(manifest, batch_size, 2)
+    assert sum(batch.batch_size for batch in batches) == manifest.train_rows
+    actual_ids = [
+        row_id
+        for batch in batches
+        for row_id in (batch.row_ids if batch.row_ids is not None else [])
+    ]
+    expected_ids = [
+        row_id
+        for shard in manifest.train_shards
+        for row_id in pl.read_parquet(
+            manifest_path.parent / shard.path,
+            columns=["id"],
+        )["id"].to_list()
+    ]
+    assert sorted(actual_ids) == sorted(expected_ids)
+
+
+def test_manifest_rejects_ambiguous_fitted_table_columns(
+    processed_project: tuple[ExperimentConfig, Path],
+) -> None:
+    _, manifest_path = processed_project
+    manifest = load_manifest(manifest_path)
+    lookup = next(
+        table for table in manifest.fitted_tables if table.kind is FittedTableKind.COVARIATE_LOOKUP
+    )
+    invalid = lookup.model_copy(update={"outputs": lookup.join_keys})
+    fitted_tables = tuple(invalid if table is lookup else table for table in manifest.fitted_tables)
+
+    with pytest.raises(ValueError, match="must be disjoint"):
+        DatasetManifest.model_validate(
+            manifest.model_copy(update={"fitted_tables": fitted_tables}).model_dump(mode="json")
+        )
+
+    duplicate = lookup.model_copy(update={"path": "state/duplicate.parquet"})
+    with pytest.raises(ValueError, match=r"contract.*repeated"):
+        DatasetManifest.model_validate(
+            manifest.model_copy(
+                update={"fitted_tables": (*manifest.fitted_tables, duplicate)}
+            ).model_dump(mode="json")
+        )
+
+    with pytest.raises(ValueError, match="do not exactly match"):
+        DatasetManifest.model_validate(
+            manifest.model_copy(
+                update={
+                    "fitted_tables": tuple(
+                        table for table in manifest.fitted_tables if table is not lookup
+                    )
+                }
+            ).model_dump(mode="json")
+        )
+
+    escaped_shard = manifest.train_shards[0].model_copy(update={"path": "../outside.parquet"})
+    with pytest.raises(ValueError, match="normalized relative"):
+        DatasetManifest.model_validate(
+            manifest.model_copy(
+                update={"train_shards": (escaped_shard, *manifest.train_shards[1:])}
+            ).model_dump(mode="json")
+        )
 
 
 def test_first_target_encoding_block_has_zero_label_evidence(
@@ -332,8 +578,10 @@ def test_validation_labels_and_covariates_cannot_change_fitted_training_state(
     config_b = config_factory(tmp_path / "artifacts-b", changed_train, changed_test, name="b")
     manifest_a = load_manifest(preprocess_evaluation(config_a))
     manifest_b = load_manifest(preprocess_evaluation(config_b))
-    assert [(item.feature, item.kind, item.sha256) for item in manifest_a.fitted_tables] == [
-        (item.feature, item.kind, item.sha256) for item in manifest_b.fitted_tables
+    assert [
+        (item.join_keys, item.outputs, item.kind, item.sha256) for item in manifest_a.fitted_tables
+    ] == [
+        (item.join_keys, item.outputs, item.kind, item.sha256) for item in manifest_b.fitted_tables
     ]
     assert [item.sha256 for item in manifest_a.train_shards] == [
         item.sha256 for item in manifest_b.train_shards
