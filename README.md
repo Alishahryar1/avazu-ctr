@@ -34,7 +34,7 @@ Install one—and only one—PyTorch backend:
 # CPU development and CI
 uv sync --extra cpu --group dev
 
-# Windows/Linux NVIDIA training
+# Windows/Linux NVIDIA training, including the platform Triton compiler
 uv sync --extra cu130 --group dev
 ```
 
@@ -136,7 +136,9 @@ atomically becomes the active selection after acceptance.
 `configs/baseline.yaml` is the clean DCNv2 benchmark.
 `configs/champion.yaml` is the SENet + DCNv2 multihead candidate.
 `configs/full_features.yaml` keeps that architecture fixed while expanding the
-leakage-safe information set for the feature-only champion experiment.
+leakage-safe information set for the feature-only champion experiment. It
+enables full-graph CUDA Inductor compilation; compilation is strict and never
+silently falls back to eager execution.
 `configs/stec.yaml` is the paper-faithful STEC candidate.
 `configs/ngpt.yaml` is the paper-faithful nGPT candidate adapted to field tokens.
 `configs/tuning.yaml` defines the staged search.

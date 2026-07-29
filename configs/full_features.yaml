@@ -181,7 +181,7 @@ training:
   device: auto
   amp: true
   amp_dtype: float16
-  compile_model: false
+  compile_model: true
   deterministic_algorithms: false
   gradient_clip: 5.0
   early_stopping_patience: 0

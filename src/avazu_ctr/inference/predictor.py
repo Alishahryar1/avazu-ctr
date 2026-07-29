@@ -14,6 +14,7 @@ from avazu_ctr.contracts import FeatureBatch
 from avazu_ctr.data.dataset import ParquetBatchDataset
 from avazu_ctr.data.manifest import DatasetPurpose, load_manifest, sha256_file
 from avazu_ctr.inference.bundle import LoadedBundle, load_bundle
+from avazu_ctr.models.compilation import compile_cuda_model
 
 
 class Predictor:
@@ -28,7 +29,7 @@ class Predictor:
         self.device = torch.device(device)
         self.model = self.bundle.model
         self.runtime_model = (
-            torch.compile(self.model) if compile_model and hasattr(torch, "compile") else self.model
+            compile_cuda_model(self.model, self.device) if compile_model else self.model
         )
 
     def validate_manifest_contract(self, manifest_path: str | Path) -> None:

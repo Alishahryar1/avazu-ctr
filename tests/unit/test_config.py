@@ -113,6 +113,7 @@ def test_shipped_feature_plan_is_complete_and_crosses_are_bounded() -> None:
 def test_full_feature_candidate_adds_every_planned_information_family() -> None:
     config = load_experiment("configs/full_features.yaml")
     features = config.data.features
+    assert config.training.compile_model
     assert len(features.categorical_columns) == 53
     assert len(features.numerical_columns) == 57
     assert len({*features.categorical_columns, *features.numerical_columns}) == 110

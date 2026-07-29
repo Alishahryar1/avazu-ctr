@@ -96,6 +96,7 @@ def small_config(
             "batch_size": 32,
             "device": "cpu",
             "amp": False,
+            "compile_model": False,
             "deterministic_algorithms": True,
             "log_every_steps": 1,
             "early_stopping_patience": 0,
