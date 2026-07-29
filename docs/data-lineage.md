@@ -21,14 +21,17 @@ Missing hours and invalid window geometry fail preprocessing.
 
 ## Fitted state
 
-In `inductive` mode, every vocabulary, frequency table, distinct-count table,
-target statistic, and prior is fitted from the active training window only.
-Validation and test covariates do not participate.
+Learned categorical vocabularies always fit the active training window only.
+Validation- or prediction-only values therefore map to the reserved unknown ID
+zero rather than receiving parameters that no training row can update. The
+corresponding embedding row is fixed to the zero vector.
 
-In explicit `competition_transductive` mode, label-free tables use all
-covariates available for the fixed scoring batch: train plus validation during
-evaluation and labelled train plus competition test during production.
-Evaluation preprocessing still never opens the competition test source.
+In `inductive` mode, frequency and distinct-count tables also fit the active
+training window only. In explicit `competition_transductive` mode, those
+label-free aggregate tables use all covariates available for the fixed scoring
+batch: train plus validation during evaluation and labelled train plus
+competition test during production. Evaluation preprocessing still never opens
+the competition test source.
 
 Target state always uses training labels only. Temporal target features expose a
 smoothed category log-odds lift and its evidence count. A training row can see
@@ -51,9 +54,9 @@ Each manifest declares one role:
 
 Manifests record raw-source and shard checksums, population identities, split
 boundaries, ordered feature definitions, dtypes, cardinalities, embedding kinds,
-feature mode, fitted-table sources and label use, per-split OOV diagnostics,
-feature-configuration and resolved-configuration hashes, and the package-lock
-hash.
+feature mode, the categorical unknown-value contract, fitted-table sources and
+label use, per-split OOV diagnostics, feature-configuration and
+resolved-configuration hashes, and the package-lock hash.
 
 Training and inference consume ordered manifest fields rather than rediscovering
 features from files.

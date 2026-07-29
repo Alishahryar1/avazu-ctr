@@ -22,6 +22,7 @@ from avazu_ctr.data.features import (
     scan_with_causal_history,
 )
 from avazu_ctr.data.manifest import (
+    CategoricalEncodingContract,
     DatasetManifest,
     DatasetPurpose,
     DatasetSplit,
@@ -40,6 +41,7 @@ from avazu_ctr.data.schema import scan_raw
 from avazu_ctr.data.split import TemporalWindow, build_temporal_windows
 
 CANONICAL_SCHEMA_VERSION = 4
+FEATURE_SCHEMA_VERSION = 5
 
 
 @lru_cache(maxsize=8)
@@ -143,7 +145,8 @@ def feature_config_sha256(config: ExperimentConfig) -> str:
     }
     return sha256_json(
         {
-            "schema_version": 4,
+            "schema_version": FEATURE_SCHEMA_VERSION,
+            "categorical_encoding": CategoricalEncodingContract().model_dump(mode="json"),
             "features": feature_recipe,
             "compiled_features": [
                 feature.model_dump(mode="json") for feature in feature_definitions(config)
@@ -336,9 +339,10 @@ def _write_preprocessor(
     path.write_text(
         json.dumps(
             {
-                "schema_version": 4,
+                "schema_version": 5,
                 "purpose": purpose.value,
                 "feature_mode": feature_mode.value,
+                "categorical_encoding": CategoricalEncodingContract().model_dump(mode="json"),
                 "global_prior": state.global_prior,
                 "categorical_columns": state.categorical_columns,
                 "numerical_columns": state.numerical_columns,
@@ -430,6 +434,7 @@ def preprocess_evaluation(
             name=window.name,
             purpose=DatasetPurpose.EVALUATION,
             feature_mode=config.data.features.mode,
+            categorical_encoding=CategoricalEncodingContract(),
             labelled_source=RawSource(path=str(config.data.train_path), sha256=raw_sha256),
             training_range=training_range,
             validation_range=validation_range,
@@ -541,6 +546,7 @@ def preprocess_production(
             name="production",
             purpose=DatasetPurpose.PRODUCTION,
             feature_mode=config.data.features.mode,
+            categorical_encoding=CategoricalEncodingContract(),
             labelled_source=RawSource(path=str(config.data.train_path), sha256=raw_sha256),
             prediction_source=RawSource(path=str(config.data.test_path), sha256=test_sha256),
             training_range=training_range,

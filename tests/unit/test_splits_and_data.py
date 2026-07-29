@@ -20,7 +20,13 @@ from avazu_ctr.data.features import (
     add_causal_history,
     derive_categorical_features,
 )
-from avazu_ctr.data.manifest import DatasetPurpose, DatasetSplit, load_manifest
+from avazu_ctr.data.manifest import (
+    DatasetManifest,
+    DatasetPurpose,
+    DatasetSplit,
+    FittedTableKind,
+    load_manifest,
+)
 from avazu_ctr.data.preprocessing import (
     CANONICAL_SCHEMA_VERSION,
     preprocess_evaluation,
@@ -57,7 +63,7 @@ def test_unsupported_manifest_schema_is_rejected(
     raw["schema_version"] = 1
     unsupported = tmp_path / "manifest.json"
     unsupported.write_text(json.dumps(raw), encoding="utf-8")
-    with pytest.raises(ValueError, match="Input should be 4"):
+    with pytest.raises(ValueError, match="Input should be 5"):
         load_manifest(unsupported)
 
 
@@ -374,14 +380,50 @@ def test_competition_transduction_is_explicit_label_free_and_reported(
     inductive_oov = inductive_manifest.diagnostics[DatasetSplit.VALIDATION].categorical_oov
     transductive_oov = transductive_manifest.diagnostics[DatasetSplit.VALIDATION].categorical_oov
     assert inductive_oov["site_domain"].rate == 1.0
-    assert transductive_oov["site_domain"].rate == 0.0
+    assert transductive_oov["site_domain"].rate == 1.0
     for table in transductive_manifest.fitted_tables:
         expected = (
             (DatasetSplit.TRAINING,)
-            if table.uses_labels
+            if table.uses_labels or table.kind is FittedTableKind.VOCABULARY
             else (DatasetSplit.TRAINING, DatasetSplit.VALIDATION)
         )
         assert table.sources == expected
+    assert any(
+        table.sources == (DatasetSplit.TRAINING, DatasetSplit.VALIDATION)
+        for table in transductive_manifest.fitted_tables
+    )
+
+
+def test_manifest_rejects_a_scoring_fitted_vocabulary(
+    tmp_path: Path,
+    config_factory: Callable[..., ExperimentConfig],
+) -> None:
+    train, test = write_synthetic_avazu(tmp_path / "raw", hours=120, rows_per_hour=2)
+    config = config_factory(tmp_path / "artifacts", train, test)
+    raw = config.model_dump(mode="json")
+    raw["model"]["feature_embeddings"]["site_domain"] = {
+        "kind": "standard",
+        "dim": 8,
+        "buckets": 127,
+        "hashes": 1,
+    }
+    config = ExperimentConfig.model_validate(raw)
+    manifest = load_manifest(preprocess_evaluation(config))
+    fitted_tables = tuple(
+        table.model_copy(
+            update={
+                "sources": (DatasetSplit.TRAINING, DatasetSplit.VALIDATION),
+            }
+        )
+        if table.kind is FittedTableKind.VOCABULARY
+        else table
+        for table in manifest.fitted_tables
+    )
+
+    with pytest.raises(ValueError, match=r"expected.*training"):
+        DatasetManifest.model_validate(
+            manifest.model_copy(update={"fitted_tables": fitted_tables}).model_dump(mode="json")
+        )
 
 
 def test_canonical_cache_is_reused_and_invalidated_by_raw_checksum(

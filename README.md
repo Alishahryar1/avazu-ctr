@@ -16,9 +16,9 @@ logloss of **0.38476** and a public logloss of **0.38689** in submission
 
 This was a late submission after the competition deadline, so it is comparable
 to the final leaderboard but is not officially ranked. `configs/champion.yaml`
-defines the reproducible recipe, and
-[`benchmarks/champion.json`](benchmarks/champion.json) records the complete
-selection and submission evidence.
+defines the current leakage-safe recipe, while
+[`benchmarks/champion.json`](benchmarks/champion.json) keeps its contract
+separate from the immutable selection and submission evidence.
 
 ## Requirements
 
@@ -141,12 +141,14 @@ leakage-safe information set for the feature-only champion experiment.
 `configs/ngpt.yaml` is the paper-faithful nGPT candidate adapted to field tokens.
 `configs/tuning.yaml` defines the staged search.
 
-The shipped configurations compile 32 categorical and 31 numerical fields from
+The champion compiles 32 categorical and 31 numerical fields; the expanded
+feature candidate compiles 53 categorical and 57 numerical fields. Both use
 raw context, time, bounded crosses, covariate aggregates, causal impression
 history, and temporal target evidence. They explicitly use
-`competition_transductive` covariate statistics to mirror the fixed Kaggle
-scoring batch; target statistics remain training-label-only. Use `inductive`
-mode for an unseen online stream. See [feature system](docs/features.md).
+`competition_transductive` frequency and distinct-count statistics to describe
+the fixed Kaggle scoring batch. Learned categorical vocabularies and target
+statistics remain training-only. Use `inductive` mode for an unseen online
+stream. See [feature system](docs/features.md).
 
 ## Correctness contracts
 
@@ -154,9 +156,11 @@ mode for an unseen online stream. See [feature system](docs/features.md).
 - Evaluation datasets contain train/validation only; test data is forbidden.
 - Production datasets contain all labelled rows plus test; validation is
   forbidden.
-- Inductive transforms fit only training covariates; competition transduction
-  is explicit, label-free, recorded per table, and never opens test during
-  evaluation.
+- Learned categorical vocabularies always fit training rows only. Unseen values
+  map to ID zero, whose embedding is fixed to the zero vector.
+- Inductive covariate aggregates fit only training rows; competition
+  transduction of frequency and distinct-count tables is explicit, label-free,
+  recorded per table, and never opens test during evaluation.
 - Training target evidence uses labels only from earlier temporal blocks.
 - The first target block and unseen categories have zero lift and zero evidence.
 - Impression history is causal, deterministically ordered, and label-free.

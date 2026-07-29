@@ -46,6 +46,8 @@ model:
     C14: {kind: hash, dim: 16, buckets: 50000, hashes: 2}
     C17: {kind: hash, dim: 16, buckets: 20000, hashes: 2}
     C21: {kind: hash, dim: 16, buckets: 10000, hashes: 2}
+    hour_of_day: {kind: hash, dim: 16, buckets: 64, hashes: 1}
+    day_of_week: {kind: hash, dim: 16, buckets: 64, hashes: 1}
     day_of_month: {kind: hash, dim: 16, buckets: 64, hashes: 1}
     hour_of_week: {kind: hash, dim: 16, buckets: 256, hashes: 1}
     user_proxy: {kind: hash, dim: 16, buckets: 200000, hashes: 2}
