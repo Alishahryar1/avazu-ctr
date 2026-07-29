@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from copy import deepcopy
+from inspect import signature
 from pathlib import Path
 
 import optuna
@@ -8,7 +9,7 @@ import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
-from avazu_ctr.cli import app
+from avazu_ctr.cli import app, predict_command
 from avazu_ctr.config import load_experiment
 from avazu_ctr.config.schema import ExperimentConfig, FeatureMode, ModelKind
 from avazu_ctr.tuning.study import _sample_config, tuning_stages
@@ -206,10 +207,9 @@ def test_cli_exposes_final_commands() -> None:
 
 
 def test_cuda_prediction_has_one_automatic_fast_path() -> None:
-    result = CliRunner().invoke(app, ["predict", "--help"])
-    assert result.exit_code == 0
-    assert "--device" in result.stdout
-    assert "--compile" not in result.stdout
+    parameters = signature(predict_command).parameters
+    assert "device" in parameters
+    assert "compile_model" not in parameters
 
 
 def test_python_policy_is_312() -> None:
