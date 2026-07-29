@@ -31,7 +31,9 @@ training window only. In explicit `competition_transductive` mode, those
 label-free aggregate tables use all covariates available for the fixed scoring
 batch: train plus validation during evaluation and labelled train plus
 competition test during production. Evaluation preprocessing still never opens
-the competition test source.
+the competition test source. Frequency and distinct-count outputs with the same
+join key share one fitted lookup, whose manifest entry declares every output
+column and its common provenance.
 
 Target state always uses training labels only. Temporal target features expose a
 smoothed category log-odds lift and its evidence count. A training row can see
@@ -55,7 +57,8 @@ Each manifest declares one role:
 Manifests record raw-source and shard checksums, population identities, split
 boundaries, ordered feature definitions, dtypes, cardinalities, embedding kinds,
 feature mode, the categorical unknown-value contract, fitted-table sources and
-label use, per-split OOV diagnostics, feature-configuration and
+label use, fitted join keys and output columns, per-split OOV diagnostics,
+feature-configuration and
 resolved-configuration hashes, and the package-lock hash.
 
 Training and inference consume ordered manifest fields rather than rediscovering

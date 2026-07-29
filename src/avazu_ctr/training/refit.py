@@ -87,7 +87,11 @@ class ProductionRefitter:
 
     def fit(self) -> RefitResult:
         epochs = self.selection.evidence.holdout.best_epoch + 1
-        epoch_steps = steps_per_epoch(self.manifest, self.config.training.batch_size)
+        epoch_steps = steps_per_epoch(
+            self.manifest,
+            self.config.training.batch_size,
+            self.config.training.num_workers,
+        )
         manifest_sha256 = sha256_file(self.manifest_path)
         run_id = self.store.start_run(
             self.config,

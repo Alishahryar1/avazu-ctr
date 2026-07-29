@@ -5,7 +5,7 @@
     "configuration": "configs/champion.yaml",
     "baseline_configuration": "configs/baseline.yaml",
     "feature_contract": {
-      "sha256": "276860ed94edc2132b8ce0a13b20ae5e44d6bedf79da4809ad446a7d8b508d31",
+      "sha256": "7861ebb4bc16b6ee5d78a4ce415cbe120ea51947308878899dde0203b23cd740",
       "categorical_features": 32,
       "numerical_features": 31
     }

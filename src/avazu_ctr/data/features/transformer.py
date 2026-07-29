@@ -31,11 +31,8 @@ class FittedFeatureTransformer:
         self.vocabularies = {
             feature: pl.scan_parquet(path) for feature, path in state.vocabularies.items()
         }
-        self.frequencies = {
-            feature: pl.scan_parquet(path) for feature, path in state.frequencies.items()
-        }
-        self.distinct_counts = {
-            feature: pl.scan_parquet(path) for feature, path in state.distinct_counts.items()
+        self.covariate_lookups = {
+            feature: pl.scan_parquet(path) for feature, path in state.covariate_lookups.items()
         }
         self.target_encodings = {
             feature: pl.scan_parquet(path) for feature, path in state.target_encodings.items()
@@ -57,35 +54,46 @@ class FittedFeatureTransformer:
 
     def _apply_covariate_statistics(self, frame: pl.LazyFrame) -> pl.LazyFrame:
         transformed = frame
-        for feature, table in self.frequencies.items():
-            raw_name = f"{feature}__frequency"
-            transformed = transformed.join(
-                table,
-                on=feature,
-                how="left",
-                maintain_order="left",
-            ).with_columns(
-                pl.col(raw_name)
-                .fill_null(0)
-                .cast(pl.Float64)
-                .log1p()
-                .cast(pl.Float32)
-                .alias(f"{feature}_frequency_log1p")
+        frequency_keys = set(self.config.data.features.frequency_columns)
+        distinct_by_key: dict[str, list[tuple[str, str]]] = {}
+        for feature in self.config.data.features.distinct_counts:
+            distinct_by_key.setdefault(feature.group_by, []).append(
+                (feature.name, f"{feature.name}__raw")
             )
 
-        configured = {
-            feature.name: feature for feature in self.config.data.features.distinct_counts
-        }
-        for name, table in self.distinct_counts.items():
-            feature = configured[name]
-            raw_name = f"{name}__raw"
-            transformed = transformed.join(
-                table,
-                on=feature.group_by,
-                how="left",
-                maintain_order="left",
-            ).with_columns(
-                pl.col(raw_name).fill_null(0).cast(pl.Float64).log1p().cast(pl.Float32).alias(name)
+        for key, table in self.covariate_lookups.items():
+            expressions: list[pl.Expr] = []
+            raw_columns: list[str] = []
+            if key in frequency_keys:
+                raw_name = f"{key}__frequency"
+                raw_columns.append(raw_name)
+                expressions.append(
+                    pl.col(raw_name)
+                    .fill_null(0)
+                    .cast(pl.Float64)
+                    .log1p()
+                    .cast(pl.Float32)
+                    .alias(f"{key}_frequency_log1p")
+                )
+            for name, raw_name in distinct_by_key.get(key, []):
+                raw_columns.append(raw_name)
+                expressions.append(
+                    pl.col(raw_name)
+                    .fill_null(0)
+                    .cast(pl.Float64)
+                    .log1p()
+                    .cast(pl.Float32)
+                    .alias(name)
+                )
+            transformed = (
+                transformed.join(
+                    table,
+                    on=key,
+                    how="left",
+                    maintain_order="left",
+                )
+                .with_columns(expressions)
+                .drop(raw_columns)
             )
         return transformed
 

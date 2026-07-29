@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
 from pathlib import Path
 
 import numpy as np
@@ -17,9 +16,7 @@ from avazu_ctr.config.schema import ExperimentConfig
 from avazu_ctr.data.dataset import ParquetBatchDataset
 from avazu_ctr.data.manifest import (
     DatasetManifest,
-    FittedTableManifest,
     HourRange,
-    ShardManifest,
     load_manifest,
     sha256_file,
     sha256_json,
@@ -296,37 +293,19 @@ def test_prediction_requires_the_exact_production_manifest(
         steps=1,
     )
 
-    def absolute_shards(shards: Sequence[ShardManifest]) -> tuple[ShardManifest, ...]:
-        return tuple(
-            shard.model_copy(
-                update={"path": (manifest_path.parent / shard.path).resolve().as_posix()}
-            )
-            for shard in shards
-        )
-
-    def absolute_tables(
-        tables: Sequence[FittedTableManifest],
-    ) -> tuple[FittedTableManifest, ...]:
-        return tuple(
-            table.model_copy(
-                update={"path": (manifest_path.parent / table.path).resolve().as_posix()}
-            )
-            for table in tables
-        )
-
     mismatch = manifest.model_copy(
         update={
-            "train_shards": absolute_shards(manifest.train_shards),
-            "test_shards": absolute_shards(manifest.test_shards),
-            "fitted_tables": absolute_tables(manifest.fitted_tables),
             "package_lock_sha256": "0" * 64,
         }
     )
-    mismatch_path = tmp_path / "mismatch.json"
+    mismatch_path = manifest_path.parent / "mismatch.json"
     mismatch_path.write_text(mismatch.model_dump_json(indent=2), encoding="utf-8")
 
-    with pytest.raises(ValueError, match="deployed production manifest"):
-        Predictor(bundle).validate_manifest_contract(mismatch_path)
+    try:
+        with pytest.raises(ValueError, match="deployed production manifest"):
+            Predictor(bundle).validate_manifest_contract(mismatch_path)
+    finally:
+        mismatch_path.unlink(missing_ok=True)
 
 
 def test_paired_selection_rejects_noise_and_accepts_real_improvement() -> None:

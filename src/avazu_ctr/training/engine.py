@@ -59,10 +59,24 @@ def validate_feature_contract(config: ExperimentConfig, manifest: DatasetManifes
         model_configs.extend(model_config.children)
 
 
-def steps_per_epoch(manifest: DatasetManifest, batch_size: int) -> int:
-    """Count actual iterable-dataset batches, including shard boundaries."""
+def steps_per_epoch(
+    manifest: DatasetManifest,
+    batch_size: int,
+    num_workers: int = 0,
+) -> int:
+    """Count coalesced batches emitted by each independent dataset worker."""
 
-    return sum(math.ceil(shard.rows / batch_size) for shard in manifest.train_shards)
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    if num_workers < 0:
+        raise ValueError("num_workers cannot be negative")
+    worker_count = max(1, num_workers)
+    return sum(
+        math.ceil(
+            sum(shard.rows for shard in manifest.train_shards[worker_id::worker_count]) / batch_size
+        )
+        for worker_id in range(worker_count)
+    )
 
 
 def make_loader(
@@ -72,6 +86,7 @@ def make_loader(
     *,
     shuffle: bool,
     pin_memory: bool,
+    include_row_ids: bool = False,
     num_workers: int | None = None,
 ) -> DataLoader:
     dataset = ParquetBatchDataset(
@@ -80,6 +95,7 @@ def make_loader(
         config.training.batch_size,
         shuffle=shuffle,
         seed=config.training.seed,
+        include_row_ids=include_row_ids,
     )
     generator = torch.Generator().manual_seed(config.training.seed)
     return DataLoader(
@@ -129,8 +145,13 @@ class OptimizationLoop:
             "train",
             shuffle=True,
             pin_memory=self.device.type == "cuda",
+            include_row_ids=False,
         )
-        self.steps_per_epoch = steps_per_epoch(manifest, config.training.batch_size)
+        self.steps_per_epoch = steps_per_epoch(
+            manifest,
+            config.training.batch_size,
+            config.training.num_workers,
+        )
         self.total_steps = self.steps_per_epoch * epochs
         self.optimizers = build_optimizer_plan(
             self.model,
@@ -145,6 +166,7 @@ class OptimizationLoop:
             "cuda",
             enabled=config.training.amp and self.device.type == "cuda",
         )
+        self._amp_scale = self.scaler.get_scale()
         self.global_step = 0
 
     def train_epoch(self, epoch: int) -> None:
@@ -164,7 +186,7 @@ class OptimizationLoop:
             ):
                 output = self.runtime_model(moved)
                 losses = self.objective(output, moved.labels)
-            if not torch.isfinite(losses.total):
+            if not self.scaler.is_enabled() and not bool(torch.isfinite(losses.total)):
                 raise FloatingPointError(f"nonfinite loss at step {self.global_step}")
             scaled_loss = cast(torch.Tensor, self.scaler.scale(losses.total))
             scaled_loss.backward()
@@ -186,12 +208,14 @@ class OptimizationLoop:
             )
             if not finite_gradients and not self.scaler.is_enabled():
                 raise FloatingPointError(f"nonfinite gradients at step {self.global_step}")
-            previous_scale = self.scaler.get_scale()
+            previous_scale = self._amp_scale
             if finite_gradients:
                 for optimizer in self.optimizers.optimizers:
                     self.scaler.step(optimizer)
             self.scaler.update()
-            successful = finite_gradients and self.scaler.get_scale() >= previous_scale
+            current_scale = self.scaler.get_scale()
+            self._amp_scale = current_scale
+            successful = finite_gradients and current_scale >= previous_scale
             if successful:
                 self.optimizers.step_schedulers()
                 self.model.post_step()
@@ -290,6 +314,7 @@ def load_resume(
         if scheduler is not None and state is not None:
             scheduler.load_state_dict(state)
     loop.scaler.load_state_dict(checkpoint["scaler"])
+    loop._amp_scale = loop.scaler.get_scale()
     torch.set_rng_state(checkpoint["torch_rng"])
     if torch.cuda.is_available() and checkpoint["cuda_rng"]:
         torch.cuda.set_rng_state_all(checkpoint["cuda_rng"])

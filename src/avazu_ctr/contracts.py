@@ -17,7 +17,6 @@ class FeatureBatch:
     numerical: torch.Tensor
     labels: torch.Tensor | None = None
     row_ids: list[str] | None = None
-    timestamps: torch.Tensor | None = None
 
     def __post_init__(self) -> None:
         if self.categorical.dtype != torch.int64:
@@ -35,11 +34,6 @@ class FeatureBatch:
                 raise ValueError("labels must have shape [batch, 1]")
         if self.row_ids is not None and len(self.row_ids) != self.categorical.shape[0]:
             raise ValueError("row_ids length differs from the batch size")
-        if self.timestamps is not None:
-            if self.timestamps.dtype != torch.int64:
-                raise TypeError("timestamps must use torch.int64")
-            if self.timestamps.shape != (self.categorical.shape[0],):
-                raise ValueError("timestamps must have shape [batch]")
 
     @property
     def batch_size(self) -> int:
@@ -55,11 +49,16 @@ class FeatureBatch:
                 else None
             ),
             row_ids=self.row_ids,
-            timestamps=(
-                self.timestamps.to(device, non_blocking=non_blocking)
-                if self.timestamps is not None
-                else None
-            ),
+        )
+
+    def pin_memory(self) -> FeatureBatch:
+        """Pin tensor lanes so CUDA transfers can run asynchronously."""
+
+        return FeatureBatch(
+            categorical=self.categorical.pin_memory(),
+            numerical=self.numerical.pin_memory(),
+            labels=self.labels.pin_memory() if self.labels is not None else None,
+            row_ids=self.row_ids,
         )
 
 

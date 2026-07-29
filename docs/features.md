@@ -65,7 +65,7 @@ if their information sets were identical.
 
 Every fitted table records:
 
-- the feature and transform kind;
+- the transform kind, exact join keys, and ordered output columns;
 - whether labels were used;
 - its exact source splits;
 - row count, relative path, and SHA-256 checksum.
@@ -109,6 +109,11 @@ value.
 Frequency features are `log1p` counts looked up from the configured covariate
 population. Distinct-count recipes measure how many apps or sites were observed
 for `device_ip` and `user_proxy`, also transformed with `log1p`.
+
+All aggregates sharing a join key are fitted into one sorted wide lookup and
+joined once during transformation. The final numerical fields remain separate
+ordered model features; the physical consolidation removes duplicate keys and
+repeated joins without changing their values.
 
 These transforms use no labels. In transductive mode they deliberately describe
 the complete fixed scoring batch; their fitted-table sources make that choice

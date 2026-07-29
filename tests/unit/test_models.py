@@ -91,10 +91,34 @@ def _assert_unit_rows(values: torch.Tensor, *, skip_first: bool = False) -> None
 def test_tensor_contracts_reject_invalid_shapes_and_dtypes() -> None:
     categorical = torch.zeros((2, 1), dtype=torch.int64)
     numerical = torch.zeros((2, 1), dtype=torch.float32)
-    with pytest.raises(TypeError, match="timestamps"):
-        FeatureBatch(categorical, numerical, timestamps=torch.zeros(2))
+    with pytest.raises(ValueError, match="row_ids"):
+        FeatureBatch(categorical, numerical, row_ids=["one"])
     with pytest.raises(ValueError, match="aggregate logits"):
         ModelOutput(torch.zeros(2))
+
+
+def test_feature_batch_pins_every_tensor_lane(monkeypatch: pytest.MonkeyPatch) -> None:
+    pinned: list[torch.Tensor] = []
+
+    def record(tensor: torch.Tensor) -> torch.Tensor:
+        pinned.append(tensor)
+        return tensor
+
+    monkeypatch.setattr(torch.Tensor, "pin_memory", record)
+    batch = FeatureBatch(
+        categorical=torch.zeros((2, 1), dtype=torch.int64),
+        numerical=torch.zeros((2, 1), dtype=torch.float32),
+        labels=torch.zeros((2, 1), dtype=torch.float32),
+        row_ids=["one", "two"],
+    )
+
+    result = batch.pin_memory()
+
+    assert len(pinned) == 3
+    assert pinned[0] is batch.categorical
+    assert pinned[1] is batch.numerical
+    assert pinned[2] is batch.labels
+    assert result.row_ids is batch.row_ids
 
 
 def test_standard_embedding_uses_a_fixed_zero_unknown_row(

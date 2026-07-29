@@ -58,6 +58,7 @@ class Predictor:
             batch_size or self.bundle.config.training.batch_size,
             shuffle=False,
             seed=self.bundle.config.training.seed,
+            include_row_ids=True,
         )
         loader = DataLoader(dataset, batch_size=None)
         for batch in loader:

@@ -9,6 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 
 import polars as pl
+import pyarrow.parquet as pq
 
 from avazu_ctr.config.loader import resolved_config
 from avazu_ctr.config.schema import EmbeddingKind, ExperimentConfig, FeatureMode
@@ -41,7 +42,7 @@ from avazu_ctr.data.schema import scan_raw
 from avazu_ctr.data.split import TemporalWindow, build_temporal_windows
 
 CANONICAL_SCHEMA_VERSION = 4
-FEATURE_SCHEMA_VERSION = 5
+FEATURE_SCHEMA_VERSION = 6
 
 
 @lru_cache(maxsize=8)
@@ -180,6 +181,10 @@ def _select_model_columns(
     return transformed.select(selected)
 
 
+def _feature_shard_path(args: pl.FileProviderArgs) -> str:
+    return f"part-{args.index_in_partition:05d}.parquet"
+
+
 def _write_feature_shards(
     frame: pl.LazyFrame,
     output_dir: Path,
@@ -193,7 +198,6 @@ def _write_feature_shards(
     training: bool,
 ) -> tuple[ShardManifest, ...]:
     output_dir.mkdir(parents=True, exist_ok=True)
-    shards: list[ShardManifest] = []
     transformed = _select_model_columns(
         transformer.transform(
             scan_with_causal_history(
@@ -208,27 +212,40 @@ def _write_feature_shards(
         state,
         labelled=labelled,
     )
-    for index, batch in enumerate(
-        transformed.collect_batches(
-            chunk_size=shard_rows,
-            maintain_order=True,
-            engine="streaming",
-        )
-    ):
-        if batch.is_empty():
-            continue
-        path = output_dir / f"part-{index:05d}.parquet"
-        batch.write_parquet(path, compression="zstd", statistics=True)
+    transformed.sink_parquet(
+        pl.PartitionBy(
+            output_dir,
+            file_path_provider=_feature_shard_path,
+            max_rows_per_file=shard_rows,
+            approximate_bytes_per_file=None,
+        ),
+        compression="zstd",
+        statistics=True,
+        row_group_size=shard_rows,
+        maintain_order=True,
+        mkdir=True,
+        engine="streaming",
+    )
+
+    paths = sorted(output_dir.glob("part-*.parquet"))
+    if not paths:
+        raise ValueError(f"no rows were written to {output_dir}")
+    expected_names = [f"part-{index:05d}.parquet" for index in range(len(paths))]
+    if [path.name for path in paths] != expected_names:
+        raise ValueError(f"feature shard names are not contiguous in {output_dir}")
+
+    shards: list[ShardManifest] = []
+    for path in paths:
+        metadata = pq.ParquetFile(path).metadata
+        if metadata is None or metadata.num_rows <= 0:
+            raise ValueError(f"feature shard {path} has no rows")
         shards.append(
             ShardManifest(
-                path=path.as_posix(),
-                rows=batch.height,
+                path=path.relative_to(output_dir.parent).as_posix(),
+                rows=metadata.num_rows,
                 sha256=sha256_file(path),
             )
         )
-        del batch
-    if not shards:
-        raise ValueError(f"no rows were written to {output_dir}")
     return tuple(shards)
 
 
@@ -260,6 +277,7 @@ def _covariate_reference(
 def _split_diagnostics(
     shards: tuple[ShardManifest, ...],
     state: FittedFeatureState,
+    root: Path,
 ) -> SplitDiagnostics:
     rows = sum(shard.rows for shard in shards)
     vocabulary_features = tuple(
@@ -270,7 +288,7 @@ def _split_diagnostics(
     if not vocabulary_features:
         return SplitDiagnostics(rows=rows, categorical_oov={})
     summary = (
-        pl.scan_parquet([Path(shard.path) for shard in shards])
+        pl.scan_parquet([root / shard.path for shard in shards])
         .select(*((pl.col(feature) == 0).sum().alias(feature) for feature in vocabulary_features))
         .collect(engine="streaming")
     )
@@ -284,13 +302,6 @@ def _split_diagnostics(
             )
             for feature in vocabulary_features
         },
-    )
-
-
-def _relative_shards(shards: tuple[ShardManifest, ...], root: Path) -> tuple[ShardManifest, ...]:
-    return tuple(
-        shard.model_copy(update={"path": Path(shard.path).relative_to(root).as_posix()})
-        for shard in shards
     )
 
 
@@ -339,7 +350,7 @@ def _write_preprocessor(
     path.write_text(
         json.dumps(
             {
-                "schema_version": 5,
+                "schema_version": FEATURE_SCHEMA_VERSION,
                 "purpose": purpose.value,
                 "feature_mode": feature_mode.value,
                 "categorical_encoding": CategoricalEncodingContract().model_dump(mode="json"),
@@ -454,11 +465,15 @@ def preprocess_evaluation(
             embedding_kinds=state.embedding_kinds,
             features=state.definitions,
             diagnostics={
-                DatasetSplit.TRAINING: _split_diagnostics(train_shards, state),
-                DatasetSplit.VALIDATION: _split_diagnostics(validation_shards, state),
+                DatasetSplit.TRAINING: _split_diagnostics(train_shards, state, staging),
+                DatasetSplit.VALIDATION: _split_diagnostics(
+                    validation_shards,
+                    state,
+                    staging,
+                ),
             },
-            train_shards=_relative_shards(train_shards, staging),
-            validation_shards=_relative_shards(validation_shards, staging),
+            train_shards=train_shards,
+            validation_shards=validation_shards,
             fitted_tables=tuple(
                 table.model_copy(update={"path": f"state/{table.path}"}) for table in state.tables
             ),
@@ -566,11 +581,11 @@ def preprocess_production(
             embedding_kinds=state.embedding_kinds,
             features=state.definitions,
             diagnostics={
-                DatasetSplit.TRAINING: _split_diagnostics(train_shards, state),
-                DatasetSplit.PREDICTION: _split_diagnostics(test_shards, state),
+                DatasetSplit.TRAINING: _split_diagnostics(train_shards, state, staging),
+                DatasetSplit.PREDICTION: _split_diagnostics(test_shards, state, staging),
             },
-            train_shards=_relative_shards(train_shards, staging),
-            test_shards=_relative_shards(test_shards, staging),
+            train_shards=train_shards,
+            test_shards=test_shards,
             fitted_tables=tuple(
                 table.model_copy(update={"path": f"state/{table.path}"}) for table in state.tables
             ),
