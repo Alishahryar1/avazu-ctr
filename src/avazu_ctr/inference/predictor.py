@@ -14,7 +14,7 @@ from avazu_ctr.contracts import FeatureBatch
 from avazu_ctr.data.dataset import ParquetBatchDataset
 from avazu_ctr.data.manifest import DatasetPurpose, load_manifest, sha256_file
 from avazu_ctr.inference.bundle import LoadedBundle, load_bundle
-from avazu_ctr.models.compilation import compile_cuda_model
+from avazu_ctr.inference.execution import InferenceRuntime
 
 
 class Predictor:
@@ -23,14 +23,11 @@ class Predictor:
         bundle_path: str | Path,
         *,
         device: str = "cpu",
-        compile_model: bool = False,
     ) -> None:
         self.bundle: LoadedBundle = load_bundle(bundle_path, device=device)
         self.device = torch.device(device)
         self.model = self.bundle.model
-        self.runtime_model = (
-            compile_cuda_model(self.model, self.device) if compile_model else self.model
-        )
+        self.runtime = InferenceRuntime(self.model, self.device)
 
     def validate_manifest_contract(self, manifest_path: str | Path) -> None:
         path = Path(manifest_path)
@@ -42,8 +39,7 @@ class Predictor:
 
     @torch.inference_mode()
     def predict_batch(self, batch: FeatureBatch) -> torch.Tensor:
-        moved = batch.to(self.device)
-        return self.runtime_model(moved).probabilities().float().cpu()
+        return self.runtime.predict(batch)
 
     def iter_predictions(
         self,
@@ -60,7 +56,11 @@ class Predictor:
             seed=self.bundle.config.training.seed,
             include_row_ids=True,
         )
-        loader = DataLoader(dataset, batch_size=None)
+        loader = DataLoader(
+            dataset,
+            batch_size=None,
+            pin_memory=self.device.type == "cuda",
+        )
         for batch in loader:
             if batch.row_ids is None:
                 raise ValueError("prediction rows require source IDs")

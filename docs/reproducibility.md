@@ -23,6 +23,9 @@ Production CUDA permits seeded nondeterministic kernels when they improve
 throughput. Tests enable `torch.use_deterministic_algorithms(True)`. Exact
 bitwise equivalence is therefore required for data and CPU state round trips,
 while normal GPU comparisons use recorded seeds and metric tolerances.
+Production CUDA inference additionally uses float16 autocast and returns
+float32 probabilities; GPU contract tests compare it with eager float32
+predictions under explicit numerical tolerances.
 
 Every run stores the package-lock hash, data manifest, resolved configuration,
 source commit/diff fingerprint, environment snapshot, immutable training plan,

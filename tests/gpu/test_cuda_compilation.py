@@ -6,8 +6,9 @@ from torch import nn
 
 from avazu_ctr.config import load_experiment
 from avazu_ctr.contracts import FeatureBatch, ModelOutput
+from avazu_ctr.inference.execution import InferenceRuntime
 from avazu_ctr.models.base import CTRModel
-from avazu_ctr.models.compilation import compile_cuda_model
+from avazu_ctr.models.compilation import compile_cuda_graph
 from avazu_ctr.training.optimizers import build_optimizer_plan
 
 pytestmark = pytest.mark.skipif(
@@ -40,7 +41,7 @@ def test_cuda_compiler_matches_eager_forward_and_backward() -> None:
     eager = TinyCudaModel().cuda()
     candidate = TinyCudaModel().cuda()
     candidate.load_state_dict(eager.state_dict())
-    compiled = compile_cuda_model(candidate, torch.device("cuda"))
+    compiled = compile_cuda_graph(candidate, torch.device("cuda"))
     batch = make_batch(64)
     labels = batch.labels
     if labels is None:
@@ -70,6 +71,26 @@ def test_cuda_compiler_matches_eager_forward_and_backward() -> None:
         compiled(dynamic_batch).aggregate_logits,
         candidate(dynamic_batch).aggregate_logits,
     )
+
+
+def test_compiled_float16_inference_matches_eager_float32() -> None:
+    torch.manual_seed(42)
+    eager = TinyCudaModel().cuda().eval()
+    candidate = TinyCudaModel().cuda().eval()
+    candidate.load_state_dict(eager.state_dict())
+    runtime = InferenceRuntime(candidate, torch.device("cuda"))
+
+    for rows in (64, 7):
+        host_batch = FeatureBatch(
+            categorical=torch.randint(0, 32, (rows, 1)),
+            numerical=torch.randn(rows, 2),
+        ).pin_memory()
+        with torch.inference_mode():
+            expected = eager(host_batch.to("cuda")).probabilities().float().cpu()
+        actual = runtime.predict(host_batch)
+
+        assert actual.dtype is torch.float32
+        torch.testing.assert_close(actual, expected, rtol=2e-3, atol=2e-3)
 
 
 def test_cuda_adamw_uses_the_fused_kernel() -> None:

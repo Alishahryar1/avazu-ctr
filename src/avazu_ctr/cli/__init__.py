@@ -260,12 +260,8 @@ def predict_command(
     manifest: Annotated[Path, typer.Argument(exists=True, dir_okay=False)],
     output: Annotated[Path, typer.Option("--output")] = Path("submission.csv"),
     device: Annotated[str, typer.Option("--device")] = "cpu",
-    compile_model: Annotated[bool, typer.Option("--compile")] = False,
 ) -> None:
-    written = Predictor(bundle, device=device, compile_model=compile_model).write_submission(
-        manifest,
-        output,
-    )
+    written = Predictor(bundle, device=device).write_submission(manifest, output)
     console.print(f"[green]Wrote[/green] {written}")
 
 

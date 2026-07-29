@@ -15,7 +15,7 @@ from avazu_ctr.data.dataset import ParquetBatchDataset
 from avazu_ctr.data.manifest import DatasetManifest
 from avazu_ctr.data.preprocessing import feature_config_sha256
 from avazu_ctr.models.base import CTRModel
-from avazu_ctr.models.compilation import compile_cuda_model
+from avazu_ctr.models.compilation import compile_cuda_graph
 from avazu_ctr.models.factory import (
     create_model,
     enforce_weight_budget,
@@ -160,7 +160,7 @@ class OptimizationLoop:
         )
         self.runtime_model: CTRModel = self.model
         if config.training.compile_model:
-            self.runtime_model = compile_cuda_model(self.model, self.device)
+            self.runtime_model = compile_cuda_graph(self.model, self.device)
         self.amp_dtype = torch.float16 if config.training.amp_dtype == "float16" else torch.bfloat16
         self.scaler = torch.amp.GradScaler(
             "cuda",

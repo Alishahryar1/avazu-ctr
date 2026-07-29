@@ -205,6 +205,13 @@ def test_cli_exposes_final_commands() -> None:
         assert command in result.stdout
 
 
+def test_cuda_prediction_has_one_automatic_fast_path() -> None:
+    result = CliRunner().invoke(app, ["predict", "--help"])
+    assert result.exit_code == 0
+    assert "--device" in result.stdout
+    assert "--compile" not in result.stdout
+
+
 def test_python_policy_is_312() -> None:
     pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
     assert 'requires-python = ">=3.12,<3.13"' in pyproject
