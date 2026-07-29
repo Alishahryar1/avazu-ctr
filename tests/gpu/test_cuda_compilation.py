@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 import torch
 from torch import nn
 
 from avazu_ctr.config import load_experiment
+from avazu_ctr.config.schema import ExperimentConfig, OptimizerKind, SchedulerKind
 from avazu_ctr.contracts import FeatureBatch, ModelOutput
 from avazu_ctr.inference.execution import InferenceRuntime
 from avazu_ctr.models.base import CTRModel
 from avazu_ctr.models.compilation import compile_cuda_graph
+from avazu_ctr.training import CandidateTrainer
 from avazu_ctr.training.optimizers import build_optimizer_plan
 
 pytestmark = pytest.mark.skipif(
@@ -98,3 +102,36 @@ def test_cuda_adamw_uses_the_fused_kernel() -> None:
     config = load_experiment("configs/champion.yaml")
     plan = build_optimizer_plan(model, config.training.optimizer, total_steps=10)
     assert plan.optimizers[0].defaults["fused"] is True
+
+
+def test_compiled_split_candidate_releases_gradients_before_cpu_transfer(
+    processed_project: tuple[ExperimentConfig, Path],
+) -> None:
+    config, manifest_path = processed_project
+    dense = config.training.optimizer.dense
+    embeddings = dense.model_copy(
+        update={
+            "kind": OptimizerKind.ADAGRAD,
+            "learning_rate": 0.1,
+            "weight_decay": 0.0,
+            "scheduler": dense.scheduler.model_copy(update={"kind": SchedulerKind.NONE}),
+        }
+    )
+    optimizer = config.training.optimizer.model_copy(update={"embeddings": embeddings})
+    training = config.training.model_copy(
+        update={
+            "device": "cuda",
+            "amp": True,
+            "compile_model": True,
+            "deterministic_algorithms": False,
+            "optimizer": optimizer,
+        }
+    )
+    compiled_config = config.model_copy(
+        update={"name": "compiled-split-candidate", "training": training}
+    )
+
+    result = CandidateTrainer(compiled_config, manifest_path).fit()
+
+    assert all(parameter.device.type == "cpu" for parameter in result.model.parameters())
+    assert all(parameter.grad is None for parameter in result.model.parameters())
