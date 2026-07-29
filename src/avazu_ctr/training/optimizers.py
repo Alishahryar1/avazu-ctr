@@ -85,6 +85,7 @@ def _make_optimizer(parameters: list[nn.Parameter], config: OptimizerConfig) -> 
             lr=config.learning_rate,
             weight_decay=config.weight_decay,
             betas=(config.beta1, config.beta2),
+            fused=all(parameter.device.type == "cuda" for parameter in parameters),
         )
     if config.kind is OptimizerKind.ADAGRAD:
         return torch.optim.Adagrad(

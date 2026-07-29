@@ -43,6 +43,12 @@ def test_identical_embedding_and_dense_configs_still_create_two_optimizers() -> 
     assert len(bundle.schedulers) == 2
 
 
+def test_adamw_stays_unfused_on_cpu() -> None:
+    config = load_experiment("configs/champion.yaml")
+    bundle = build_optimizer_plan(SplitModel(), config.training.optimizer, total_steps=10)
+    assert bundle.optimizers[0].defaults["fused"] is False
+
+
 def test_ftrl_updates_and_keeps_explicit_state() -> None:
     parameter = nn.Parameter(torch.tensor([1.0]))
     optimizer = FTRLProximal([parameter], alpha=0.1, beta=1.0, l1=0.0, l2=0.0)
