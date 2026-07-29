@@ -116,6 +116,10 @@ uv run --extra cu130 avazu-ctr predict artifacts/champion `
   --device cuda --output submission.csv
 ```
 
+CUDA prediction automatically compiles the complete model-to-probability graph
+with Inductor and executes it under float16 autocast. Input batches use pinned
+memory and nonblocking device transfers. CPU prediction remains eager float32.
+
 Staged tuning produces the same typed confirmation artifact:
 
 ```powershell

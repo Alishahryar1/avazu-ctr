@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from collections.abc import Callable
 from typing import Any
 
 import pytest
 import torch
+from torch import nn
 
 from avazu_ctr.contracts import FeatureBatch, ModelOutput
 from avazu_ctr.models import compilation
@@ -18,13 +18,13 @@ class TinyModel(CTRModel):
 
 def test_compilation_requires_cuda() -> None:
     with pytest.raises(RuntimeError, match="requires a CUDA device"):
-        compilation.compile_cuda_model(TinyModel(), torch.device("cpu"))
+        compilation.compile_cuda_graph(TinyModel(), torch.device("cpu"))
 
 
 def test_compilation_requires_working_triton(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(compilation, "has_triton", lambda: False)
     with pytest.raises(RuntimeError, match="requires a working Triton"):
-        compilation.compile_cuda_model(TinyModel(), torch.device("cuda"))
+        compilation.compile_cuda_graph(TinyModel(), torch.device("cuda"))
 
 
 def test_compilation_uses_the_full_inductor_fast_path(
@@ -33,16 +33,16 @@ def test_compilation_uses_the_full_inductor_fast_path(
     captured: dict[str, Any] = {}
 
     def fake_compile(
-        model: CTRModel,
+        model: nn.Module,
         **options: Any,
-    ) -> Callable[[FeatureBatch], ModelOutput]:
+    ) -> nn.Module:
         captured.update(options)
         return model
 
     monkeypatch.setattr(compilation, "has_triton", lambda: True)
     monkeypatch.setattr(compilation.torch, "compile", fake_compile)
     model = TinyModel()
-    assert compilation.compile_cuda_model(model, torch.device("cuda")) is model
+    assert compilation.compile_cuda_graph(model, torch.device("cuda")) is model
     assert captured == {
         "backend": "inductor",
         "mode": "reduce-overhead",

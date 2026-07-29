@@ -27,7 +27,8 @@ tracking → inference → exploration
   budget and no validation loader.
 - `tracking` owns run lineage, metrics, typed selection evidence, selection
   decisions, deployment records, and atomic replacement.
-- `inference` only exports and loads validated production bundles.
+- `inference` owns validated production bundles and device-specific prediction
+  execution.
 - `exploration` emits JSON and self-contained HTML from public contracts.
 
 No module reads a global configuration. The CLI composes these boundaries and
@@ -41,6 +42,9 @@ inference request them explicitly. The batch owns its tensor pinning contract,
 so a CUDA `DataLoader` can transfer every tensor lane asynchronously.
 `ModelOutput.aggregate_logits` is always the deployed prediction. Multihead and
 ensemble structure is explicit through auxiliary and child outputs.
+CUDA inference compiles the complete model-to-probability graph, runs model
+operations under float16 autocast, and returns float32 probabilities. CPU
+inference remains eager float32.
 
 The primary objective is BCE on `aggregate_logits`. Auxiliary head BCE and
 positive residual-correlation penalties cannot replace aggregate supervision.
