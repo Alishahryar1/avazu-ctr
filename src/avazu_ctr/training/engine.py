@@ -231,6 +231,9 @@ class OptimizationLoop:
                 if self.writer is not None:
                     for name, value in metrics.items():
                         self.writer.add_scalar(f"train/{name}", value, self.global_step)
+        # Compiled backward passes may expose CUDA-Graph-owned gradient buffers.
+        # Do not let those ephemeral buffers cross into evaluation or device transfer.
+        self.optimizers.zero_grad()
 
     @staticmethod
     def _gradients_are_finite(model: CTRModel) -> bool:

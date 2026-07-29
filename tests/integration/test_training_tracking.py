@@ -18,6 +18,7 @@ def test_training_records_sqlite_and_tensorboard(
     result = CandidateTrainer(config, manifest_path, store=store).fit()
     run = store.run(result.run_id)
     assert run["status"] == "completed"
+    assert all(parameter.grad is None for parameter in result.model.parameters())
     assert '"mode": "evaluation"' in run["plan_json"]
     assert '"best_epoch": 0' in run["summary_json"]
     assert store.latest_metrics(result.run_id, "validation")["logloss"] > 0
