@@ -47,6 +47,14 @@ class FeatureFamily(StrEnum):
     TARGET = "target"
 
 
+class FittedTableKind(StrEnum):
+    VOCABULARY = "vocabulary"
+    COVARIATE_FREQUENCY = "covariate_frequency"
+    COVARIATE_DISTINCT_COUNT = "covariate_distinct_count"
+    TARGET_ENCODING = "target_encoding"
+    TEMPORAL_TARGET_ENCODING = "temporal_target_encoding"
+
+
 class HourRange(StrictManifestModel):
     start: int
     end: int
@@ -71,12 +79,24 @@ class ShardManifest(StrictManifestModel):
 
 class FittedTableManifest(StrictManifestModel):
     feature: str
-    kind: str
+    kind: FittedTableKind
     path: str
     rows: int = Field(ge=0)
     sha256: Sha256
     sources: tuple[DatasetSplit, ...] = Field(min_length=1)
     uses_labels: bool
+
+
+class CategoricalEncodingContract(StrictManifestModel):
+    vocabulary_sources: tuple[DatasetSplit, ...] = (DatasetSplit.TRAINING,)
+    unknown_id: Literal[0] = 0
+    unknown_embedding: Literal["zero"] = "zero"
+
+    @model_validator(mode="after")
+    def validate_vocabulary_sources(self) -> Self:
+        if self.vocabulary_sources != (DatasetSplit.TRAINING,):
+            raise ValueError("categorical vocabularies must be fitted from training only")
+        return self
 
 
 class FeatureDefinition(StrictManifestModel):
@@ -108,10 +128,11 @@ class SplitDiagnostics(StrictManifestModel):
 
 
 class DatasetManifest(StrictManifestModel):
-    schema_version: Literal[4] = 4
+    schema_version: Literal[5] = 5
     name: str
     purpose: DatasetPurpose
     feature_mode: FeatureMode
+    categorical_encoding: CategoricalEncodingContract
     labelled_source: RawSource
     prediction_source: RawSource | None = None
     training_range: HourRange
@@ -201,17 +222,31 @@ class DatasetManifest(StrictManifestModel):
             if any(item.rows != diagnostics.rows for item in diagnostics.categorical_oov.values()):
                 raise ValueError(f"{split.value} OOV diagnostics have inconsistent row counts")
 
-        covariate_sources = (
+        transductive_sources = (
             (DatasetSplit.TRAINING,)
             if self.feature_mode is FeatureMode.INDUCTIVE
             else (DatasetSplit.TRAINING, scoring_split)
         )
+        label_kinds = {
+            FittedTableKind.TARGET_ENCODING,
+            FittedTableKind.TEMPORAL_TARGET_ENCODING,
+        }
         for table in self.fitted_tables:
             if len(set(table.sources)) != len(table.sources):
                 raise ValueError(f"fitted table {table.feature!r} repeats a source")
             if not set(table.sources).issubset(expected_splits):
                 raise ValueError(f"fitted table {table.feature!r} has an invalid source")
-            expected_sources = (DatasetSplit.TRAINING,) if table.uses_labels else covariate_sources
+            if table.uses_labels != (table.kind in label_kinds):
+                raise ValueError(
+                    f"fitted table {table.feature!r} has inconsistent label provenance"
+                )
+            expected_sources = (
+                self.categorical_encoding.vocabulary_sources
+                if table.kind is FittedTableKind.VOCABULARY
+                else (DatasetSplit.TRAINING,)
+                if table.kind in label_kinds
+                else transductive_sources
+            )
             if table.sources != expected_sources:
                 raise ValueError(
                     f"fitted table {table.feature!r} has sources {table.sources}, "
@@ -240,6 +275,7 @@ class DatasetManifest(StrictManifestModel):
                 "cardinalities": self.cardinalities,
                 "embedding_kinds": self.embedding_kinds,
                 "feature_mode": self.feature_mode,
+                "categorical_encoding": self.categorical_encoding.model_dump(mode="json"),
                 "features": [feature.model_dump(mode="json") for feature in self.features],
                 "fitted_tables": [
                     {

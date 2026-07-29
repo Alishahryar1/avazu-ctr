@@ -10,6 +10,8 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from avazu_ctr.config.schema import (
+    EmbeddingConfig,
+    EmbeddingKind,
     EnsembleModelConfig,
     ExperimentConfig,
     ModelConfig,
@@ -27,7 +29,12 @@ from avazu_ctr.models.factory import (
     estimate_model_weight_bytes,
     serialized_weight_bytes,
 )
-from avazu_ctr.models.layers import LogitGate, NumericalProjection, StableHashEmbedding
+from avazu_ctr.models.layers import (
+    FeatureEncoder,
+    LogitGate,
+    NumericalProjection,
+    StableHashEmbedding,
+)
 from avazu_ctr.models.ngpt import NGPTBlock, NGPTModel
 from avazu_ctr.models.state import state_dict_sha256
 from avazu_ctr.models.stec import STECBlock, STECModel
@@ -88,6 +95,42 @@ def test_tensor_contracts_reject_invalid_shapes_and_dtypes() -> None:
         FeatureBatch(categorical, numerical, timestamps=torch.zeros(2))
     with pytest.raises(ValueError, match="aggregate logits"):
         ModelOutput(torch.zeros(2))
+
+
+def test_standard_embedding_uses_a_fixed_zero_unknown_row(
+    processed_project: tuple[ExperimentConfig, Path],
+) -> None:
+    config, _ = processed_project
+    model_config = config.model.model_copy(
+        update={
+            "default_embedding": EmbeddingConfig(
+                kind=EmbeddingKind.STANDARD,
+                dim=8,
+            ),
+            "feature_embeddings": {},
+        }
+    )
+    encoder = FeatureEncoder(
+        ("category",),
+        (),
+        {"category": 3},
+        model_config,
+        seed=42,
+    )
+    embedding = cast(nn.Embedding, encoder.embeddings["category"])
+    batch = FeatureBatch(
+        categorical=torch.tensor([[0], [1]], dtype=torch.int64),
+        numerical=torch.empty((2, 0), dtype=torch.float32),
+    )
+
+    assert embedding.padding_idx == 0
+    assert torch.equal(embedding.weight[0], torch.zeros_like(embedding.weight[0]))
+    assert torch.equal(encoder(batch)[0, 0], torch.zeros(8))
+
+    optimizer = torch.optim.AdamW(encoder.parameters(), lr=0.1, weight_decay=0.1)
+    encoder(batch).sum().backward()
+    optimizer.step()
+    assert torch.equal(embedding.weight[0], torch.zeros_like(embedding.weight[0]))
 
 
 @pytest.mark.parametrize("kind", [ModelKind.DCN, ModelKind.STEC, ModelKind.NGPT])
@@ -280,8 +323,9 @@ def test_ngpt_post_step_normalizes_every_embedding_dimension(
                 _assert_unit_rows(cast(nn.Embedding, table).weight)
         else:
             embedding = cast(nn.Embedding, module)
-            assert embedding.padding_idx is None
-            _assert_unit_rows(embedding.weight)
+            assert embedding.padding_idx == 0
+            assert torch.equal(embedding.weight[0], torch.zeros_like(embedding.weight[0]))
+            _assert_unit_rows(embedding.weight, skip_first=True)
     _assert_unit_rows(model.encoder.numerical.weight)
     assert model.encoder.numerical.bias is not None
     _assert_unit_rows(model.encoder.numerical.bias)

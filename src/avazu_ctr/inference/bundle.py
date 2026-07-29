@@ -42,7 +42,7 @@ class RefitPlan(StrictModel):
 
 
 class BundleMetadata(StrictModel):
-    schema_version: Literal[4] = 4
+    schema_version: Literal[5] = 5
     role: Literal["production"] = "production"
     refit_run_id: Annotated[str, Field(min_length=1)]
     selection_id: Annotated[str, Field(min_length=1)]
@@ -165,6 +165,7 @@ def load_bundle(path: str | Path, *, device: str | torch.device = "cpu") -> Load
             "schema_version",
             "purpose",
             "feature_mode",
+            "categorical_encoding",
             "global_prior",
             "categorical_columns",
             "numerical_columns",
@@ -172,9 +173,11 @@ def load_bundle(path: str | Path, *, device: str | torch.device = "cpu") -> Load
             "embedding_kinds",
             "features",
         }
-        or preprocessor.get("schema_version") != 4
+        or preprocessor.get("schema_version") != 5
         or preprocessor.get("purpose") != "production"
         or preprocessor.get("feature_mode") != manifest.feature_mode.value
+        or preprocessor.get("categorical_encoding")
+        != manifest.categorical_encoding.model_dump(mode="json")
         or not isinstance(preprocessor.get("global_prior"), int | float)
         or isinstance(preprocessor.get("global_prior"), bool)
         or not 0.0 <= preprocessor["global_prior"] <= 1.0

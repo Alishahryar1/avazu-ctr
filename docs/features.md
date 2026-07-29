@@ -46,14 +46,16 @@ High-drift raw identifiers (`site_id`, `app_id`, `device_id`, `device_ip`,
 
 ## Covariate modes
 
-`data.features.mode` controls only label-free fitted state:
+`data.features.mode` controls only label-free aggregate state. Learned
+categorical vocabularies always fit training rows:
 
-- `inductive` fits vocabularies, frequencies, and distinct counts from the
-  training partition. Validation or prediction covariates cannot change
-  training features.
-- `competition_transductive` fits those transforms from every covariate batch
-  available at prediction time. Evaluation uses train plus validation
-  covariates; production uses labelled train plus competition-test covariates.
+- `inductive` fits frequency and distinct-count tables from the training
+  partition. Validation or prediction covariates cannot change training
+  features.
+- `competition_transductive` fits frequency and distinct-count tables from
+  every covariate batch available at prediction time. Evaluation uses train
+  plus validation covariates; production uses labelled train plus
+  competition-test covariates.
 
 Target tables and priors always use training labels only. Evaluation never opens
 the competition test source. The explicit mode exists because batch
@@ -68,9 +70,9 @@ Every fitted table records:
 - its exact source splits;
 - row count, relative path, and SHA-256 checksum.
 
-The manifest rejects a label-dependent table sourced from validation or
-prediction data, an undeclared transductive table, or a table whose sources do
-not match the configured mode.
+The manifest rejects a vocabulary or label-dependent table sourced from
+validation or prediction data, an undeclared transductive aggregate table, or a
+table whose sources do not match the configured mode.
 
 ## Row-local categorical features
 
@@ -174,8 +176,9 @@ checkpoint growth.
 ## Coverage diagnostics
 
 Vocabulary-encoded fields reserve ID zero for values absent from the fitted
-vocabulary or below `minimum_frequency`. ID zero has a learned OOV embedding; it
-is not a padding token. Every manifest records the row count, unknown count, and
+training vocabulary or below `minimum_frequency`. ID zero is a fixed zero-vector
+embedding: scoring-only categories cannot introduce randomly initialized,
+untrained model state. Every manifest records the row count, unknown count, and
 exact OOV rate for every vocabulary field and split.
 
 Hashed fields have no OOV state and therefore do not appear in the OOV map.

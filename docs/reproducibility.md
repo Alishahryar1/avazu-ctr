@@ -10,6 +10,9 @@ coefficients and feature masks are checkpoint buffers.
 Dataset manifests distinguish inductive and competition-transductive covariate
 state and checksum every fitted table with its declared source splits. Runs
 therefore cannot silently compare or deploy a different information set.
+Categorical vocabularies are always training-only, and the reserved unknown ID
+has a fixed zero embedding, so scoring-only values cannot create untrained
+parameters.
 
 Production CUDA permits seeded nondeterministic kernels when they improve
 throughput. Tests enable `torch.use_deterministic_algorithms(True)`. Exact

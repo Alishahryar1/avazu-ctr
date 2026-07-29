@@ -29,6 +29,8 @@ def test_shipped_configs_are_strict_and_current(path: str) -> None:
     config = load_experiment(path)
     assert config.schema_version == 5
     assert config.data.features.mode is FeatureMode.COMPETITION_TRANSDUCTIVE
+    for feature in ("hour_of_day", "day_of_week", "day_of_month", "hour_of_week"):
+        assert config.model.feature_embeddings[feature].kind.value == "hash"
 
 
 def test_unknown_fields_and_schema_versions_are_rejected() -> None:

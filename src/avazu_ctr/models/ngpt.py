@@ -196,6 +196,8 @@ class NGPTModel(CTRModel):
                     normalize_parameter_(embedding.weight, dim=1)
             elif isinstance(module, nn.Embedding):
                 normalize_parameter_(module.weight, dim=1)
+                if module.padding_idx is not None:
+                    module.weight[module.padding_idx].zero_()
         for projection in self.encoder.projections.values():
             normalize_parameter_(cast(nn.Linear, projection).weight, dim=1)
         normalize_parameter_(self.encoder.numerical.weight, dim=1)

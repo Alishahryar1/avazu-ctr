@@ -85,13 +85,14 @@ all-data step count.
 
 ## Artifact contract
 
-A processed dataset is valid only with its schema-v4 role-specific manifest and
+A processed dataset is valid only with its schema-v5 role-specific manifest and
 checksums. Evaluation manifests require validation and forbid test. Production
 manifests require test and forbid validation.
 
 The manifest embeds the ordered feature definitions, inductive or explicit
 competition-transductive mode, fitted-table label and split provenance, and OOV
-diagnostics. A label-dependent table can only declare the training split.
+diagnostics. Vocabularies and label-dependent tables can only declare the
+training split; unknown vocabulary IDs have a fixed zero embedding.
 
 An inference model is valid only as a production `safetensors` file plus
 `bundle.json` and its fitted all-data preprocessor state. The bundle records the

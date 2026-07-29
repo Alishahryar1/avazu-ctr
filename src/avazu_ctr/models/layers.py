@@ -148,7 +148,7 @@ class FeatureEncoder(nn.Module):
                 cardinality = cardinalities.get(feature)
                 if cardinality is None:
                     raise ValueError(f"manifest has no cardinality for {feature}")
-                module = nn.Embedding(cardinality, embedding.dim)
+                module = nn.Embedding(cardinality, embedding.dim, padding_idx=0)
             self.embeddings[feature] = module
             if embedding.dim != self.dimension:
                 self.projections[feature] = nn.Linear(embedding.dim, self.dimension, bias=False)

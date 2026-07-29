@@ -12,6 +12,7 @@ from avazu_ctr.data.features.plan import feature_definitions
 from avazu_ctr.data.manifest import (
     DatasetSplit,
     FeatureDefinition,
+    FittedTableKind,
     FittedTableManifest,
     HourRange,
     sha256_file,
@@ -40,7 +41,7 @@ def _write_fitted_table(
     path: Path,
     *,
     feature: str,
-    kind: str,
+    kind: FittedTableKind,
     sources: tuple[DatasetSplit, ...],
     uses_labels: bool,
 ) -> FittedTableManifest:
@@ -95,7 +96,7 @@ def fit_feature_state(
             cardinalities[feature] = embedding.buckets
             continue
         vocabulary = (
-            covariates.group_by(feature)
+            train.group_by(feature)
             .len(name="_frequency")
             .filter(pl.col("_frequency") >= config.data.minimum_frequency)
             .sort(feature)
@@ -107,8 +108,8 @@ def fit_feature_state(
             vocabulary,
             path,
             feature=feature,
-            kind="vocabulary",
-            sources=covariate_sources,
+            kind=FittedTableKind.VOCABULARY,
+            sources=(DatasetSplit.TRAINING,),
             uses_labels=False,
         )
         if table.rows > config.data.vocabulary_limit:
@@ -129,7 +130,7 @@ def fit_feature_state(
                 counts,
                 path,
                 feature=feature,
-                kind="covariate_frequency",
+                kind=FittedTableKind.COVARIATE_FREQUENCY,
                 sources=covariate_sources,
                 uses_labels=False,
             )
@@ -149,7 +150,7 @@ def fit_feature_state(
                 counts,
                 path,
                 feature=feature.name,
-                kind="covariate_distinct_count",
+                kind=FittedTableKind.COVARIATE_DISTINCT_COUNT,
                 sources=covariate_sources,
                 uses_labels=False,
             )
@@ -210,7 +211,7 @@ def fit_feature_state(
                 stats,
                 path,
                 feature=feature,
-                kind="target_encoding",
+                kind=FittedTableKind.TARGET_ENCODING,
                 sources=(DatasetSplit.TRAINING,),
                 uses_labels=True,
             )
@@ -243,7 +244,7 @@ def fit_feature_state(
                 temporal_stats,
                 temporal_path,
                 feature=feature,
-                kind="temporal_target_encoding",
+                kind=FittedTableKind.TEMPORAL_TARGET_ENCODING,
                 sources=(DatasetSplit.TRAINING,),
                 uses_labels=True,
             )
