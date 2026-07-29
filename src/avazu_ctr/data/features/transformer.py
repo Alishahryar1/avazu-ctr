@@ -6,7 +6,7 @@ import math
 
 import polars as pl
 
-from avazu_ctr.config.schema import EmbeddingKind, ExperimentConfig
+from avazu_ctr.config.schema import BucketScale, EmbeddingKind, ExperimentConfig
 from avazu_ctr.data.features.fitting import FittedFeatureState
 from avazu_ctr.data.manifest import HourRange
 
@@ -52,6 +52,7 @@ class FittedFeatureTransformer:
             if training
             else self._apply_scoring_target_features(transformed)
         )
+        transformed = self._apply_buckets(transformed)
         return self._apply_categories(transformed)
 
     def _apply_covariate_statistics(self, frame: pl.LazyFrame) -> pl.LazyFrame:
@@ -173,6 +174,23 @@ class FittedFeatureTransformer:
                 .drop("_positive", "_count")
             )
         return transformed
+
+    def _apply_buckets(self, frame: pl.LazyFrame) -> pl.LazyFrame:
+        if not self.config.data.features.buckets:
+            return frame
+        expressions: list[pl.Expr] = []
+        for bucket in self.config.data.features.buckets:
+            source = pl.col(bucket.source).fill_nan(0.0).fill_null(0.0)
+            thresholds = (
+                tuple(math.log1p(value) for value in bucket.boundaries)
+                if bucket.source_scale is BucketScale.LOG1P
+                else bucket.boundaries
+            )
+            value = pl.lit(0, dtype=pl.Int64)
+            for threshold in thresholds:
+                value += (source >= threshold).cast(pl.Int64)
+            expressions.append(value.alias(bucket.name))
+        return frame.with_columns(expressions)
 
     def _apply_categories(self, frame: pl.LazyFrame) -> pl.LazyFrame:
         transformed = frame

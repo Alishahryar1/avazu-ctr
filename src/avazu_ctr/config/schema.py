@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Literal, Self
@@ -76,6 +77,14 @@ TIME_CATEGORICAL_COLUMNS = (
     "hour_of_week",
 )
 TIME_NUMERICAL_COLUMNS = ("hour_sin", "hour_cos")
+CONTEXT_CATEGORICAL_COLUMNS = (
+    "inventory_type",
+    "publisher_id",
+    "publisher_domain",
+    "publisher_category",
+    "identity_kind",
+    "user_id",
+)
 FeatureName = Annotated[str, Field(pattern=r"^[A-Za-z][A-Za-z0-9_]*$")]
 
 
@@ -223,9 +232,52 @@ class DistinctCountFeatureConfig(StrictModel):
     value: FeatureName
 
 
+class ContextFeatureConfig(StrictModel):
+    enabled: bool = False
+    app_site_sentinel: str = "85f751fd"
+    unknown_device_id: str = "a99f214a"
+
+
 class HistoryFeatureConfig(StrictModel):
     key: FeatureName
     within_hour: bool = False
+    clicks: bool = False
+    click_pattern_bits: Annotated[int, Field(ge=0, le=8)] = 0
+
+    @model_validator(mode="after")
+    def validate_click_pattern(self) -> Self:
+        if self.click_pattern_bits and not self.clicks:
+            raise ValueError("history click_pattern_bits requires clicks=true")
+        return self
+
+
+class BucketScale(StrEnum):
+    IDENTITY = "identity"
+    LOG1P = "log1p"
+
+
+class BucketFeatureConfig(StrictModel):
+    name: FeatureName
+    source: FeatureName
+    boundaries: Annotated[tuple[float, ...], Field(min_length=1)]
+    source_scale: BucketScale = BucketScale.IDENTITY
+
+    @model_validator(mode="after")
+    def validate_boundaries(self) -> Self:
+        if not all(math.isfinite(value) for value in self.boundaries):
+            raise ValueError(f"bucket {self.name!r} boundaries must be finite")
+        if any(
+            left >= right
+            for left, right in zip(
+                self.boundaries,
+                self.boundaries[1:],
+                strict=False,
+            )
+        ):
+            raise ValueError(f"bucket {self.name!r} boundaries must be strictly increasing")
+        if self.source_scale is BucketScale.LOG1P and self.boundaries[0] < 0.0:
+            raise ValueError(f"bucket {self.name!r} log1p boundaries cannot be negative")
+        return self
 
 
 class TargetEncodingConfig(StrictModel):
@@ -245,6 +297,7 @@ class TargetEncodingConfig(StrictModel):
 class FeatureSetConfig(StrictModel):
     mode: FeatureMode = FeatureMode.INDUCTIVE
     raw_categorical_columns: tuple[FeatureName, ...] = AVAZU_CATEGORICAL_COLUMNS
+    context: ContextFeatureConfig = ContextFeatureConfig()
     crosses: tuple[CrossFeatureConfig, ...] = (
         CrossFeatureConfig(
             name="user_proxy",
@@ -312,17 +365,39 @@ class FeatureSetConfig(StrictModel):
         HistoryFeatureConfig(key="device_ip"),
     )
     target_encoding: TargetEncodingConfig = TargetEncodingConfig()
+    buckets: tuple[BucketFeatureConfig, ...] = ()
 
     @property
-    def categorical_columns(self) -> tuple[str, ...]:
+    def context_categorical_columns(self) -> tuple[str, ...]:
+        return CONTEXT_CATEGORICAL_COLUMNS if self.context.enabled else ()
+
+    @property
+    def pre_transform_categorical_columns(self) -> tuple[str, ...]:
         return (
             *self.raw_categorical_columns,
             *TIME_CATEGORICAL_COLUMNS,
+            *self.context_categorical_columns,
             *(cross.name for cross in self.crosses),
         )
 
     @property
-    def numerical_columns(self) -> tuple[str, ...]:
+    def history_categorical_columns(self) -> tuple[str, ...]:
+        return tuple(
+            f"{feature.key}_recent_click_pattern"
+            for feature in self.history
+            if feature.click_pattern_bits
+        )
+
+    @property
+    def categorical_columns(self) -> tuple[str, ...]:
+        return (
+            *self.pre_transform_categorical_columns,
+            *(feature.name for feature in self.buckets),
+            *self.history_categorical_columns,
+        )
+
+    @property
+    def history_numerical_columns(self) -> tuple[str, ...]:
         history: list[str] = []
         for feature in self.history:
             history.extend(
@@ -333,6 +408,20 @@ class FeatureSetConfig(StrictModel):
             )
             if feature.within_hour:
                 history.append(f"{feature.key}_prior_hour_impressions_log1p")
+            if feature.clicks:
+                history.extend(
+                    (
+                        f"{feature.key}_prior_clicks_log1p",
+                        f"{feature.key}_prior_nonclicks_log1p",
+                        f"{feature.key}_prior_ctr_logit_lift",
+                        f"{feature.key}_hours_since_last_click_log1p",
+                        f"{feature.key}_impressions_since_last_click_log1p",
+                    )
+                )
+        return tuple(history)
+
+    @property
+    def target_numerical_columns(self) -> tuple[str, ...]:
         target: list[str] = []
         for feature in self.target_encoding.columns:
             target.extend(
@@ -341,12 +430,40 @@ class FeatureSetConfig(StrictModel):
                     f"{feature}_target_evidence_log1p",
                 )
             )
+        return tuple(target)
+
+    @property
+    def numerical_columns(self) -> tuple[str, ...]:
         return (
             *TIME_NUMERICAL_COLUMNS,
             *(f"{feature}_frequency_log1p" for feature in self.frequency_columns),
             *(feature.name for feature in self.distinct_counts),
-            *history,
-            *target,
+            *self.history_numerical_columns,
+            *self.target_numerical_columns,
+        )
+
+    @property
+    def label_dependent_columns(self) -> frozenset[str]:
+        history = {
+            name
+            for feature in self.history
+            if feature.clicks
+            for name in (
+                f"{feature.key}_prior_clicks_log1p",
+                f"{feature.key}_prior_nonclicks_log1p",
+                f"{feature.key}_prior_ctr_logit_lift",
+                f"{feature.key}_hours_since_last_click_log1p",
+                f"{feature.key}_impressions_since_last_click_log1p",
+                *((f"{feature.key}_recent_click_pattern",) if feature.click_pattern_bits else ()),
+            )
+        }
+        return frozenset((*history, *self.target_numerical_columns))
+
+    @property
+    def post_transform_categorical_columns(self) -> tuple[str, ...]:
+        return (
+            *(feature.name for feature in self.buckets),
+            *self.history_categorical_columns,
         )
 
     @model_validator(mode="after")
@@ -359,6 +476,24 @@ class FeatureSetConfig(StrictModel):
             raise ValueError(f"unknown Avazu categorical columns: {sorted(unknown_raw)}")
 
         available = set(raw).union(TIME_CATEGORICAL_COLUMNS)
+        if self.context.enabled:
+            required = {
+                "site_id",
+                "site_domain",
+                "site_category",
+                "app_id",
+                "app_domain",
+                "app_category",
+                "device_id",
+                "device_ip",
+                "device_model",
+            }
+            unknown = required.difference(available)
+            if unknown:
+                raise ValueError(
+                    f"features.context requires unavailable columns: {sorted(unknown)}"
+                )
+            available.update(CONTEXT_CATEGORICAL_COLUMNS)
         for cross in self.crosses:
             if cross.name in available:
                 raise ValueError(f"feature name {cross.name!r} is duplicated")
@@ -383,6 +518,8 @@ class FeatureSetConfig(StrictModel):
                 raise ValueError(f"{field_name} references unavailable columns: {sorted(unknown)}")
 
         for feature in self.distinct_counts:
+            if feature.name in available:
+                raise ValueError(f"feature name {feature.name!r} is duplicated")
             if feature.group_by == feature.value:
                 raise ValueError(f"distinct count {feature.name!r} requires two different columns")
             unknown = {feature.group_by, feature.value}.difference(available)
@@ -400,6 +537,27 @@ class FeatureSetConfig(StrictModel):
             raise ValueError(
                 f"feature names span both categorical and numerical lanes: {collisions}"
             )
+        bucket_names: set[str] = set()
+        numerical_set = set(numerical)
+        for bucket in self.buckets:
+            if (
+                bucket.name in available
+                or bucket.name in numerical_set
+                or bucket.name in bucket_names
+            ):
+                raise ValueError(f"feature name {bucket.name!r} is duplicated")
+            if bucket.source not in numerical_set:
+                raise ValueError(
+                    f"bucket {bucket.name!r} references unavailable numerical feature "
+                    f"{bucket.source!r}"
+                )
+            bucket_names.add(bucket.name)
+        history_categories = set(self.history_categorical_columns)
+        categorical = self.categorical_columns
+        if len(set(categorical)) != len(categorical):
+            raise ValueError("engineered categorical feature names must be unique")
+        if history_categories.intersection(available | numerical_set | bucket_names):
+            raise ValueError("history categorical feature names collide with another feature")
         return self
 
 
@@ -499,6 +657,7 @@ class ExperimentConfig(StrictModel):
             raise ValueError("selection and champion directories must differ")
         model_features = set(self.data.features.categorical_columns)
         cross_features = {feature.name for feature in self.data.features.crosses}
+        post_transform_features = set(self.data.features.post_transform_categorical_columns)
         model_configs = [self.model]
         contains_ngpt = False
         while model_configs:
@@ -522,6 +681,20 @@ class ExperimentConfig(StrictModel):
             if non_hashed_crosses:
                 raise ValueError(
                     f"cross features require bounded hash embeddings: {sorted(non_hashed_crosses)}"
+                )
+            non_hashed_post_transform = {
+                feature
+                for feature in post_transform_features
+                if model_config.feature_embeddings.get(
+                    feature,
+                    model_config.default_embedding,
+                ).kind
+                is not EmbeddingKind.HASH
+            }
+            if non_hashed_post_transform:
+                raise ValueError(
+                    "post-transform categorical features require bounded hash embeddings: "
+                    f"{sorted(non_hashed_post_transform)}"
                 )
             for feature in model_features:
                 root_kind = self.model.feature_embeddings.get(

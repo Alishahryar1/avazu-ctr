@@ -124,6 +124,16 @@ def feature_config_sha256(config: ExperimentConfig) -> str:
     """Hash only configuration fields that change processed feature values."""
 
     categorical = config.data.features.categorical_columns
+    feature_recipe = config.data.features.model_dump(mode="json")
+    if not config.data.features.context.enabled:
+        feature_recipe.pop("context")
+    if not config.data.features.buckets:
+        feature_recipe.pop("buckets")
+    for history in feature_recipe["history"]:
+        if not history["clicks"]:
+            history.pop("clicks")
+        if not history["click_pattern_bits"]:
+            history.pop("click_pattern_bits")
     embedding_kinds = {
         feature: config.model.feature_embeddings.get(
             feature,
@@ -134,7 +144,7 @@ def feature_config_sha256(config: ExperimentConfig) -> str:
     return sha256_json(
         {
             "schema_version": 4,
-            "features": config.data.features.model_dump(mode="json"),
+            "features": feature_recipe,
             "compiled_features": [
                 feature.model_dump(mode="json") for feature in feature_definitions(config)
             ],
@@ -188,6 +198,7 @@ def _write_feature_shards(
                 config,
                 history,
                 chunk_size=shard_rows,
+                use_labels=training,
             ),
             training=training,
         ),
@@ -234,7 +245,7 @@ def _covariate_reference(
     scoring: pl.LazyFrame,
     config: ExperimentConfig,
 ) -> pl.LazyFrame:
-    columns = config.data.features.categorical_columns
+    columns = config.data.features.pre_transform_categorical_columns
     if config.data.features.mode is FeatureMode.INDUCTIVE:
         return train.select(columns)
     return pl.concat(
@@ -389,7 +400,10 @@ def preprocess_evaluation(
             training_range=training_range,
         )
         transformer = FittedFeatureTransformer(state, config, training_range)
-        history = HistoryState.for_expected_rows(state.training_rows)
+        history = HistoryState.for_expected_rows(
+            state.training_rows,
+            global_prior=state.global_prior,
+        )
         train_shards = _write_feature_shards(
             train,
             staging / "train",
@@ -497,7 +511,10 @@ def preprocess_production(
             training_range=training_range,
         )
         transformer = FittedFeatureTransformer(state, config, training_range)
-        history = HistoryState.for_expected_rows(state.training_rows)
+        history = HistoryState.for_expected_rows(
+            state.training_rows,
+            global_prior=state.global_prior,
+        )
         train_shards = _write_feature_shards(
             train,
             staging / "train",

@@ -135,6 +135,8 @@ atomically becomes the active selection after acceptance.
 
 `configs/baseline.yaml` is the clean DCNv2 benchmark.
 `configs/champion.yaml` is the SENet + DCNv2 multihead candidate.
+`configs/full_features.yaml` keeps that architecture fixed while expanding the
+leakage-safe information set for the feature-only champion experiment.
 `configs/stec.yaml` is the paper-faithful STEC candidate.
 `configs/ngpt.yaml` is the paper-faithful nGPT candidate adapted to field tokens.
 `configs/tuning.yaml` defines the staged search.
@@ -158,6 +160,7 @@ mode for an unseen online stream. See [feature system](docs/features.md).
 - Training target evidence uses labels only from earlier temporal blocks.
 - The first target block and unseen categories have zero lift and zero evidence.
 - Impression history is causal, deterministically ordered, and label-free.
+- Click history uses completed labelled hours only; scoring labels are ignored.
 - Manifests record feature definitions, fitted sources, label use, and OOV rates.
 - Categorical values stay `int64`; numerical values stay `float32`.
 - Models return the exact aggregate logit deployed by inference.

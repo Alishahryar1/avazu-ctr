@@ -186,6 +186,88 @@ def test_causal_history_rejects_a_partition_older_than_its_state() -> None:
         add_causal_history(older, config, state)
 
 
+def _full_feature_history_frame() -> tuple[ExperimentConfig, pl.DataFrame]:
+    config = load_experiment("configs/full_features.yaml")
+    frame = pl.DataFrame(
+        {
+            "_row_index": [0, 1, 2, 3],
+            "_timestamp_hour": [10, 10, 11, 12],
+            "click": [1, 0, 0, 1],
+            "device_ip": ["ip"] * 4,
+            "device_model": ["model"] * 4,
+            "device_id": ["a99f214a"] * 4,
+            "app_id": ["app"] * 4,
+            "app_domain": ["app-domain"] * 4,
+            "app_category": ["app-category"] * 4,
+            "site_id": ["85f751fd"] * 4,
+            "site_domain": ["site-domain"] * 4,
+            "site_category": ["site-category"] * 4,
+            "C14": ["ad"] * 4,
+            "hour_of_week": [1, 1, 2, 3],
+        }
+    )
+    return config, derive_categorical_features(frame.lazy(), config).collect()
+
+
+def test_context_features_unify_inventory_and_reliable_identity() -> None:
+    config = load_experiment("configs/full_features.yaml")
+    frame = pl.DataFrame(
+        {
+            "site_id": ["85f751fd", "site"],
+            "site_domain": ["site-domain", "site-domain"],
+            "site_category": ["site-category", "site-category"],
+            "app_id": ["app", "ecad2386"],
+            "app_domain": ["app-domain", "app-domain"],
+            "app_category": ["app-category", "app-category"],
+            "device_id": ["a99f214a", "known-device"],
+            "device_ip": ["ip-a", "ip-b"],
+            "device_model": ["model-a", "model-b"],
+            "C14": ["ad-a", "ad-b"],
+            "hour_of_week": [1, 2],
+        }
+    )
+    derived = derive_categorical_features(frame.lazy(), config).collect()
+    assert derived["inventory_type"].to_list() == ["app", "site"]
+    assert derived["publisher_id"].to_list() == ["app", "site"]
+    assert derived["publisher_domain"].to_list() == ["app-domain", "site-domain"]
+    assert derived["identity_kind"].to_list() == ["proxy", "device"]
+    assert derived["user_id"][0].startswith("proxy\x1f")
+    assert derived["user_id"][1] == "device\x1fknown-device"
+
+
+def test_click_history_uses_completed_hours_across_batch_boundaries() -> None:
+    config, frame = _full_feature_history_frame()
+    state = HistoryState(global_prior=0.25)
+    first = add_causal_history(frame[:1], config, state, use_labels=True)
+    middle = add_causal_history(frame[1:3], config, state, use_labels=True)
+    final = add_causal_history(frame[3:], config, state)
+    result = pl.concat((first, middle, final))
+
+    assert result["user_id_prior_clicks_log1p"].to_list() == pytest.approx(
+        [0.0, 0.0, math.log(2), math.log(2)]
+    )
+    assert result["user_id_prior_nonclicks_log1p"].to_list() == pytest.approx(
+        [0.0, 0.0, math.log(2), math.log(3)]
+    )
+    assert result["user_id_recent_click_pattern"].to_list() == [0, 0, 17, 34]
+    assert result["user_id_hours_since_last_click_log1p"].to_list() == pytest.approx(
+        [0.0, 0.0, math.log(2), math.log(3)]
+    )
+
+
+def test_scoring_labels_never_update_click_history() -> None:
+    config, frame = _full_feature_history_frame()
+    state = HistoryState(global_prior=0.25)
+    add_causal_history(frame[:2], config, state, use_labels=True)
+    scoring = add_causal_history(frame[2:3], config, state, use_labels=False)
+    later = add_causal_history(frame[3:], config, state, use_labels=False)
+
+    assert scoring["user_id_recent_click_pattern"].to_list() == [17]
+    assert later["user_id_recent_click_pattern"].to_list() == [17]
+    assert later["user_id_prior_clicks_log1p"].to_list() == pytest.approx([math.log(2)])
+    assert later["user_id_prior_nonclicks_log1p"].to_list() == pytest.approx([math.log(2)])
+
+
 def test_manifest_records_feature_lineage_fit_sources_and_coverage(
     processed_project: tuple[ExperimentConfig, Path],
 ) -> None:
