@@ -23,6 +23,7 @@ from avazu_ctr.data import (
 )
 from avazu_ctr.exploration import dataset_report, raw_report, run_report
 from avazu_ctr.inference import Predictor, export_production_bundle
+from avazu_ctr.profile_ffm.cli import app as profile_ffm_app
 from avazu_ctr.tracking import (
     HoldoutEvidence,
     RunStore,
@@ -38,6 +39,7 @@ from avazu_ctr.tuning import StagedTuner, confirm_configuration
 
 app = typer.Typer(no_args_is_help=True, pretty_exceptions_show_locals=False)
 console = Console()
+app.add_typer(profile_ffm_app, name="profile-ffm")
 
 
 def _active_selected_config(control: ExperimentConfig) -> ExperimentConfig:

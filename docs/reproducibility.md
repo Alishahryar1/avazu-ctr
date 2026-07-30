@@ -3,6 +3,26 @@
 Python is fixed to 3.12 and `uv.lock` fixes the complete dependency graph.
 CPU and CUDA 13.2 PyTorch installs are explicit, mutually exclusive extras.
 
+## Profile FFM
+
+The checked profile FFM configuration fixes raw source hashes, expected
+populations, feature thresholds, hash space, publisher-mask rate, cold token,
+rank, learning rate, regularization, epoch count, source-order training, and a
+single OpenMP thread.
+
+Sparse hashing, profile-token hashing, and the SplitMix publisher mask are
+deterministic. Publisher-profile edges execute as lazy Polars plans and are
+sorted before sparse serialization. Completed-hour history buffers current-hour
+labels and ignores scoring labels.
+
+Preparation manifests embed the resolved recipe and checksum every source,
+sparse file, and selector. Run manifests record the compiler version, native
+source checksum, compiled binary checksum, executed commands, prediction and
+log checksums, preparation checksum, composition counts, and final submission
+checksum.
+
+## PyTorch
+
 Splits, feature recipes, preprocessing, hashing, causal event order, masks,
 initialization, data order, workers, and Optuna samplers are seeded. Hash
 coefficients and feature masks are checkpoint buffers.

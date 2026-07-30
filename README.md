@@ -1,28 +1,33 @@
 # Avazu CTR
 
-A PyTorch pipeline for temporal click-through-rate modelling on the Avazu
-dataset.
+A reproducible click-through-rate modelling system for the Avazu dataset.
 
-The repository covers schema validation, provenance-tracked feature fitting,
-sharded preprocessing, candidate training, staged tuning, experiment tracking,
-TensorBoard, full-data production refitting, and deterministic submission
-generation.
+The repository contains the current profile FFM champion workflow and a
+PyTorch research workflow covering temporal evaluation, tuning, experiment
+tracking, production refitting, and deterministic inference.
 
 ## Best recorded result
 
-The selected one-epoch SENet + DCNv2 multihead model achieved a Kaggle private
-logloss of **0.38476** and a public logloss of **0.38689** in submission
-`55049425`.
+The profile FFM recipe achieved a Kaggle private logloss of **0.38014** and a
+public logloss of **0.38224** in submission `55118257`.
 
-This was a late submission after the competition deadline, so it is comparable
-to the final leaderboard but is not officially ranked. `configs/champion.yaml`
-defines the current leakage-safe recipe, while
-[`benchmarks/champion.json`](benchmarks/champion.json) keeps its contract
-separate from the immutable selection and submission evidence.
+It fits app and site inventories over 15 hashed context fields plus normalized
+publisher-profile fields. App proxy-user rows with completed-hour click history
+use the causal-history prediction. Site rows from publishers absent from the
+training population use the prediction learned through deterministic publisher
+masking and a cold-publisher token.
+
+[`configs/profile_ffm.yaml`](configs/profile_ffm.yaml) defines the exact recipe,
+and [`benchmarks/champion.json`](benchmarks/champion.json) records its
+population, prediction composition, score progression, and submission
+checksum. The SENet + DCNv2 multihead experiment remains recorded in
+[`benchmarks/senet_dcnv2.json`](benchmarks/senet_dcnv2.json).
 
 ## Requirements
 
 - [`uv`](https://docs.astral.sh/uv/)
+- A C++20 compiler with OpenMP for profile FFM fitting. On Windows, the
+  configured `auto` executor uses `g++` through WSL.
 - An NVIDIA driver compatible with the CUDA 13.2 PyTorch build for GPU training
 
 uv automatically downloads and manages the Python 3.12 runtime requested by
@@ -76,10 +81,36 @@ Use `--extra cpu` instead of `--extra cu132` on CPU-only systems. Never commit
 Kaggle tokens or credential files; repository-local credential fallbacks are
 ignored by Git.
 
-## Workflow
+## Profile FFM champion workflow
 
 Place Kaggle files at `data/raw/train.gz` and `data/raw/test.gz`. Data and all
 generated artifacts are ignored by Git.
+
+```powershell
+# Prepare sparse inputs, fit each prediction source sequentially, and compose
+# the checksummed Kaggle submission.
+uv run --locked --extra cpu avazu-ctr profile-ffm reproduce `
+  configs/profile_ffm.yaml --output submission.csv --clean-prepared
+```
+
+Preparation and fitting can also run as separate checked transitions:
+
+```powershell
+uv run --locked --extra cpu avazu-ctr profile-ffm prepare configs/profile_ffm.yaml
+uv run --locked --extra cpu avazu-ctr profile-ffm fit-predict `
+  configs/profile_ffm.yaml `
+  --preparation-manifest artifacts/profile-ffm/prepared/manifest.json `
+  --output submission.csv --clean-prepared
+```
+
+The preparation manifest embeds the resolved recipe, raw-source checksums,
+population counts, profile coverage, and checksums for every sparse file and
+selector. The run manifest records the compiler, solver source and binary,
+executed fit commands, prediction sources, training logs, composition counts,
+and final submission checksum. Publication is atomic; `--overwrite` explicitly
+replaces an earlier preparation or run.
+
+## PyTorch research workflow
 
 ```powershell
 # Build three walk-forward folds and the final holdout.
@@ -143,17 +174,17 @@ atomically becomes the active selection after acceptance.
 mass-preserving delta-routed DCNv2 while leaving the feature encoder, deep path,
 heads, objective, and split-optimizer policy unchanged.
 `configs/full_features.yaml` keeps that architecture fixed while expanding the
-leakage-safe information set for the feature-only champion experiment. It
+leakage-safe information set for the full-feature experiment. It
 enables full-graph CUDA Inductor compilation; compilation is strict and never
 silently falls back to eager execution.
 `configs/stec.yaml` is the paper-faithful STEC candidate.
 `configs/ngpt.yaml` is the paper-faithful nGPT candidate adapted to field tokens.
 `configs/tuning.yaml` defines the staged search.
 
-The champion compiles 32 categorical and 31 numerical fields; the expanded
-feature candidate compiles 53 categorical and 57 numerical fields. Both use
-raw context, time, bounded crosses, covariate aggregates, causal impression
-history, and temporal target evidence. They explicitly use
+The SENet + DCNv2 recipe compiles 32 categorical and 31 numerical fields; the
+expanded feature candidate compiles 53 categorical and 57 numerical fields.
+Both use raw context, time, bounded crosses, covariate aggregates, causal
+impression history, and temporal target evidence. They explicitly use
 `competition_transductive` frequency and distinct-count statistics to describe
 the fixed Kaggle scoring batch. Learned categorical vocabularies and target
 statistics remain training-only. Use `inductive` mode for an unseen online
@@ -194,7 +225,7 @@ See [data lineage](docs/data-lineage.md) and
 ## Tracking and storage
 
 SQLite is authoritative for run lineage and metrics. TensorBoard mirrors scalar
-histories under the same run ID for live curves:
+histories from the PyTorch workflow under the same run ID for live curves:
 
 ```powershell
 uv run --extra cu132 avazu-ctr tensorboard configs/champion.yaml --port 6006
@@ -205,6 +236,9 @@ confirmation, and final-holdout runs retain no weights. Selection retains only
 configuration, lineage, metrics, the epoch budget, and row-level holdout losses.
 Production refit trains without validation for exactly `best_epoch + 1` epochs.
 Only one deployed production bundle is retained, with a hard 512 MiB weight cap.
+
+Profile FFM training curves are retained as checksummed per-source stdout logs
+under `artifacts/profile-ffm/run/logs`.
 
 See [experiment tracking](docs/tracking.md).
 
@@ -223,4 +257,5 @@ checks on Windows plus a CUDA forward/backward and AMP smoke run.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](LICENSE). The packaged profile FFM solver carries its
+Apache-2.0 attribution in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -1,81 +1,62 @@
 {
-  "schema_version": 2,
-  "model_family": "senet-dcnv2-multihead",
-  "current_recipe": {
-    "configuration": "configs/champion.yaml",
-    "baseline_configuration": "configs/baseline.yaml",
-    "feature_contract": {
-      "sha256": "7861ebb4bc16b6ee5d78a4ce415cbe120ea51947308878899dde0203b23cd740",
-      "categorical_features": 32,
-      "numerical_features": 31
-    }
+  "schema_version": 1,
+  "model_family": "profile-ffm",
+  "configuration": "configs/profile_ffm.yaml",
+  "config_sha256": "f7b2ee4bc420ef62651fc676f9de73e63a11870f5f64cddbf4f45cbf5b650bf0",
+  "training": {
+    "rank": 4,
+    "learning_rate": 0.05,
+    "l2": 0.00002,
+    "epochs": 6,
+    "data_order": "source",
+    "threads": 1
   },
-  "training_budget": {
-    "epochs": 1,
-    "seed": 42
+  "population": {
+    "training_rows": 40428967,
+    "scoring_rows": 4577464,
+    "training_app_rows": 14596137,
+    "training_site_rows": 25832830,
+    "scoring_app_rows": 1719304,
+    "scoring_site_rows": 2858160
   },
-  "recorded_champion": {
-    "source_commit": "d6a29e296fd4f697269355a8f22296f9ea3c4e04",
-    "feature_contract": {
-      "sha256": "5c4ff22a9dea68a2082715c9d5f2e13300fac721aec69bfd51752ef38fae6c45",
-      "categorical_features": 32,
-      "numerical_features": 31,
-      "training_rows": 40428967,
-      "test_rows": 4577464
+  "prediction_composition": {
+    "app_profile_rows": 1358862,
+    "app_causal_history_rows": 360442,
+    "site_profile_rows": 2039901,
+    "site_cold_publisher_rows": 818259
+  },
+  "score_progression": [
+    {
+      "submission_id": 55116353,
+      "recipe": "inventory FFM",
+      "public_logloss": 0.38321,
+      "private_logloss": 0.38125
     },
-    "selection": {
-      "incumbent": {
-        "name": "dcnv2-baseline-v4-one-epoch",
-        "run_id": "2500cd55a024485ea07fdab7ac397a73",
-        "resolved_config_sha256": "38e5bfeb8780e6eae3587f887bc0fc611eb83e93a6ed579e5b616087cc40990e",
-        "walk_forward_logloss": {
-          "walk_forward_0": 0.4020038843154907,
-          "walk_forward_1": 0.36367836594581604,
-          "walk_forward_2": 0.3725607693195343
-        },
-        "mean_walk_forward_logloss": 0.37941433986028034,
-        "final_holdout_logloss": 0.39322924613952637
-      },
-      "candidate": {
-        "name": "senet-dcnv2-multihead-v4-one-epoch",
-        "run_id": "a63256f5e5724df0b9a8b758a829a4dc",
-        "resolved_config_sha256": "63e0f99d262b1e516c16a0d18e43174292318bcb953fb41bee4a42dcabd063c5",
-        "walk_forward_logloss": {
-          "walk_forward_0": 0.4024275243282318,
-          "walk_forward_1": 0.3637685477733612,
-          "walk_forward_2": 0.3718035817146301
-        },
-        "mean_walk_forward_logloss": 0.37933321793874103,
-        "final_holdout_logloss": 0.3908225893974304
-      },
-      "promotion": {
-        "bootstrap_blocks": 43,
-        "bootstrap_samples": 2000,
-        "confidence": 0.95,
-        "fold_guard": 0.0001,
-        "mean_difference": -0.002406667685136199,
-        "upper_confidence_bound": -0.0022064148467740422
-      }
+    {
+      "submission_id": 55116927,
+      "recipe": "publisher-profile FFM",
+      "public_logloss": 0.38255,
+      "private_logloss": 0.38060
     },
-    "production": {
-      "selection_id": "a63256f5e5724df0b9a8b758a829a4dc",
-      "selection_evidence_sha256": "e91209a9d3c13cb0aad94eab9cf37c5eea35786259eee27aff530e16e625bbea",
-      "refit_run_id": "f4342729c419479e9dfb9988b7c83e0e",
-      "epochs": 1,
-      "steps": 10026,
-      "model_state_sha256": "76ebe221aefa04a4a0db746b36192e4e290ac89111deb7982f1350346efb4ee0",
-      "bundle_sha256": "74b5cc22f368f930aae0a14b0c74d8ce1b73c478baf5a5e54db29c2d14147d4e",
-      "weights_bytes": 276848276
+    {
+      "submission_id": 55117118,
+      "recipe": "publisher-profile and learned-cold-publisher FFM",
+      "public_logloss": 0.38239,
+      "private_logloss": 0.38037
     },
-    "kaggle": {
-      "competition": "avazu-ctr-prediction",
-      "submission_id": 55049425,
-      "submitted_at": "2026-07-28T08:20:19.967Z",
-      "late_submission": true,
-      "officially_ranked": false,
-      "public_logloss": 0.38689,
-      "private_logloss": 0.38476,
-      "submission_sha256": "b9d0c3e6814567e89807470d3a325fb8e38e6da1fc1246663adb0f851d79caf0"
+    {
+      "submission_id": 55118257,
+      "recipe": "publisher-profile, learned-cold-publisher, and causal-history FFM",
+      "public_logloss": 0.38224,
+      "private_logloss": 0.38014
     }
+  ],
+  "kaggle": {
+    "competition": "avazu-ctr-prediction",
+    "submission_id": 55118257,
+    "public_logloss": 0.38224,
+    "private_logloss": 0.38014,
+    "submission_rows": 4577464,
+    "submission_sha256": "dc51c60690098da4fd837066fdba22541e93b61c964eb3d4ffe9312a91e7c99b"
   }
 }
