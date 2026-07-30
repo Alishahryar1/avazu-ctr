@@ -60,8 +60,10 @@ model:
   dcn:
     backbone:
       senet: {enabled: false}
-      dcn_layers: 4
-      dcn_rank: 32
+      cross:
+        kind: dcnv2
+        layers: 4
+        rank: 32
       mlp_hidden: [256, 128]
       activation: gelu
       dropout: 0.1

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from torch import nn
 
-from avazu_ctr.config.schema import Aggregation, BackboneConfig, ModelConfig, ModelKind
+from avazu_ctr.config.schema import (
+    Aggregation,
+    BackboneConfig,
+    DeltaRoutedDCNv2CrossConfig,
+    ModelConfig,
+    ModelKind,
+)
 from avazu_ctr.data.manifest import DatasetManifest
 from avazu_ctr.models.architectures import DCNModel, EnsembleModel
 from avazu_ctr.models.base import CTRModel
@@ -107,10 +113,13 @@ def _backbone_values(
     if backbone.senet.enabled:
         hidden = max(1, fields // backbone.senet.reduction_ratio)
         values += _linear_values(fields, hidden) + _linear_values(hidden, fields)
-    if backbone.dcn_rank is None:
-        values += backbone.dcn_layers * (flattened * flattened + flattened)
+    cross = backbone.cross
+    if cross.rank is None:
+        values += cross.layers * (flattened * flattened + flattened)
     else:
-        values += backbone.dcn_layers * (2 * flattened * backbone.dcn_rank + flattened)
+        values += cross.layers * (2 * flattened * cross.rank + flattened)
+    if isinstance(cross, DeltaRoutedDCNv2CrossConfig):
+        values += (cross.layers - 2) * flattened
     mlp_values, mlp_output = _mlp_values(
         flattened,
         backbone.mlp_hidden,

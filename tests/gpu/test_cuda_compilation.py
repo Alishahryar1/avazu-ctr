@@ -12,6 +12,7 @@ from avazu_ctr.contracts import FeatureBatch, ModelOutput
 from avazu_ctr.inference.execution import InferenceRuntime
 from avazu_ctr.models.base import CTRModel
 from avazu_ctr.models.compilation import compile_cuda_graph
+from avazu_ctr.models.layers import DeltaRoutedDCNv2
 from avazu_ctr.training import CandidateTrainer
 from avazu_ctr.training.optimizers import build_optimizer_plan
 
@@ -75,6 +76,24 @@ def test_cuda_compiler_matches_eager_forward_and_backward() -> None:
         compiled(dynamic_batch).aggregate_logits,
         candidate(dynamic_batch).aggregate_logits,
     )
+
+
+def test_cuda_compiler_trains_delta_routing_under_float16_autocast() -> None:
+    torch.manual_seed(42)
+    model = DeltaRoutedDCNv2(dimension=24, layers=5, rank=8).cuda()
+    compiled = compile_cuda_graph(model, torch.device("cuda"))
+    inputs = torch.randn(64, 24, device="cuda")
+
+    with torch.autocast(device_type="cuda", dtype=torch.float16):
+        loss = compiled(inputs).square().mean()
+    loss.backward()
+    torch.cuda.synchronize()
+
+    gradient = model.routing_queries.grad
+    assert torch.isfinite(loss)
+    assert gradient is not None
+    assert torch.isfinite(gradient).all()
+    assert torch.count_nonzero(gradient) > 0
 
 
 def test_compiled_float16_inference_matches_eager_float32() -> None:

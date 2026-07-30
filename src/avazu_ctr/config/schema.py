@@ -101,10 +101,27 @@ class SENetConfig(StrictModel):
     activation: Literal["relu", "gelu", "silu"] = "gelu"
 
 
+class DCNv2CrossConfig(StrictModel):
+    kind: Literal["dcnv2"] = "dcnv2"
+    layers: Annotated[int, Field(ge=0, le=16)] = 4
+    rank: Annotated[int | None, Field(gt=0)] = 32
+
+
+class DeltaRoutedDCNv2CrossConfig(StrictModel):
+    kind: Literal["delta_routed_dcnv2"] = "delta_routed_dcnv2"
+    layers: Annotated[int, Field(ge=3, le=16)] = 8
+    rank: Annotated[int | None, Field(gt=0)] = 32
+
+
+CrossNetworkConfig = Annotated[
+    DCNv2CrossConfig | DeltaRoutedDCNv2CrossConfig,
+    Field(discriminator="kind"),
+]
+
+
 class BackboneConfig(StrictModel):
     senet: SENetConfig = SENetConfig()
-    dcn_layers: Annotated[int, Field(ge=0, le=16)] = 4
-    dcn_rank: Annotated[int | None, Field(gt=0)] = 32
+    cross: CrossNetworkConfig = DCNv2CrossConfig()
     mlp_hidden: tuple[Annotated[int, Field(gt=0)], ...] = (256, 128)
     activation: Literal["relu", "gelu", "silu"] = "gelu"
     dropout: Annotated[float, Field(ge=0.0, lt=1.0)] = 0.1

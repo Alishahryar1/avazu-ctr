@@ -139,6 +139,9 @@ atomically becomes the active selection after acceptance.
 
 `configs/baseline.yaml` is the clean DCNv2 benchmark.
 `configs/champion.yaml` is the SENet + DCNv2 multihead candidate.
+`configs/delta_routed.yaml` replaces its cross network with a deeper,
+mass-preserving delta-routed DCNv2 while leaving the feature encoder, deep path,
+heads, objective, and split-optimizer policy unchanged.
 `configs/full_features.yaml` keeps that architecture fixed while expanding the
 leakage-safe information set for the feature-only champion experiment. It
 enables full-graph CUDA Inductor compilation; compilation is strict and never

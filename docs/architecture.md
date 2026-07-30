@@ -51,9 +51,17 @@ positive residual-correlation penalties cannot replace aggregate supervision.
 
 ### Model families
 
-- `dcn` uses a shared field encoder and SENet/DCNv2 backbone. One or more
-  prediction heads operate on that backbone; gated or mean aggregation applies
-  only when more than one prediction head is configured.
+- `dcn` uses a shared field encoder and SENet backbone with an explicitly
+  selected cross network. `dcnv2` is the standard cumulative recurrence.
+  `delta_routed_dcnv2` lets each cross layer from the third onward attend over
+  the distinct interaction-order increments produced by earlier layers. Its
+  softmax weights are scaled to conserve total residual mass and centered
+  around the standard recurrence, so zero-initialized routing queries make the
+  routed network exactly equal to DCNv2 at initialization. New increments still
+  enter the ordinary cumulative state; routing changes only the context used to
+  generate the next increment. One or more prediction heads operate on the
+  shared backbone; gated or mean aggregation applies only when more than one
+  prediction head is configured.
 - `stec` computes the full per-dimension query/key Hadamard interaction before
   averaging it into scaled dot-product attention. Every STEC layer exposes that
   grouped bilinear tensor, a final standalone bilinear layer exposes the last

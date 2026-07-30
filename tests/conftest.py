@@ -66,10 +66,15 @@ def small_config(
     architecture = config.model.dcn
     if architecture is None:
         raise AssertionError("the shipped champion must be a DCN")
+    cross = architecture.backbone.cross.model_copy(
+        update={
+            "layers": 1,
+            "rank": 4,
+        }
+    )
     backbone = architecture.backbone.model_copy(
         update={
-            "dcn_layers": 1,
-            "dcn_rank": 4,
+            "cross": cross,
             "mlp_hidden": (16,),
             "dropout": 0.0,
         }
