@@ -20,6 +20,7 @@ from avazu_ctr.tuning.study import _sample_config, tuning_stages
     [
         "configs/baseline.yaml",
         "configs/champion.yaml",
+        "configs/delta_routed.yaml",
         "configs/full_features.yaml",
         "configs/ngpt.yaml",
         "configs/stec.yaml",
@@ -42,6 +43,29 @@ def test_unknown_fields_and_schema_versions_are_rejected() -> None:
     raw.pop("unsupported_checkpoint")
     raw["schema_version"] = 1
     with pytest.raises(ValidationError):
+        ExperimentConfig.model_validate(raw)
+
+
+def test_flat_cross_network_fields_are_rejected_without_a_compatibility_shim() -> None:
+    raw = load_experiment("configs/champion.yaml").model_dump(mode="json")
+    backbone = raw["model"]["dcn"]["backbone"]
+    backbone["dcn_layers"] = backbone["cross"]["layers"]
+    backbone["dcn_rank"] = backbone["cross"]["rank"]
+    del backbone["cross"]
+
+    with pytest.raises(ValidationError, match="Extra inputs"):
+        ExperimentConfig.model_validate(raw)
+
+
+def test_delta_routed_cross_requires_a_meaningful_routing_depth() -> None:
+    raw = load_experiment("configs/champion.yaml").model_dump(mode="json")
+    raw["model"]["dcn"]["backbone"]["cross"] = {
+        "kind": "delta_routed_dcnv2",
+        "layers": 2,
+        "rank": 32,
+    }
+
+    with pytest.raises(ValidationError, match="greater than or equal to 3"):
         ExperimentConfig.model_validate(raw)
 
 

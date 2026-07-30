@@ -74,10 +74,16 @@ def _sample_config(
         if base.model.kind == ModelKind.DCN:
             if base.model.dcn is None:
                 raise ValueError("DCN tuning requires dcn configuration")
+            minimum_layers = 3 if base.model.dcn.backbone.cross.kind == "delta_routed_dcnv2" else 2
+            cross = base.model.dcn.backbone.cross.model_copy(
+                update={
+                    "layers": trial.suggest_int("cross_layers", minimum_layers, 8),
+                    "rank": trial.suggest_categorical("cross_rank", [16, 32, 64]),
+                }
+            )
             backbone = base.model.dcn.backbone.model_copy(
                 update={
-                    "dcn_layers": trial.suggest_int("dcn_layers", 2, 8),
-                    "dcn_rank": trial.suggest_categorical("dcn_rank", [16, 32, 64]),
+                    "cross": cross,
                     "mlp_hidden": {
                         "small": (128, 64),
                         "medium": (256, 128),

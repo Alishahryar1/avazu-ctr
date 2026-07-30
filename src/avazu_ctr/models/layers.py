@@ -10,7 +10,13 @@ import torch
 from torch import nn
 from torch.nn import functional
 
-from avazu_ctr.config.schema import BackboneConfig, EmbeddingKind, ModelConfig
+from avazu_ctr.config.schema import (
+    BackboneConfig,
+    DCNv2CrossConfig,
+    DeltaRoutedDCNv2CrossConfig,
+    EmbeddingKind,
+    ModelConfig,
+)
 from avazu_ctr.contracts import FeatureBatch
 
 
@@ -203,6 +209,8 @@ class SENet(nn.Module):
 class DCNv2(nn.Module):
     def __init__(self, dimension: int, layers: int, rank: int | None) -> None:
         super().__init__()
+        self.dimension = dimension
+        self.layers = layers
         self.rank = rank
         if rank is None:
             self.weights = nn.ParameterList(
@@ -229,15 +237,95 @@ class DCNv2(nn.Module):
             nn.init.xavier_uniform_(left)
             nn.init.xavier_uniform_(right)
 
+    def _delta(
+        self,
+        inputs: torch.Tensor,
+        context: torch.Tensor,
+        index: int,
+    ) -> torch.Tensor:
+        if self.rank is None:
+            crossed = context @ self.weights[index]
+        else:
+            crossed = (context @ self.left[index]) @ self.right[index]
+        return inputs * (crossed + self.biases[index])
+
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
         current = inputs
-        for index, bias in enumerate(self.biases):
-            if self.rank is None:
-                crossed = current @ self.weights[index]
-            else:
-                crossed = (current @ self.left[index]) @ self.right[index]
-            current = inputs * (crossed + bias) + current
+        for index in range(self.layers):
+            current = current + self._delta(inputs, current, index)
         return current
+
+
+class DeltaRoutedDCNv2(DCNv2):
+    """Redistribute prior cross deltas without changing their total residual mass."""
+
+    _ROUTING_EPSILON = 1e-6
+
+    def __init__(self, dimension: int, layers: int, rank: int | None) -> None:
+        if layers < 3:
+            raise ValueError("delta-routed DCNv2 requires at least three layers")
+        super().__init__(dimension, layers, rank)
+        self.routing_queries = nn.Parameter(torch.zeros(layers - 2, dimension))
+        self.routing_scale = 1.0 / math.sqrt(dimension)
+
+    def _routing_context(
+        self,
+        current: torch.Tensor,
+        deltas: list[torch.Tensor],
+        query: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        sources = torch.stack(deltas, dim=1)
+        stable_sources = sources.to(torch.float32)
+        normalized = functional.rms_norm(
+            stable_sources,
+            (self.dimension,),
+            eps=self._ROUTING_EPSILON,
+        )
+        scores = torch.einsum("bsd,d->bs", normalized, query.to(torch.float32))
+        weights = torch.softmax(scores * self.routing_scale, dim=1)
+
+        # Standard DCNv2 assigns coefficient one to every prior delta. Centering
+        # n * softmax(scores) around one preserves that total coefficient mass
+        # and makes a zero query exactly equivalent to the original recurrence.
+        coefficients = weights * len(deltas) - 1.0
+        correction = torch.bmm(coefficients.unsqueeze(1), stable_sources).squeeze(1)
+        return current + correction.to(current.dtype), weights
+
+    def _forward(
+        self,
+        inputs: torch.Tensor,
+        *,
+        collect_routing: bool,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+        current = inputs
+        deltas: list[torch.Tensor] = []
+        routing: list[torch.Tensor] = []
+        for index in range(self.layers):
+            context = current
+            if len(deltas) >= 2:
+                context, weights = self._routing_context(
+                    current,
+                    deltas,
+                    self.routing_queries[index - 2],
+                )
+                if collect_routing:
+                    routing.append(weights)
+            delta = self._delta(inputs, context, index)
+            current = current + delta
+            deltas.append(delta)
+        return current, tuple(routing)
+
+    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
+        output, _ = self._forward(inputs, collect_routing=False)
+        return output
+
+    def forward_with_routing(
+        self,
+        inputs: torch.Tensor,
+    ) -> tuple[torch.Tensor, tuple[torch.Tensor, ...]]:
+        """Return per-example routing weights for offline diagnostics."""
+
+        return self._forward(inputs, collect_routing=True)
 
 
 class MLP(nn.Module):
@@ -279,7 +367,21 @@ class Backbone(nn.Module):
             if config.senet.enabled
             else nn.Identity()
         )
-        self.cross = DCNv2(flattened, config.dcn_layers, config.dcn_rank)
+        cross = config.cross
+        if isinstance(cross, DeltaRoutedDCNv2CrossConfig):
+            self.cross: nn.Module = DeltaRoutedDCNv2(
+                flattened,
+                cross.layers,
+                cross.rank,
+            )
+        elif isinstance(cross, DCNv2CrossConfig):
+            self.cross = DCNv2(
+                flattened,
+                cross.layers,
+                cross.rank,
+            )
+        else:
+            raise TypeError(f"unsupported cross-network config: {type(cross).__name__}")
         self.mlp = MLP(
             flattened,
             config.mlp_hidden,

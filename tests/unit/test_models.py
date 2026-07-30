@@ -10,6 +10,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from avazu_ctr.config.schema import (
+    DeltaRoutedDCNv2CrossConfig,
     EmbeddingConfig,
     EmbeddingKind,
     EnsembleModelConfig,
@@ -30,6 +31,8 @@ from avazu_ctr.models.factory import (
     serialized_weight_bytes,
 )
 from avazu_ctr.models.layers import (
+    DCNv2,
+    DeltaRoutedDCNv2,
     FeatureEncoder,
     LogitGate,
     NumericalProjection,
@@ -419,6 +422,45 @@ def test_split_optimizer_embedding_group_contains_only_lookup_tables(
     assert all(id(table.weight) in embedding_ids for table in device_embedding.tables)
 
 
+@pytest.mark.parametrize("rank", [None, 4])
+def test_delta_routed_dcnv2_is_exactly_standard_at_initialization(rank: int | None) -> None:
+    torch.manual_seed(42)
+    standard = DCNv2(dimension=12, layers=5, rank=rank)
+    routed = DeltaRoutedDCNv2(dimension=12, layers=5, rank=rank)
+    incompatible = routed.load_state_dict(standard.state_dict(), strict=False)
+    inputs = torch.randn(16, 12)
+
+    assert incompatible.missing_keys == ["routing_queries"]
+    assert not incompatible.unexpected_keys
+    assert torch.equal(routed(inputs), standard(inputs))
+
+
+def test_delta_routing_conserves_residual_mass_and_trains_queries() -> None:
+    torch.manual_seed(42)
+    routed = DeltaRoutedDCNv2(dimension=12, layers=5, rank=4)
+    output, weights_by_layer = routed.forward_with_routing(torch.randn(16, 12))
+
+    assert len(weights_by_layer) == 3
+    for source_count, weights in enumerate(weights_by_layer, start=2):
+        assert weights.shape == (16, source_count)
+        torch.testing.assert_close(
+            weights.sum(dim=1),
+            torch.ones(16),
+        )
+        torch.testing.assert_close(
+            (weights * source_count - 1.0).sum(dim=1),
+            torch.zeros(16),
+            atol=1e-6,
+            rtol=0.0,
+        )
+
+    output.square().mean().backward()
+    gradient = routed.routing_queries.grad
+    assert gradient is not None
+    assert torch.isfinite(gradient).all()
+    assert torch.count_nonzero(gradient) > 0
+
+
 @pytest.mark.parametrize("kind", [ModelKind.DCN, ModelKind.STEC, ModelKind.NGPT])
 def test_weight_estimate_matches_serialized_state(
     processed_project: tuple[ExperimentConfig, Path],
@@ -428,6 +470,32 @@ def test_weight_estimate_matches_serialized_state(
     manifest = load_manifest(manifest_path)
     model_config = _model_config(config, kind)
     model = create_model(model_config, manifest, seed=42)
+    assert estimate_model_weight_bytes(model_config, manifest) == serialized_weight_bytes(model)
+
+
+def test_delta_routed_cross_constructs_and_has_an_exact_weight_estimate(
+    processed_project: tuple[ExperimentConfig, Path],
+) -> None:
+    config, manifest_path = processed_project
+    manifest = load_manifest(manifest_path)
+    architecture = config.model.dcn
+    if architecture is None:
+        raise AssertionError("test fixture must be a DCN")
+    backbone = architecture.backbone.model_copy(
+        update={
+            "cross": DeltaRoutedDCNv2CrossConfig(
+                layers=4,
+                rank=4,
+            )
+        }
+    )
+    model_config = config.model.model_copy(
+        update={"dcn": architecture.model_copy(update={"backbone": backbone})}
+    )
+    model = create_model(model_config, manifest, seed=42)
+
+    assert isinstance(model, DCNModel)
+    assert isinstance(model.backbone.cross, DeltaRoutedDCNv2)
     assert estimate_model_weight_bytes(model_config, manifest) == serialized_weight_bytes(model)
 
 
