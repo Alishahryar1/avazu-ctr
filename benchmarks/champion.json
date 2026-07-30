@@ -2,7 +2,7 @@
   "schema_version": 1,
   "model_family": "profile-ffm",
   "configuration": "configs/profile_ffm.yaml",
-  "config_sha256": "a7c7a88ce9d663bdac097213aa5b92422f1d6c4477c5ffe2f06d3db259f0e60e",
+  "config_sha256": "f7b2ee4bc420ef62651fc676f9de73e63a11870f5f64cddbf4f45cbf5b650bf0",
   "training": {
     "rank": 4,
     "learning_rate": 0.05,

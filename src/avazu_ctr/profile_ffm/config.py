@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated, Any, Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
 
 Sha256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
 
@@ -57,6 +57,10 @@ class ProfileFFMDataConfig(StrictModel):
     train_sha256: Sha256 | None = None
     test_sha256: Sha256 | None = None
     expected_rows: ExpectedRows | None = None
+
+    @field_serializer("train_path", "test_path", "artifact_root")
+    def serialize_path(self, value: Path) -> str:
+        return value.as_posix()
 
 
 class ProfileFeaturesConfig(StrictModel):

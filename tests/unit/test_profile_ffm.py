@@ -13,6 +13,7 @@ from avazu_ctr.profile_ffm.config import (
     ExpectedRows,
     ProfileFFMConfig,
     load_profile_ffm,
+    resolved_profile_ffm_config,
 )
 from avazu_ctr.profile_ffm.contracts import PopulationRows
 from avazu_ctr.profile_ffm.hashing import (
@@ -39,6 +40,10 @@ def test_shipped_profile_ffm_config_is_the_recorded_recipe() -> None:
     assert expected.scoring == 4_577_464
     assert expected.scoring_nonempty_history == 360_442
     assert expected.scoring_cold_site == 818_259
+    resolved = resolved_profile_ffm_config(config)
+    assert resolved["data"]["train_path"] == "data/raw/train.gz"
+    assert resolved["data"]["test_path"] == "data/raw/test.gz"
+    assert resolved["data"]["artifact_root"] == "artifacts/profile-ffm"
 
 
 def test_profile_ffm_config_rejects_inconsistent_populations_and_rank() -> None:
