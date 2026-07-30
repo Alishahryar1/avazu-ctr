@@ -1,6 +1,40 @@
 # Architecture
 
-The package has one dependency direction:
+The package contains two complete modelling workflows behind one CLI.
+
+## Profile FFM workflow
+
+```text
+strict config ───────────────┐
+       ↓                     ↓
+hashing + history → sparse preparation → preparation manifest
+       ↓                              ↓
+publisher profiles             native solver build
+                                      ↓
+                         four sequential fit jobs
+                                      ↓
+                         prediction composition
+                                      ↓
+                              run manifest + CSV
+```
+
+`profile_ffm.config` owns the immutable recipe. `profile_ffm.features`,
+`profile_ffm.hashing`, and `profile_ffm.history` own deterministic feature
+semantics. `profile_ffm.preprocessing` turns raw Kaggle CSV files into
+solver-ready sparse populations and aligned selectors. `profile_ffm.solver`
+builds and executes the packaged native implementation.
+`profile_ffm.pipeline` validates every input, fits the app-profile,
+site-profile, site-cold-publisher, and app-causal-history sources
+sequentially, then composes their aligned predictions.
+
+`profile_ffm.contracts` is the boundary between each stage. Preparation and run
+directories are assembled under sibling staging paths, validated and
+checksummed, then atomically published. Temporary relational profile state is
+removed once the sparse preparation has been published.
+
+## PyTorch workflow
+
+The tensor workflow has one dependency direction:
 
 ```text
 config + contracts
@@ -99,6 +133,22 @@ budget `best_epoch + 1`; the production scheduler is rebuilt for the resulting
 all-data step count.
 
 ## Artifact contract
+
+### Profile FFM artifacts
+
+A profile FFM preparation is valid only when its strict manifest validates the
+embedded configuration hash, raw training and scoring source checksums,
+app/site population partition, profile coverage, sparse row counts, and every
+artifact checksum. The published files are six sparse solver populations plus
+two scoring selectors.
+
+A profile FFM run is valid only when it records the exact preparation-manifest
+checksum, compiler identity, solver source and binary checksums, executed
+commands, four prediction checksums, checksummed stdout/stderr logs,
+composition metrics, and submission checksum. Composition consumes all app
+rows before all site rows and requires unique submission IDs.
+
+### PyTorch artifacts
 
 A processed dataset is valid only with its schema-v6 role-specific manifest and
 checksums. Evaluation manifests require validation and forbid test. Production

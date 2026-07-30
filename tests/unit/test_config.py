@@ -226,8 +226,13 @@ def test_cli_exposes_final_commands() -> None:
         "predict",
         "report",
         "tensorboard",
+        "profile-ffm",
     ):
         assert command in result.stdout
+    profile_result = CliRunner().invoke(app, ["profile-ffm", "--help"])
+    assert profile_result.exit_code == 0
+    for command in ("prepare", "fit-predict", "reproduce"):
+        assert command in profile_result.stdout
 
 
 def test_cuda_prediction_has_one_automatic_fast_path() -> None:

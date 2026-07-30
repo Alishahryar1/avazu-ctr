@@ -1,5 +1,14 @@
 # Experiment tracking and retention
 
+## Profile FFM run evidence
+
+`artifacts/profile-ffm/prepared/manifest.json` is the handoff from raw
+preparation to native fitting. `artifacts/profile-ffm/run/manifest.json` is the
+authoritative record of the four sequential fit jobs and final composition.
+Each job writes its epoch curve and diagnostics to checksummed stdout/stderr
+logs under the run directory. The run retains prediction sources, the compiled
+solver, the composed submission, and their checksums.
+
 ## Authoritative metadata
 
 `artifacts/experiments.sqlite3` links:

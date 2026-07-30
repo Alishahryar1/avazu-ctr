@@ -1,13 +1,44 @@
 # Feature system
 
-The feature system compiles strict configuration recipes into one ordered model
-contract. The compiled definitions, fitted-table provenance, categorical
-coverage, and resolved configuration are stored in every dataset manifest.
-Training and inference consume that contract; neither rediscovers columns.
+## Profile FFM sparse fields
 
-## Selected and expanded feature sets
+The profile FFM recipe hashes into 999,999 usable feature IDs and constructs 15
+compact base fields in a fixed order:
 
-The selected champion exposes 63 fields:
+1. publisher ID, publisher domain, publisher category, banner position,
+   device model, connection type, `C14`, `C17`, `C20`, and `C21`;
+2. hour of day;
+3. frequency-backed device IP and device ID identities;
+4. a bounded user-hour frequency token;
+5. completed-hour click-history context for the unified identity.
+
+Each compact field has weight `sqrt(2 / 15)`. Fields 16 and 17 contain a user's
+publisher-ID and publisher-domain profile. Per-user token counts are L2
+normalized to `0.5`, and publisher values back off through frequency buckets.
+Profiles are built with lazy Polars plans, written as sorted Parquet edges, and
+joined to the sparse rows in deterministic order.
+
+The app causal-history population adds fields 18 and 19 for proxy identities:
+the completed-hour four-event click pattern and the transductive proxy-user
+count. The scoring selector activates that prediction for rows with nonempty
+completed history.
+
+The site cold-publisher fit replaces publisher field 1 with the configured
+cold token on a deterministic 18% of training rows. Its scoring source uses
+the learned token for every row, and the site selector activates those
+predictions for publishers absent from site training.
+
+## PyTorch feature system
+
+The PyTorch feature system compiles strict configuration recipes into one
+ordered model contract. The compiled definitions, fitted-table provenance,
+categorical coverage, and resolved configuration are stored in every dataset
+manifest. Training and inference consume that contract; neither rediscovers
+columns.
+
+## Neural selected and expanded feature sets
+
+The selected SENet + DCNv2 recipe exposes 63 fields:
 
 | Family | Categorical | Numerical |
 | --- | ---: | ---: |
@@ -20,8 +51,8 @@ The selected champion exposes 63 fields:
 | Temporal target evidence | 0 | 12 |
 | **Total** | **32** | **31** |
 
-`configs/full_features.yaml` keeps every selected-champion field and adds the
-remaining information families as one feature-only experiment:
+`configs/full_features.yaml` keeps every selected SENet + DCNv2 field and adds
+the remaining information families as one feature-only experiment:
 
 | Family | Categorical | Numerical |
 | --- | ---: | ---: |

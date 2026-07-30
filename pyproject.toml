@@ -9,6 +9,11 @@ description = "Leakage-safe, reproducible CTR modelling for the Avazu dataset"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "MIT"
+license-files = [
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md",
+    "src/avazu_ctr/profile_ffm/native/LICENSE",
+]
 authors = [{ name = "Ali Shahryar" }]
 dependencies = [
     "numpy>=2.5.1",

@@ -1,0 +1,41 @@
+schema_version: 1
+name: profile-ffm
+
+data:
+  train_path: data/raw/train.gz
+  test_path: data/raw/test.gz
+  artifact_root: artifacts/profile-ffm
+  train_sha256: 2884596ea9351c8a9abc02bff1f7a4f0d161eac8caceadaaccfff31ec638b4ca
+  test_sha256: 6ee1c0c72f3f5517612d36e3ddf6aa5bfe0005b46d7ca2eb3e85e5f2cd9b13f9
+  expected_rows:
+    training: 40428967
+    scoring: 4577464
+    training_app: 14596137
+    scoring_app: 1719304
+    training_site: 25832830
+    scoring_site: 2858160
+    scoring_app_proxy: 1229754
+    scoring_nonempty_history: 360442
+    scoring_cold_site: 818259
+
+features:
+  hash_bins: 1000000
+  app_site_sentinel: 85f751fd
+  unknown_device_id: a99f214a
+  frequency_identity_threshold: 1000
+  profile_identity_threshold: 100
+  profile_max_user_rows_exclusive: 100
+  profile_l2_norm: 0.5
+  history_count_threshold: 30
+  completed_history_events: 4
+
+cold_publisher:
+  training_mask_basis_points: 1800
+  token: pub_id-learned-cold
+
+training:
+  rank: 4
+  learning_rate: 0.05
+  l2: 0.00002
+  epochs: 6
+  executor: auto
