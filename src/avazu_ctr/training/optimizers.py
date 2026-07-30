@@ -158,7 +158,7 @@ def build_optimizer_plan(
         )
 
     embedding_parameters = [
-        parameter for parameter in model.embedding_parameters() if parameter.requires_grad
+        parameter for parameter in model.embedding_table_parameters() if parameter.requires_grad
     ]
     embedding_ids = {id(parameter) for parameter in embedding_parameters}
     dense_parameters = [

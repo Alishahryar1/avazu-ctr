@@ -405,17 +405,18 @@ def test_multi_hash_routing_can_separate_primary_bucket_collisions() -> None:
     assert not torch.equal(locations[0], locations[1])
 
 
-def test_split_optimizer_embedding_group_excludes_numerical_projection(
+def test_split_optimizer_embedding_group_contains_only_lookup_tables(
     processed_project: tuple[ExperimentConfig, Path],
 ) -> None:
     config, manifest_path = processed_project
     model = create_model(config.model, load_manifest(manifest_path), seed=42)
     assert isinstance(model, DCNModel)
-    embedding_ids = {id(parameter) for parameter in model.embedding_parameters()}
+    embedding_ids = {id(parameter) for parameter in model.embedding_table_parameters()}
     assert id(model.encoder.numerical.weight) not in embedding_ids
     device_embedding = model.encoder.embeddings["device_id"]
     assert isinstance(device_embedding, StableHashEmbedding)
-    assert id(device_embedding.mixing_logits) in embedding_ids
+    assert id(device_embedding.mixing_logits) not in embedding_ids
+    assert all(id(table.weight) in embedding_ids for table in device_embedding.tables)
 
 
 @pytest.mark.parametrize("kind", [ModelKind.DCN, ModelKind.STEC, ModelKind.NGPT])

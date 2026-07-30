@@ -129,8 +129,8 @@ class EnsembleModel(CTRModel):
             child = cast(CTRModel, module)
             child.post_step()
 
-    def embedding_parameters(self) -> list[nn.Parameter]:
+    def embedding_table_parameters(self) -> list[nn.Parameter]:
         parameters: list[nn.Parameter] = []
         for module in self.members:
-            parameters.extend(cast(CTRModel, module).embedding_parameters())
+            parameters.extend(cast(CTRModel, module).embedding_table_parameters())
         return parameters

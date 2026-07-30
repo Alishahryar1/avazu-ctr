@@ -21,10 +21,8 @@ class CTRModel(nn.Module, ABC):
     def post_step(self) -> None:
         """Apply model constraints after a successful optimizer step."""
 
-    def embedding_parameters(self) -> list[nn.Parameter]:
+    def embedding_table_parameters(self) -> list[nn.Parameter]:
         encoder = getattr(self, "encoder", None)
         if not isinstance(encoder, nn.Module):
             return []
-        embeddings = getattr(encoder, "embeddings", None)
-        container = embeddings if isinstance(embeddings, nn.Module) else encoder
-        return list(container.parameters())
+        return [module.weight for module in encoder.modules() if isinstance(module, nn.Embedding)]
