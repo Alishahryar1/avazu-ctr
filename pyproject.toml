@@ -18,7 +18,7 @@ authors = [{ name = "Ali Shahryar" }]
 dependencies = [
     "numpy>=2.5.1",
     "optuna>=4.9.0",
-    "polars>=1.43.1",
+    "polars>=1.43.2",
     "pyarrow>=25.0.0",
     "pydantic>=2.13.4",
     "pyyaml>=6.0.3",
