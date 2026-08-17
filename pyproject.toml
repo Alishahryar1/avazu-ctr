@@ -16,7 +16,7 @@ license-files = [
 ]
 authors = [{ name = "Ali Shahryar" }]
 dependencies = [
-    "numpy>=2.5.1",
+    "numpy>=2.5.2",
     "optuna>=4.9.0",
     "polars>=1.43.1",
     "pyarrow>=25.0.0",
