@@ -13,6 +13,7 @@ from avazu_ctr.config.schema import ModelConfig, NGPTModelConfig
 from avazu_ctr.contracts import FeatureBatch, ModelOutput
 from avazu_ctr.models.base import CTRModel
 from avazu_ctr.models.layers import FeatureEncoder, StableHashEmbedding
+from avazu_ctr.numerics import softmax
 
 
 def unit_norm(values: torch.Tensor, dim: int = -1) -> torch.Tensor:
@@ -64,15 +65,16 @@ class NGPTAttention(nn.Module):
         query = query * scale
         key = key * scale
         value = self._heads(self.value(hidden))
-        attended = functional.scaled_dot_product_attention(
-            query,
-            key,
-            value,
-            dropout_p=self.dropout if self.training else 0.0,
-            is_causal=False,
-            scale=math.sqrt(self.head_dimension),
-        )
+        with torch.autocast(device_type=hidden.device.type, enabled=False):
+            dtype = torch.float64 if query.dtype == torch.float64 else torch.float32
+            scores = (query.to(dtype) @ key.to(dtype).transpose(-2, -1)) * math.sqrt(
+                self.head_dimension
+            )
+            weights = functional.dropout(softmax(scores), self.dropout, self.training)
+            attended = weights @ value.to(dtype)
         attended = attended.transpose(1, 2).contiguous().view(batch, fields, self.dimension)
+        if not torch.is_autocast_enabled(hidden.device.type):
+            attended = attended.to(value.dtype)
         proposal = unit_norm(self.output(attended))
         alpha = (self.alpha.abs() * (self.alpha_init / self.base_scale)).view(1, 1, -1)
         return unit_norm(hidden + alpha * (proposal - hidden))

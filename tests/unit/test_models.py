@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import math
 from pathlib import Path
 from typing import cast
@@ -38,9 +39,9 @@ from avazu_ctr.models.layers import (
     NumericalProjection,
     StableHashEmbedding,
 )
-from avazu_ctr.models.ngpt import NGPTBlock, NGPTModel
+from avazu_ctr.models.ngpt import NGPTAttention, NGPTBlock, NGPTModel, unit_norm
 from avazu_ctr.models.state import state_dict_sha256
-from avazu_ctr.models.stec import STECBlock, STECModel
+from avazu_ctr.models.stec import STECBatchNorm1d, STECBlock, STECModel
 from avazu_ctr.objectives import CTRObjective
 
 
@@ -522,3 +523,176 @@ def test_weight_budget_rejects_before_training(
     model = create_model(config.model, load_manifest(manifest_path), seed=42)
     with pytest.raises(ValueError, match="exceeding"):
         enforce_weight_budget(model, 100)
+
+
+def test_hash_mixer_retains_dominant_parameter_gradient() -> None:
+    embedding = StableHashEmbedding(3, 1, 3, seed=42)
+    with torch.no_grad():
+        embedding.mixing_logits.copy_(torch.tensor([18.0, 0.0, 0.0]))
+        for index, table in enumerate(embedding.tables):
+            cast(nn.Embedding, table).weight.fill_(float(index == 0))
+    embedding(torch.tensor([1])).sum().backward()
+    expected = 2 * math.exp(-18) / (1 + 2 * math.exp(-18)) ** 2
+    assert embedding.mixing_logits.grad is not None
+    assert embedding.mixing_logits.grad[0].item() == pytest.approx(expected, rel=3e-6, abs=0)
+
+
+def test_head_gate_retains_dominant_bias_gradient() -> None:
+    gate = LogitGate(3)
+    projection = cast(nn.Linear, gate.network[-1])
+    assert projection.bias is not None
+    with torch.no_grad():
+        projection.weight.zero_()
+        projection.bias.copy_(torch.tensor([18.0, 0.0, 0.0]))
+    aggregate, _ = gate(torch.tensor([[1.0, 0.0, 0.0]]))
+    aggregate.sum().backward()
+    expected = 2 * math.exp(-18) / (1 + 2 * math.exp(-18)) ** 2
+    assert projection.bias.grad is not None
+    assert projection.bias.grad[0].item() == pytest.approx(expected, rel=3e-6, abs=0)
+
+
+def test_delta_router_retains_dominant_query_gradient() -> None:
+    router = DeltaRoutedDCNv2(3, 3, None)
+    with torch.no_grad():
+        router.routing_queries[0].copy_(torch.tensor([18.0, 0.0, 0.0]))
+    sources = list(torch.eye(3).unsqueeze(1))
+    _, weights = router._routing_context(torch.zeros(1, 3), sources, router.routing_queries[0])
+    weights[0, 0].backward()
+    assert router.routing_queries.grad is not None
+    assert router.routing_queries.grad[0, 0] > 2e-8
+    assert torch.isfinite(router.routing_queries.grad).all()
+
+
+def test_stec_attention_retains_dominant_query_gradient() -> None:
+    block = STECBlock(3, 1, 0.0)
+    with torch.no_grad():
+        for projection in (block.query, block.key, block.value, block.output):
+            projection.weight.copy_(torch.eye(3))
+        block.key.weight.mul_(18 * math.sqrt(3))
+    attended, _ = block(torch.eye(3).unsqueeze(0))
+    attended[0, 0, 0].backward()
+    assert block.query.weight.grad is not None
+    expected = 18 * 2 * math.exp(-18) / (1 + 2 * math.exp(-18)) ** 2
+    assert block.query.weight.grad[0, 0].item() == pytest.approx(expected, rel=5e-6, abs=0)
+
+
+def test_ngpt_attention_retains_dominant_scale_gradient() -> None:
+    block = NGPTAttention(NGPTModelConfig(dimension=3, heads=1))
+    captured = []
+    handle = block.output.register_forward_pre_hook(
+        lambda module, inputs: captured.append(inputs[0])
+    )
+    with torch.no_grad():
+        for projection in (block.query, block.key, block.value):
+            projection.weight.copy_(torch.eye(3))
+        block.qk_scale.fill_(math.sqrt(18 / math.sqrt(3)) * block.base_scale)
+    block(torch.eye(3).unsqueeze(0))
+    captured[0][0, 0, 0].backward()
+    handle.remove()
+    expected = 2 * math.exp(-18) / (1 + 2 * math.exp(-18)) ** 2 * 36 / block.qk_scale[0].item()
+    assert block.qk_scale.grad is not None
+    assert block.qk_scale.grad[0].item() == pytest.approx(expected, rel=1e-5, abs=0)
+
+
+@pytest.mark.parametrize("momentum", [None, 0.2])
+@pytest.mark.parametrize("spatial", [False, True])
+def test_stec_batch_norm_preserves_native_statistics_gradients_and_state(momentum, spatial) -> None:
+    torch.manual_seed(12)
+    reference = nn.BatchNorm1d(4, momentum=momentum).double()
+    candidate = STECBatchNorm1d(4, momentum=momentum).double()
+    assert reference.running_mean is not None
+    assert reference.running_var is not None
+    assert reference.num_batches_tracked is not None
+    with torch.no_grad():
+        reference.running_mean.copy_(torch.randn(4))
+        reference.running_var.copy_(torch.rand(4) + 0.5)
+        reference.num_batches_tracked.fill_(7)
+        reference.weight.copy_(torch.rand(4) + 0.5)
+        reference.bias.copy_(torch.randn(4))
+    candidate.load_state_dict(reference.state_dict(), strict=True)
+    for rows in (8, 8, 3):
+        values = torch.randn((rows, 4, 2) if spatial else (rows, 4), dtype=torch.float64)
+        actual_input = values.clone().requires_grad_()
+        expected_input = values.clone().requires_grad_()
+        actual = candidate(actual_input)
+        expected = reference(expected_input)
+        upstream = torch.randn_like(actual)
+        actual.backward(upstream)
+        expected.backward(upstream)
+        torch.testing.assert_close(actual, expected, rtol=1e-12, atol=1e-12)
+        torch.testing.assert_close(actual_input.grad, expected_input.grad, rtol=1e-12, atol=1e-12)
+        for left, right in zip(candidate.parameters(), reference.parameters(), strict=True):
+            torch.testing.assert_close(left.grad, right.grad, rtol=1e-12, atol=1e-12)
+        for name, value in candidate.state_dict().items():
+            torch.testing.assert_close(value, reference.state_dict()[name], rtol=1e-12, atol=1e-12)
+    candidate.eval()
+    reference.eval()
+    before = {name: value.clone() for name, value in candidate.state_dict().items()}
+    torch.testing.assert_close(candidate(values), reference(values), rtol=1e-12, atol=1e-12)
+    for name, value in candidate.state_dict().items():
+        torch.testing.assert_close(value, before[name], rtol=0, atol=0)
+    reference.load_state_dict(candidate.state_dict(), strict=True)
+
+
+@pytest.mark.parametrize(("dropout", "training"), [(0.0, True), (0.4, True), (0.4, False)])
+def test_ngpt_attention_reference_values_and_gradients(dropout: float, training: bool) -> None:
+    torch.manual_seed(42)
+    block = NGPTAttention(NGPTModelConfig(dimension=8, heads=2, dropout=dropout)).double()
+    block.train(training)
+    inputs = torch.randn(2, 3, 8, dtype=torch.float64, requires_grad=True)
+    captured = []
+    handle = block.output.register_forward_pre_hook(lambda module, args: captured.append(args[0]))
+    torch.manual_seed(17)
+    actual = block(inputs)
+    scale = (block.qk_scale / block.base_scale).view(1, 2, 1, 4)
+    query = unit_norm(block._heads(block.query(inputs))) * scale
+    key = unit_norm(block._heads(block.key(inputs))) * scale
+    value = block._heads(block.value(inputs))
+    probabilities = ((query @ key.transpose(-2, -1)) * 2).softmax(-1)
+    torch.manual_seed(17)
+    probabilities = torch.nn.functional.dropout(probabilities, dropout, training)
+    attended = (probabilities @ value).transpose(1, 2).contiguous().view(2, 3, 8)
+    torch.testing.assert_close(captured[0], attended, rtol=1e-12, atol=1e-12)
+    proposal = unit_norm(block.output(attended))
+    alpha = (block.alpha.abs() * (block.alpha_init / block.base_scale)).view(1, 1, -1)
+    expected = unit_norm(inputs + alpha * (proposal - inputs))
+    torch.testing.assert_close(actual, expected, rtol=1e-6, atol=1e-7)
+    parameters = (inputs, *block.parameters())
+    upstream = torch.randn_like(actual)
+    actual_gradients = torch.autograd.grad(actual, parameters, upstream)
+    expected_gradients = torch.autograd.grad(expected, parameters, upstream)
+    for actual_gradient, expected_gradient in zip(
+        actual_gradients, expected_gradients, strict=True
+    ):
+        torch.testing.assert_close(actual_gradient, expected_gradient, rtol=2e-5, atol=1e-7)
+    if not training or dropout == 0:
+        fused = torch.nn.functional.scaled_dot_product_attention(query, key, value, scale=2)
+        torch.testing.assert_close(attended, fused.transpose(1, 2).contiguous().view(2, 3, 8))
+        torch.testing.assert_close(block(inputs), actual, rtol=0, atol=0)
+    handle.remove()
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("kind", ["ngpt", "stec"])
+def test_low_precision_attention_runs_without_autocast(kind, dtype) -> None:
+    torch.manual_seed(42)
+    block = (
+        NGPTAttention(NGPTModelConfig(dimension=8, heads=2))
+        if kind == "ngpt"
+        else STECBlock(8, 2, 0.0)
+    ).to(dtype=dtype)
+    reference = copy.deepcopy(block).float()
+    values = torch.randn(2, 3, 8).to(dtype).requires_grad_()
+    output = block(values)
+    expected = reference(values.detach().float())
+    actual = output if kind == "ngpt" else output[0]
+    expected = expected if kind == "ngpt" else expected[0]
+    assert actual.dtype == dtype
+    assert torch.isfinite(actual).all()
+    torch.testing.assert_close(actual.float(), expected, rtol=0.04, atol=0.015)
+    (actual.float() * torch.randn_like(actual.float())).sum().backward()
+    assert values.grad is not None
+    assert torch.isfinite(values.grad).all()
+    for parameter in block.parameters():
+        assert parameter.grad is not None
+        assert torch.isfinite(parameter.grad).all()
