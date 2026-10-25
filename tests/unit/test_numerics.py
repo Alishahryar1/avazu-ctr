@@ -205,3 +205,36 @@ def test_losses_reject_invalid_metadata(operation) -> None:
         operation(torch.ones(2, 3), torch.ones(3))
     with pytest.raises(TypeError, match="floating"):
         operation(torch.ones(2, 3), torch.ones(2, 3, dtype=torch.int64))
+
+
+@pytest.mark.parametrize("operation", [softmax, log_softmax])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+@pytest.mark.parametrize("dim", [-1, 0])
+def test_finite_overflowed_differences_have_finite_gradients(operation, dtype, dim) -> None:
+    extreme = torch.finfo(dtype).max * 0.9
+    values = torch.tensor(
+        [
+            [extreme, -extreme, -extreme],
+            [2.0, 1.0, 0.0],
+            [extreme, extreme, -extreme],
+            [extreme, 0.0, -extreme],
+        ],
+        dtype=dtype,
+    )
+    if dim == 0:
+        values = values.T
+    values.requires_grad_()
+    assert torch.isfinite(values).all()
+    native = torch.softmax if operation is softmax else torch.log_softmax
+    actual, expected = operation(values, dim), native(values, dim)
+    torch.testing.assert_close(actual, expected)
+    # Request a VJP directly so zero-weighted -inf log probabilities do not
+    # introduce NaNs in the test's scalar loss.
+    upstream = torch.zeros_like(actual)
+    upstream.select(dim, 0).fill_(1)
+    actual_gradient = torch.autograd.grad(actual, values, upstream)[0]
+    expected_gradient = torch.autograd.grad(expected, values, upstream)[0]
+    assert torch.isfinite(actual_gradient).all()
+    torch.testing.assert_close(actual_gradient, expected_gradient, rtol=1e-6, atol=1e-8)
+    saturated_gradient = actual_gradient[0] if dim == -1 else actual_gradient[:, 0]
+    assert torch.equal(saturated_gradient, torch.zeros_like(saturated_gradient))

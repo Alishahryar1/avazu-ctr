@@ -83,6 +83,8 @@ class STECBlock(nn.Module):
             attended = weights @ value.to(weights.dtype)
         batch, _, fields, _ = attended.shape
         merged = attended.transpose(1, 2).contiguous().view(batch, fields, -1)
+        if not torch.is_autocast_enabled(values.device.type):
+            merged = merged.to(value.dtype)
         return self.output(merged), bilinear.flatten(start_dim=1)
 
 

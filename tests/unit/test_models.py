@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import math
 from pathlib import Path
 from typing import cast
@@ -669,3 +670,29 @@ def test_ngpt_attention_reference_values_and_gradients(dropout: float, training:
         torch.testing.assert_close(attended, fused.transpose(1, 2).contiguous().view(2, 3, 8))
         torch.testing.assert_close(block(inputs), actual, rtol=0, atol=0)
     handle.remove()
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("kind", ["ngpt", "stec"])
+def test_low_precision_attention_runs_without_autocast(kind, dtype) -> None:
+    torch.manual_seed(42)
+    block = (
+        NGPTAttention(NGPTModelConfig(dimension=8, heads=2))
+        if kind == "ngpt"
+        else STECBlock(8, 2, 0.0)
+    ).to(dtype=dtype)
+    reference = copy.deepcopy(block).float()
+    values = torch.randn(2, 3, 8).to(dtype).requires_grad_()
+    output = block(values)
+    expected = reference(values.detach().float())
+    actual = output if kind == "ngpt" else output[0]
+    expected = expected if kind == "ngpt" else expected[0]
+    assert actual.dtype == dtype
+    assert torch.isfinite(actual).all()
+    torch.testing.assert_close(actual.float(), expected, rtol=0.04, atol=0.015)
+    (actual.float() * torch.randn_like(actual.float())).sum().backward()
+    assert values.grad is not None
+    assert torch.isfinite(values.grad).all()
+    for parameter in block.parameters():
+        assert parameter.grad is not None
+        assert torch.isfinite(parameter.grad).all()

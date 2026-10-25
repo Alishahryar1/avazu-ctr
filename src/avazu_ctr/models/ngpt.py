@@ -73,6 +73,8 @@ class NGPTAttention(nn.Module):
             weights = functional.dropout(softmax(scores), self.dropout, self.training)
             attended = weights @ value.to(dtype)
         attended = attended.transpose(1, 2).contiguous().view(batch, fields, self.dimension)
+        if not torch.is_autocast_enabled(hidden.device.type):
+            attended = attended.to(value.dtype)
         proposal = unit_norm(self.output(attended))
         alpha = (self.alpha.abs() * (self.alpha_init / self.base_scale)).view(1, 1, -1)
         return unit_norm(hidden + alpha * (proposal - hidden))

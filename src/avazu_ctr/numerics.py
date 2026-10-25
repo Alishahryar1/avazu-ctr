@@ -35,7 +35,12 @@ def log_softmax(logits: torch.Tensor, dim: int = -1) -> torch.Tensor:
         # sum of the other logit-difference gradients, including beyond the cliff.
         shifted = (values - maximum).scatter(dim, index, 0.0)
         others = shifted.scatter(dim, index, -torch.inf)
-        normalizer = functional.softplus(torch.logsumexp(others, dim=dim, keepdim=True))
+        # Finite logits can overflow to -inf when subtracting opposite extremes.
+        # Avoid the undefined all--inf logsumexp backward, even in an unused branch.
+        saturated = torch.isneginf(others).all(dim=dim, keepdim=True)
+        safe_others = torch.where(saturated, 0.0, others)
+        normalizer = functional.softplus(torch.logsumexp(safe_others, dim=dim, keepdim=True))
+        normalizer = torch.where(saturated, 0.0, normalizer)
         return shifted - normalizer
 
 

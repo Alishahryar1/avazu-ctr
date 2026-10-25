@@ -382,3 +382,75 @@ def test_stec_cumulative_batch_norm_compiles_and_updates_each_replay(dtype) -> N
         for name, value in candidate.state_dict().items():
             torch.testing.assert_close(value, reference.state_dict()[name], rtol=1e-5, atol=1e-6)
         assert candidate.num_batches_tracked.item() == step
+
+
+class ExtremeNormalizationGraph(nn.Module):
+    def forward(self, values: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+        return softmax(values), log_softmax(values)
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_compiled_normalization_handles_finite_overflowed_differences(dtype) -> None:
+    eager = ExtremeNormalizationGraph().cuda()
+    compiled = compile_cuda_graph(eager, torch.device("cuda"))
+    extreme = torch.finfo(dtype).max * 0.9
+    data = torch.tensor(
+        [[extreme, -extreme, -extreme], [extreme, extreme, -extreme], [2.0, 1.0, 0.0]],
+        dtype=dtype,
+        device="cuda",
+    )
+    for _ in range(2):
+        torch.compiler.cudagraph_mark_step_begin()
+        for operation in (eager, compiled):
+            values = data.clone().requires_grad_()
+            probabilities, logs = operation(values)
+            torch.testing.assert_close(probabilities, values.softmax(-1))
+            torch.testing.assert_close(logs, values.log_softmax(-1))
+            (probabilities[:, 0].sum() + logs[:, 0].sum()).backward()
+            assert values.grad is not None
+            assert torch.isfinite(values.grad).all()
+            assert torch.equal(values.grad[0], torch.zeros_like(values.grad[0]))
+            reference = data.clone().requires_grad_()
+            (reference.softmax(-1)[:, 0].sum() + reference.log_softmax(-1)[:, 0].sum()).backward()
+            torch.testing.assert_close(values.grad, reference.grad, rtol=2e-6, atol=1e-8)
+
+
+@pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
+@pytest.mark.parametrize("kind", ["ngpt", "stec"])
+def test_compiled_low_precision_attention_without_autocast(kind, dtype) -> None:
+    if dtype == torch.bfloat16 and not torch.cuda.is_bf16_supported():
+        pytest.skip("BF16 is not supported by this GPU")
+    torch.manual_seed(42)
+    eager = (
+        NGPTAttention(NGPTModelConfig(dimension=8, heads=2))
+        if kind == "ngpt"
+        else STECBlock(8, 2, 0.0)
+    ).to(device="cuda", dtype=dtype)
+    candidate = copy.deepcopy(eager)
+    compiled = compile_cuda_graph(candidate, torch.device("cuda"))
+    for rows in (8, 8, 3):
+        eager.zero_grad(set_to_none=True)
+        candidate.zero_grad(set_to_none=True)
+        torch.compiler.cudagraph_mark_step_begin()
+        data = torch.randn(rows, 3, 8, device="cuda", dtype=dtype)
+        upstream = torch.randn_like(data).float()
+        results = []
+        gradients = []
+        for operation in (eager, compiled):
+            values = data.clone().requires_grad_()
+            with torch.autocast("cuda", enabled=False):
+                output = operation(values)
+                actual = output if kind == "ngpt" else output[0]
+            assert actual.dtype == dtype
+            assert torch.isfinite(actual).all()
+            (actual.float() * upstream).sum().backward()
+            assert values.grad is not None
+            assert torch.isfinite(values.grad).all()
+            results.append(actual.detach().clone())
+            gradients.append(values.grad.detach().clone())
+        torch.testing.assert_close(results[0], results[1], rtol=0.05, atol=0.01)
+        torch.testing.assert_close(gradients[0], gradients[1], rtol=0.05, atol=0.01)
+        for reference, actual in zip(eager.parameters(), candidate.parameters(), strict=True):
+            assert actual.grad is not None
+            assert torch.isfinite(actual.grad).all()
+            torch.testing.assert_close(actual.grad, reference.grad, rtol=0.05, atol=0.02)
