@@ -12,11 +12,37 @@ from avazu_ctr.config.schema import ModelConfig, STECModelConfig
 from avazu_ctr.contracts import FeatureBatch, ModelOutput
 from avazu_ctr.models.base import CTRModel
 from avazu_ctr.models.layers import FeatureEncoder, PredictionHead
+from avazu_ctr.numerics import softmax
 
 
 def _split_heads(values: torch.Tensor, heads: int) -> torch.Tensor:
     batch, fields, dimension = values.shape
     return values.view(batch, fields, heads, dimension // heads).transpose(1, 2)
+
+
+class STECBatchNorm1d(nn.BatchNorm1d):
+    """Keep cumulative running-statistic updates on device during compilation."""
+
+    def forward(self, input: torch.Tensor) -> torch.Tensor:
+        if not self.training or self.momentum is not None or not self.track_running_stats:
+            return super().forward(input)
+        self._check_input_dim(input)
+        assert self.running_mean is not None
+        assert self.running_var is not None
+        assert self.num_batches_tracked is not None
+        self.num_batches_tracked.add_(1)
+        # Let the native kernel calculate both normalization and unbiased batch
+        # statistics. Temporary buffers avoid mutating tensors saved for backward.
+        batch_mean = torch.zeros_like(self.running_mean)
+        batch_variance = torch.ones_like(self.running_var)
+        output = functional.batch_norm(
+            input, batch_mean, batch_variance, self.weight, self.bias, True, 1.0, self.eps
+        )
+        with torch.no_grad():
+            factor = self.num_batches_tracked.to(self.running_mean.dtype).reciprocal()
+            self.running_mean.lerp_(batch_mean, factor)
+            self.running_var.lerp_(batch_variance, factor)
+        return output
 
 
 class STECBlock(nn.Module):
@@ -52,8 +78,9 @@ class STECBlock(nn.Module):
     def forward(self, values: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         _, _, value, bilinear = self.projected_interactions(values)
         logits = bilinear.mean(dim=-1) * math.sqrt(self.head_dimension)
-        weights = self.attention_dropout(functional.softmax(logits, dim=-1))
-        attended = weights @ value
+        with torch.autocast(device_type=values.device.type, enabled=False):
+            weights = self.attention_dropout(softmax(logits, dim=-1))
+            attended = weights @ value.to(weights.dtype)
         batch, _, fields, _ = attended.shape
         merged = attended.transpose(1, 2).contiguous().view(batch, fields, -1)
         return self.output(merged), bilinear.flatten(start_dim=1)
@@ -142,7 +169,7 @@ class STECModel(CTRModel):
         interaction_width = self.encoder.fields * self.encoder.fields * architecture.dimension
         self.interaction_norms = nn.ModuleList(
             [
-                nn.BatchNorm1d(
+                STECBatchNorm1d(
                     interaction_width,
                     eps=architecture.batch_norm_epsilon,
                     momentum=architecture.batch_norm_momentum,

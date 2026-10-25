@@ -18,6 +18,7 @@ from avazu_ctr.config.schema import (
     ModelConfig,
 )
 from avazu_ctr.contracts import FeatureBatch
+from avazu_ctr.numerics import softmax
 
 
 def activation(name: str) -> nn.Module:
@@ -91,7 +92,7 @@ class StableHashEmbedding(nn.Module):
             table = cast(nn.Embedding, module)
             outputs.append(table(locations[:, index]))
         stacked = torch.stack(outputs, dim=1)
-        weights = torch.softmax(self.mixing_logits, dim=0).view(1, -1, 1)
+        weights = softmax(self.mixing_logits, dim=0).view(1, -1, 1)
         return (stacked * weights).sum(dim=1)
 
 
@@ -282,12 +283,12 @@ class DeltaRoutedDCNv2(DCNv2):
             eps=self._ROUTING_EPSILON,
         )
         scores = torch.einsum("bsd,d->bs", normalized, query.to(torch.float32))
-        weights = torch.softmax(scores * self.routing_scale, dim=1)
+        weights = softmax(scores * self.routing_scale, dim=1)
 
-        # Standard DCNv2 assigns coefficient one to every prior delta. Centering
-        # n * softmax(scores) around one preserves that total coefficient mass
-        # and makes a zero query exactly equivalent to the original recurrence.
-        coefficients = weights * len(deltas) - 1.0
+        # Standard DCNv2 assigns coefficient one to every prior delta.
+        # Center before scaling so uniform weights give exactly zero even when
+        # exp(log_softmax) rounds 1/n differently from direct division.
+        coefficients = (weights - weights.mean(dim=1, keepdim=True)) * len(deltas)
         correction = torch.bmm(coefficients.unsqueeze(1), stable_sources).squeeze(1)
         return current + correction.to(current.dtype), weights
 
@@ -426,5 +427,5 @@ class LogitGate(nn.Module):
         )
 
     def forward(self, logits: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-        weights = torch.softmax(self.network(logits), dim=1)
+        weights = softmax(self.network(logits), dim=1)
         return (weights * logits).sum(dim=1, keepdim=True), weights

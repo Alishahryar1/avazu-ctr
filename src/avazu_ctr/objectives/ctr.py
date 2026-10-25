@@ -9,6 +9,7 @@ from torch import nn
 
 from avazu_ctr.config.schema import ObjectiveConfig
 from avazu_ctr.contracts import ModelOutput
+from avazu_ctr.numerics import binary_cross_entropy_with_logits
 
 
 @dataclass(slots=True)
@@ -33,7 +34,6 @@ class CTRObjective(nn.Module):
     def __init__(self, config: ObjectiveConfig) -> None:
         super().__init__()
         self.config = config
-        self.binary = nn.BCEWithLogitsLoss()
 
     def _residual_correlation(
         self, auxiliary_logits: torch.Tensor, labels: torch.Tensor
@@ -51,13 +51,13 @@ class CTRObjective(nn.Module):
         return upper.clamp_min(0).square().sum() / pairs
 
     def forward(self, output: ModelOutput, labels: torch.Tensor) -> LossBreakdown:
-        aggregate = self.binary(output.aggregate_logits, labels)
+        aggregate = binary_cross_entropy_with_logits(output.aggregate_logits, labels)
         zero = aggregate.new_zeros(())
         auxiliary = zero
         diversity = zero
         if output.auxiliary_logits is not None:
             expanded = labels.unsqueeze(1).expand_as(output.auxiliary_logits)
-            auxiliary = self.binary(output.auxiliary_logits, expanded)
+            auxiliary = binary_cross_entropy_with_logits(output.auxiliary_logits, expanded)
             if output.auxiliary_logits.shape[1] > 1:
                 diversity = self._residual_correlation(output.auxiliary_logits, labels)
         child_loss = zero

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 import torch
 from torch import nn
 
@@ -56,3 +58,28 @@ def test_ftrl_updates_and_keeps_explicit_state() -> None:
     optimizer.step()
     assert parameter.item() != 1.0
     assert set(optimizer.state[parameter]) == {"z", "n"}
+
+
+def test_objective_preserves_tail_gradients_in_all_supervised_lanes() -> None:
+    config = load_experiment("configs/champion.yaml").objective.model_copy(
+        update={
+            "aggregate_weight": 2.0,
+            "auxiliary_weight": 3.0,
+            "child_weight": 4.0,
+            "diversity_weight": 0.0,
+        }
+    )
+    aggregate = torch.full((2, 1), 18.0, requires_grad=True)
+    auxiliary = torch.full((2, 3, 1), 18.0, requires_grad=True)
+    child = torch.full((2, 1), 18.0, requires_grad=True)
+    output = ModelOutput(aggregate, auxiliary, children=(ModelOutput(child),))
+    loss = CTRObjective(config)(output, torch.ones(2, 1))
+    loss.total.backward()
+    tail = -math.exp(-18) / (1 + math.exp(-18))
+    for values, weight in ((aggregate, 2.0), (auxiliary, 3.0), (child, 8.0)):
+        torch.testing.assert_close(
+            values.grad, torch.full_like(values, tail * weight / values.numel()), rtol=2e-6, atol=0
+        )
+    torch.testing.assert_close(
+        loss.total, 2 * loss.aggregate + 3 * loss.auxiliary + 4 * loss.children
+    )
